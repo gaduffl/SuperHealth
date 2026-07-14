@@ -124,5 +124,4 @@ void main() {
     expect(range['evidence_label'], 'Imported personal catalog');
     await database.close();
   });
-
 }
