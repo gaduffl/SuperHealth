@@ -2,17 +2,22 @@
 
 ## First setup
 
-1. Create the first profile. Add separate profiles for other people; only the active profile is shown, synced into requests, or exported.
+1. Create the first profile. To merge old data cleanly, use the same display name as the corresponding profile in the former apps. Add a separate profile for each person.
 2. Import the existing apps with exported JSON files selected through Android’s file picker. Review the counts and merge warnings before confirming.
 3. In Settings, connect OneDrive. The Microsoft approval page must identify the app as **SuperHealth**.
-4. Tap **Sync now** after the import to create the first clean SuperHealth snapshot.
-5. Add an OpenAI, Anthropic, or Gemini key. Load the provider’s current models, then save separate Advisor and Lab document parser configurations.
+4. Choose **Shared family folder** for separate Microsoft accounts, or **Private AppFolder** when every device will connect to the same Microsoft account.
+5. Tap **Sync now** after the import to create the first clean SuperHealth snapshot.
+6. Add an OpenAI, Anthropic, or Gemini key. Load the provider’s current models, then save separate Advisor and Lab document parser configurations.
 
 ## OneDrive storage
 
-SQLite on the device is the working record. OneDrive stores `superhealth_snapshot.json` plus approved documents and advisor-workspace files under the dedicated `OneDrive/Apps/SuperHealth` AppFolder. API keys and OneDrive tokens are never included.
+SQLite on each device is the working record. API keys and OneDrive tokens are never included in snapshots.
 
-AppFolder permission deliberately prevents SuperHealth from reading the Biomarkers or Supplement Manager AppFolders. For the one-time migration, export or copy their JSON files and select them explicitly with Android’s file picker. After reviewing and committing the import, use **Sync now** to populate the new SuperHealth AppFolder.
+**Private AppFolder** requests `Files.ReadWrite.AppFolder` and stores data in `OneDrive/Apps/SuperHealth`. This is the least-privilege option, but every device must connect to the same Microsoft account to share data.
+
+**Shared family folder** requests delegated `Files.ReadWrite`. Create a OneDrive folder, share it with edit permission, and select that same folder on both phones. SuperHealth creates a `SuperHealth` subfolder and constrains its file operations to that location. The Microsoft token is technically broader than the AppFolder token, which is why this mode is always an explicit choice.
+
+AppFolder isolation prevents direct reads from the former apps’ private folders. For the one-time migration, select the old JSON exports explicitly with Android’s file picker. After reviewing and committing the import, use **Sync now** to populate the chosen SuperHealth storage.
 
 ## Daily use
 
