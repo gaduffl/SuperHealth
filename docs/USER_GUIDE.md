@@ -3,9 +3,16 @@
 ## First setup
 
 1. Create the first profile. Add separate profiles for other people; only the active profile is shown, synced into requests, or exported.
-2. In Settings, connect OneDrive if desired.
-3. Import the existing apps using selected JSON files or “Import legacy files from OneDrive.” Review the counts and merge warnings before confirming.
-4. Add an OpenAI, Anthropic, or Gemini key. Load the provider’s current models, then save separate Advisor and Lab document parser configurations.
+2. Import the existing apps with exported JSON files selected through Android’s file picker. Review the counts and merge warnings before confirming.
+3. In Settings, connect OneDrive. The Microsoft approval page must identify the app as **SuperHealth**.
+4. Tap **Sync now** after the import to create the first clean SuperHealth snapshot.
+5. Add an OpenAI, Anthropic, or Gemini key. Load the provider’s current models, then save separate Advisor and Lab document parser configurations.
+
+## OneDrive storage
+
+SQLite on the device is the working record. OneDrive stores `superhealth_snapshot.json` plus approved documents and advisor-workspace files under the dedicated `OneDrive/Apps/SuperHealth` AppFolder. API keys and OneDrive tokens are never included.
+
+AppFolder permission deliberately prevents SuperHealth from reading the Biomarkers or Supplement Manager AppFolders. For the one-time migration, export or copy their JSON files and select them explicitly with Android’s file picker. After reviewing and committing the import, use **Sync now** to populate the new SuperHealth AppFolder.
 
 ## Daily use
 
