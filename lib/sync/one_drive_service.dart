@@ -42,13 +42,6 @@ class OneDriveSyncResult {
   final int uploadedBytes;
 }
 
-class OneDriveLegacyFile {
-  const OneDriveLegacyFile({required this.name, required this.bytes});
-
-  final String name;
-  final Uint8List bytes;
-}
-
 class OneDriveService {
   OneDriveService(
     this._snapshotService, {
@@ -212,44 +205,6 @@ class OneDriveService {
       conflicts: merge.conflicts,
       uploadedBytes: bytes.length,
     );
-  }
-
-  /// Reads known exports from the pre-merge apps without modifying them.
-  Future<List<OneDriveLegacyFile>> downloadLegacyFiles() async {
-    const candidates = [
-      'supplement_sync.json',
-      'data/supplement_sync.json',
-      'data/profiles.json',
-      'data/biomarkers.json',
-      'data/ranges.json',
-      'data/biomarker_lists.json',
-      'data/biomarker_list_entries.json',
-      'data/user_overrides.json',
-      'data/documents.json',
-      'data/measurements.json',
-    ];
-    final result = <OneDriveLegacyFile>[];
-    for (final candidate in candidates) {
-      try {
-        final response = await _graph<List<int>>(
-          'GET',
-          '/me/drive/special/approot:/${_encodeGraphPath(candidate)}:/content',
-          options: Options(responseType: ResponseType.bytes),
-        );
-        final bytes = response.data;
-        if (bytes != null && bytes.isNotEmpty) {
-          result.add(
-            OneDriveLegacyFile(
-              name: candidate.split('/').last,
-              bytes: Uint8List.fromList(bytes),
-            ),
-          );
-        }
-      } on DioException catch (error) {
-        if (error.response?.statusCode != 404) rethrow;
-      }
-    }
-    return result;
   }
 
   Future<Map<String, dynamic>> uploadApprovedFile({
