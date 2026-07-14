@@ -66,8 +66,8 @@ class OneDriveService {
            secureStorage ??
            const FlutterSecureStorage(aOptions: AndroidOptions());
 
-  // Reuses the proven Biomarkers public-client registration and AppFolder scope.
-  static const clientId = '8c4471f5-ac21-49c7-b8af-6170e6d22646';
+  // Dedicated SuperHealth public-client registration and AppFolder scope.
+  static const clientId = '5d14b872-c492-422b-ac7f-e7f877f8a6ed';
   static const _authority = 'https://login.microsoftonline.com/consumers';
   static const _graphBase = 'https://graph.microsoft.com/v1.0';
   static const _snapshotName = 'superhealth_snapshot.json';
@@ -78,6 +78,7 @@ class OneDriveService {
   static const _accessTokenKey = 'onedrive_access_token';
   static const _refreshTokenKey = 'onedrive_refresh_token';
   static const _expiresAtKey = 'onedrive_expires_at';
+  static const _clientIdKey = 'onedrive_client_id';
 
   final Dio _dio;
   final FlutterSecureStorage _secureStorage;
@@ -138,6 +139,11 @@ class OneDriveService {
   }
 
   Future<bool> isSignedIn() async {
+    final storedClientId = await _secureStorage.read(key: _clientIdKey);
+    if (storedClientId != clientId) {
+      await signOut();
+      return false;
+    }
     final refresh = await _secureStorage.read(key: _refreshTokenKey);
     if (refresh == null || refresh.isEmpty) return false;
     try {
@@ -153,6 +159,7 @@ class OneDriveService {
       _secureStorage.delete(key: _accessTokenKey),
       _secureStorage.delete(key: _refreshTokenKey),
       _secureStorage.delete(key: _expiresAtKey),
+      _secureStorage.delete(key: _clientIdKey),
     ]);
   }
 
@@ -391,6 +398,11 @@ class OneDriveService {
   }
 
   Future<String> _validAccessToken() async {
+    final storedClientId = await _secureStorage.read(key: _clientIdKey);
+    if (storedClientId != clientId) {
+      await signOut();
+      throw StateError('OneDrive must be reconnected for SuperHealth.');
+    }
     final token = await _secureStorage.read(key: _accessTokenKey);
     final expiryRaw = await _secureStorage.read(key: _expiresAtKey);
     final expiry = DateTime.tryParse(expiryRaw ?? '');
@@ -426,6 +438,7 @@ class OneDriveService {
     }
     final refresh = data['refresh_token']?.toString();
     final expiresIn = (data['expires_in'] as num?)?.toInt() ?? 3600;
+    await _secureStorage.write(key: _clientIdKey, value: clientId);
     await _secureStorage.write(key: _accessTokenKey, value: access);
     if (refresh != null && refresh.isNotEmpty) {
       await _secureStorage.write(key: _refreshTokenKey, value: refresh);
