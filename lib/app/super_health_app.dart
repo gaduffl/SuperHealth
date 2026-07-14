@@ -185,6 +185,30 @@ class _ProfileOnboarding extends StatelessWidget {
                   icon: const Icon(Icons.person_add_outlined),
                   label: const Text('Create first profile'),
                 ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => Scaffold(
+                        appBar: AppBar(
+                          title: const Text('Restore from OneDrive'),
+                        ),
+                        body: const SettingsScreen(),
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.cloud_download_outlined),
+                  label: const Text('Restore from OneDrive'),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'On an additional phone, restore the shared snapshot before '
+                  'creating a local profile.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ],
             ),
           ),
