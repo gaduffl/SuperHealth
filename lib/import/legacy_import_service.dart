@@ -307,16 +307,17 @@ class LegacyImportService {
   }
 
   void _parseBiomarker(_LegacyBundle bundle, Map<String, dynamic> row) {
-    final displayName = [
-      row['display_name_custom'],
-      row['display_name'],
-      row['displayName'],
-      row['name'],
-      row['canonical_name'],
-    ].map((value) => value?.toString().trim()).whereType<String>().firstWhere(
-      (value) => value.isNotEmpty,
-      orElse: () => '',
-    );
+    final displayName =
+        [
+              row['display_name_custom'],
+              row['display_name'],
+              row['displayName'],
+              row['name'],
+              row['canonical_name'],
+            ]
+            .map((value) => value?.toString().trim())
+            .whereType<String>()
+            .firstWhere((value) => value.isNotEmpty, orElse: () => '');
     if (displayName.isEmpty) return;
     final canonical = HealthRepository.normalizeName(
       (row['canonical_name'] ?? row['canonicalName'] ?? displayName).toString(),
@@ -332,8 +333,7 @@ class LegacyImportService {
                 ?.toString() ??
             '',
         priceEur: _double(row['price_eur'] ?? row['price']),
-        description:
-            (row['description'] ?? row['notes'])?.toString() ?? '',
+        description: (row['description'] ?? row['notes'])?.toString() ?? '',
         synonyms: _combinedStringList([
           row['synonyms'],
           row['synonyms_json'],
