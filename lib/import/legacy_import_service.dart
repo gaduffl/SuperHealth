@@ -1,0 +1,1176 @@
+// ignore_for_file: prefer_initializing_formals
+
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart';
+
+import '../data/app_database.dart';
+import '../data/health_repository.dart';
+import '../domain/entities.dart';
+
+class ImportSourceFile {
+  const ImportSourceFile({required this.name, required this.bytes});
+
+  final String name;
+  final Uint8List bytes;
+}
+
+class LegacyImportPreview {
+  // The parsed bundle remains private to the import workflow.
+  LegacyImportPreview._({
+    required this.sourceHash,
+    required this.sourceKinds,
+    required this.counts,
+    required this.warnings,
+    required this.duplicates,
+    required this.alreadyImported,
+    required _LegacyBundle bundle,
+  }) : _bundle = bundle;
+
+  final String sourceHash;
+  final List<String> sourceKinds;
+  final Map<String, int> counts;
+  final List<String> warnings;
+  final List<String> duplicates;
+  final bool alreadyImported;
+  final _LegacyBundle _bundle;
+
+  bool get canImport =>
+      !alreadyImported && counts.values.any((value) => value > 0);
+
+  Map<String, Object?> toJson() => {
+    'source_hash': sourceHash,
+    'source_kinds': sourceKinds,
+    'counts': counts,
+    'warnings': warnings,
+    'duplicates': duplicates,
+    'already_imported': alreadyImported,
+  };
+}
+
+class LegacyImportResult {
+  const LegacyImportResult({required this.importId, required this.inserted});
+
+  final String importId;
+  final Map<String, int> inserted;
+}
+
+class LegacyImportService {
+  LegacyImportService(this._database, this._repository, {Uuid? uuid})
+    : _uuid = uuid ?? const Uuid();
+
+  final AppDatabase _database;
+  final HealthRepository _repository;
+  final Uuid _uuid;
+
+  Future<LegacyImportPreview> preview(
+    List<ImportSourceFile> files, {
+    required Profile fallbackProfile,
+  }) async {
+    if (files.isEmpty) {
+      throw ArgumentError('At least one import file is required');
+    }
+    final ordered = [...files]..sort((a, b) => a.name.compareTo(b.name));
+    final hashBytes = BytesBuilder(copy: false);
+    for (final file in ordered) {
+      hashBytes
+        ..add(utf8.encode(file.name))
+        ..addByte(0)
+        ..add(file.bytes)
+        ..addByte(0);
+    }
+    final sourceHash = sha256.convert(hashBytes.takeBytes()).toString();
+
+    final db = await _database.database;
+    final imported = await db.query(
+      'import_runs',
+      where: 'source_hash = ? AND rolled_back_at IS NULL',
+      whereArgs: [sourceHash],
+      limit: 1,
+    );
+
+    final bundle = _LegacyBundle(
+      sourceHash: sourceHash,
+      fallbackProfileId: fallbackProfile.id,
+      fallbackProfileName: fallbackProfile.displayName,
+    );
+    for (final file in ordered) {
+      _parseFile(bundle, file);
+    }
+    _finalizeSupplementData(bundle);
+
+    final existingProfiles = await _repository.profiles();
+    final existingSupplements = <String, Set<String>>{};
+    for (final profile in existingProfiles) {
+      existingSupplements[profile.id] = (await _repository.supplements(
+        profile.id,
+      )).map((item) => _normalized(item.name)).toSet();
+    }
+    final existingBiomarkers = (await _repository.biomarkers())
+        .map((item) => item.canonicalName)
+        .toSet();
+
+    for (final legacyProfile in bundle.profiles.values) {
+      final sameName = existingProfiles.where(
+        (profile) =>
+            _normalized(profile.displayName) ==
+            _normalized(legacyProfile.displayName),
+      );
+      if (sameName.isNotEmpty && legacyProfile.directProfileId == null) {
+        bundle.duplicates.add(
+          'Profile “${legacyProfile.displayName}” will merge with the existing profile.',
+        );
+      }
+    }
+    for (final item in bundle.supplements) {
+      final profile = bundle.profiles[item.profileKey];
+      final existing = existingProfiles.where(
+        (candidate) =>
+            _normalized(candidate.displayName) ==
+            _normalized(profile?.displayName ?? ''),
+      );
+      if (existing.isNotEmpty &&
+          existingSupplements[existing.first.id]?.contains(
+                _normalized(item.name),
+              ) ==
+              true) {
+        bundle.duplicates.add(
+          'Supplement “${item.name}” already exists for ${existing.first.displayName}.',
+        );
+      }
+    }
+    for (final biomarker in bundle.biomarkers) {
+      if (existingBiomarkers.contains(biomarker.canonicalName)) {
+        bundle.duplicates.add(
+          'Biomarker “${biomarker.displayName}” will reuse the existing catalog entry.',
+        );
+      }
+    }
+
+    return LegacyImportPreview._(
+      sourceHash: sourceHash,
+      sourceKinds: bundle.sourceKinds.toList()..sort(),
+      counts: bundle.counts,
+      warnings: bundle.warnings,
+      duplicates: bundle.duplicates.toSet().toList(),
+      alreadyImported: imported.isNotEmpty,
+      bundle: bundle,
+    );
+  }
+
+  void _parseFile(_LegacyBundle bundle, ImportSourceFile file) {
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(file.bytes));
+    } on Object catch (error) {
+      bundle.warnings.add('${file.name}: invalid JSON ($error)');
+      return;
+    }
+
+    final baseName = file.name.split('/').last.toLowerCase();
+    if (decoded is Map) {
+      final root = Map<String, dynamic>.from(decoded);
+      if (root['schema'] == 'superhealth.snapshot') {
+        bundle.warnings.add(
+          '${file.name}: use Restore/Synchronize for SuperHealth snapshots.',
+        );
+        return;
+      }
+      if (_hasAny(root, const [
+        'products',
+        'schedules',
+        'intakeHistory',
+        'symptomEntries',
+        'symptoms',
+      ])) {
+        bundle.sourceKinds.add('Supplement Manager');
+        _parseSupplementPayload(bundle, root);
+      }
+      if (root['rows'] is List) {
+        _parseNamedList(bundle, baseName, root['rows'] as List);
+      }
+      if (baseName == 'symptoms.json') {
+        _parseSymptomsNode(bundle, root);
+      }
+      return;
+    }
+    if (decoded is List) {
+      _parseNamedList(bundle, baseName, decoded);
+      return;
+    }
+    bundle.warnings.add('${file.name}: unsupported JSON root type.');
+  }
+
+  void _parseNamedList(_LegacyBundle bundle, String name, List<dynamic> rows) {
+    if (name.contains('product')) {
+      bundle.sourceKinds.add('Supplement Manager');
+      bundle.productNodes.addAll(rows.whereType<Map>());
+    } else if (name.contains('intake')) {
+      bundle.sourceKinds.add('Supplement Manager');
+      bundle.intakeNodes.addAll(rows.whereType<Map>());
+    } else if (name == 'profiles.json') {
+      for (final item in rows.whereType<Map>()) {
+        _parseProfile(bundle, Map<String, dynamic>.from(item));
+      }
+    } else if (name.contains('biomarker_list_entries')) {
+      bundle.biomarkerListEntryNodes.addAll(rows.whereType<Map>());
+      bundle.sourceKinds.add('Biomarkers');
+    } else if (name.contains('biomarker_lists')) {
+      bundle.biomarkerListNodes.addAll(rows.whereType<Map>());
+      bundle.sourceKinds.add('Biomarkers');
+    } else if (name.contains('biomarker')) {
+      bundle.sourceKinds.add('Biomarkers');
+      for (final item in rows.whereType<Map>()) {
+        _parseBiomarker(bundle, Map<String, dynamic>.from(item));
+      }
+    } else if (name.contains('measurement')) {
+      bundle.sourceKinds.add('Biomarkers');
+      bundle.measurementNodes.addAll(rows.whereType<Map>());
+    } else if (name.contains('document')) {
+      bundle.sourceKinds.add('Biomarkers');
+      bundle.documentNodes.addAll(rows.whereType<Map>());
+    } else if (name.contains('range')) {
+      bundle.sourceKinds.add('Biomarkers');
+      bundle.rangeNodes.addAll(rows.whereType<Map>());
+    } else if (name.contains('symptom_entries')) {
+      bundle.symptomEntryNodes.addAll(rows.whereType<Map>());
+    } else if (name.contains('symptom_tags')) {
+      bundle.symptomTagNodes.addAll(rows.whereType<Map>());
+    } else {
+      bundle.warnings.add('$name: no recognized dataset name.');
+    }
+  }
+
+  void _parseSupplementPayload(
+    _LegacyBundle bundle,
+    Map<String, dynamic> root,
+  ) {
+    bundle.productNodes.addAll(_maps(root['products']));
+    final schedules = root['schedules'] ?? root['schedule'];
+    if (schedules is Map) {
+      bundle.scheduleNode.addAll(Map<String, dynamic>.from(schedules));
+    }
+    bundle.intakeNodes.addAll(
+      _maps(root['intakeHistory'] ?? root['intake_history']),
+    );
+    for (final item in _maps(root['profiles'])) {
+      _parseProfile(bundle, Map<String, dynamic>.from(item));
+    }
+    final symptoms = root['symptoms'];
+    if (symptoms is Map) {
+      _parseSymptomsNode(bundle, Map<String, dynamic>.from(symptoms));
+    }
+    bundle.symptomEntryNodes.addAll(
+      _maps(root['symptomEntries'] ?? root['symptom_entries']),
+    );
+    bundle.symptomTagNodes.addAll(
+      _maps(root['symptomTags'] ?? root['symptom_tags']),
+    );
+  }
+
+  void _parseSymptomsNode(_LegacyBundle bundle, Map<String, dynamic> node) {
+    bundle.symptomEntryNodes.addAll(
+      _maps(node['entries'] ?? node['symptomEntries']),
+    );
+    bundle.symptomTagNodes.addAll(_maps(node['tags'] ?? node['symptomTags']));
+  }
+
+  void _parseProfile(_LegacyBundle bundle, Map<String, dynamic> row) {
+    final displayName =
+        (row['display_name'] ?? row['displayName'] ?? row['name'])
+            ?.toString()
+            .trim();
+    if (displayName == null || displayName.isEmpty) return;
+    final legacyId = row['id']?.toString();
+    final key = legacyId == null || legacyId.isEmpty
+        ? 'name:${_normalized(displayName)}'
+        : 'id:$legacyId';
+    DateTime? dateOfBirth = DateTime.tryParse(
+      (row['date_of_birth'] ?? row['dob'] ?? '').toString(),
+    );
+    if (dateOfBirth == null && row['birthYear'] is num) {
+      dateOfBirth = DateTime((row['birthYear'] as num).toInt());
+    }
+    final weight = row['weight_kg'] ?? row['weight'];
+    bundle.profiles[key] = _LegacyProfile(
+      key: key,
+      legacyId: legacyId,
+      displayName: displayName,
+      dateOfBirth: dateOfBirth,
+      sex: (row['sex'] ?? row['gender'])?.toString(),
+      weightKg: weight is num ? weight.toDouble() : null,
+      notes: row['notes']?.toString() ?? '',
+    );
+  }
+
+  void _parseBiomarker(_LegacyBundle bundle, Map<String, dynamic> row) {
+    final displayName =
+        (row['display_name'] ??
+                row['displayName'] ??
+                row['name'] ??
+                row['canonical_name'])
+            ?.toString()
+            .trim();
+    if (displayName == null || displayName.isEmpty) return;
+    final canonical = HealthRepository.normalizeName(
+      (row['canonical_name'] ?? row['canonicalName'] ?? displayName).toString(),
+    );
+    bundle.biomarkers.add(
+      _LegacyBiomarker(
+        legacyId: row['id']?.toString() ?? canonical,
+        canonicalName: canonical,
+        displayName: displayName,
+        category: row['category']?.toString() ?? '',
+        unit: (row['default_unit'] ?? row['unit'])?.toString() ?? '',
+        priceEur: _double(row['price_eur'] ?? row['price']),
+        description: row['description']?.toString() ?? '',
+        synonyms: _stringList(row['synonyms'] ?? row['synonyms_json']),
+      ),
+    );
+  }
+
+  static bool _hasAny(Map<String, dynamic> root, List<String> keys) =>
+      keys.any(root.containsKey);
+
+  static List<Map<dynamic, dynamic>> _maps(Object? node) {
+    if (node is List) return node.whereType<Map>().toList();
+    if (node is Map) return node.values.whereType<Map>().toList();
+    return const [];
+  }
+
+  static double? _double(Object? value) =>
+      value is num ? value.toDouble() : double.tryParse('$value');
+
+  static List<String> _stringList(Object? value) {
+    if (value is String) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is List) return decoded.map((item) => '$item').toList();
+      } on Object {
+        return value.split(',').map((item) => item.trim()).toList();
+      }
+    }
+    return value is List ? value.map((item) => '$item').toList() : const [];
+  }
+
+  static String _normalized(String value) =>
+      value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+  void _finalizeSupplementData(_LegacyBundle bundle) {
+    final fallbackKey = 'direct:${bundle.fallbackProfileId}';
+    bundle.profiles.putIfAbsent(
+      fallbackKey,
+      () => _LegacyProfile(
+        key: fallbackKey,
+        displayName: bundle.fallbackProfileName,
+        directProfileId: bundle.fallbackProfileId,
+      ),
+    );
+
+    String profileKeyForName(Object? rawName) {
+      final name = rawName?.toString().trim();
+      if (name == null || name.isEmpty) return fallbackKey;
+      final existing = bundle.profiles.values.where(
+        (profile) => _normalized(profile.displayName) == _normalized(name),
+      );
+      if (existing.isNotEmpty) return existing.first.key;
+      final key = 'name:${_normalized(name)}';
+      bundle.profiles[key] = _LegacyProfile(key: key, displayName: name);
+      return key;
+    }
+
+    for (final userName in bundle.scheduleNode.keys) {
+      bundle.supplementProfileKeys.add(profileKeyForName(userName));
+    }
+    for (final row in bundle.intakeNodes) {
+      bundle.supplementProfileKeys.add(
+        profileKeyForName(row['userName'] ?? row['user_name']),
+      );
+    }
+    for (final row in [
+      ...bundle.symptomEntryNodes,
+      ...bundle.symptomTagNodes,
+    ]) {
+      bundle.supplementProfileKeys.add(
+        profileKeyForName(row['userName'] ?? row['user_name']),
+      );
+    }
+    if (bundle.supplementProfileKeys.isEmpty) {
+      bundle.supplementProfileKeys.add(fallbackKey);
+    }
+
+    final supplementByToken = <String, _LegacySupplement>{};
+    for (final raw in bundle.productNodes) {
+      final row = Map<String, dynamic>.from(raw);
+      final name = row['name']?.toString().trim();
+      if (name == null || name.isEmpty) continue;
+      for (final profileKey in bundle.supplementProfileKeys) {
+        final token = '$profileKey|${_normalized(name)}';
+        supplementByToken[token] = _LegacySupplement(
+          token: token,
+          profileKey: profileKey,
+          name: name,
+          brand: row['brand']?.toString() ?? '',
+          form: row['form']?.toString() ?? '',
+          ingredients: _maps(
+            row['ingredients'],
+          ).map((item) => Map<String, Object?>.from(item)).toList(),
+          unitsPerContainer: (row['units_per_container'] as num?)?.toInt(),
+          containerCount: _double(
+            row['num_containers'] ?? row['container_count'],
+          ),
+          priceEur: _double(row['price']),
+          bioavailability: row['bioavailability']?.toString() ?? '',
+          lowStockAlerts: row['low_stock_alerts_enabled'] as bool? ?? true,
+        );
+      }
+    }
+    bundle.supplements.addAll(supplementByToken.values);
+
+    final groupedSchedules = <String, _LegacySchedule>{};
+    bundle.scheduleNode.forEach((rawUserName, rawUserSchedule) {
+      if (rawUserSchedule is! Map) return;
+      final profileKey = profileKeyForName(rawUserName);
+      rawUserSchedule.forEach((rawProductName, rawDaily) {
+        if (rawDaily is! Map) return;
+        final productName = '$rawProductName';
+        for (final dayEntry in rawDaily.entries) {
+          if (dayEntry.value is! Map) continue;
+          final dayMap = dayEntry.value as Map;
+          for (final period in const ['AM', 'PM']) {
+            final dose = _double(dayMap[period]) ?? 0;
+            if (dose <= 0) continue;
+            final key = '$profileKey|${_normalized(productName)}|$period|$dose';
+            final grouped = groupedSchedules.putIfAbsent(
+              key,
+              () => _LegacySchedule(
+                token: key,
+                profileKey: profileKey,
+                productName: productName,
+                dose: dose,
+                unit: 'unit',
+                timeOfDay: period,
+              ),
+            );
+            grouped.weekdays.add('${dayEntry.key}');
+          }
+        }
+      });
+    });
+    bundle.schedules.addAll(groupedSchedules.values);
+
+    for (var index = 0; index < bundle.intakeNodes.length; index++) {
+      final row = Map<String, dynamic>.from(bundle.intakeNodes[index]);
+      final productName = (row['productName'] ?? row['product_name'])
+          ?.toString()
+          .trim();
+      if (productName == null || productName.isEmpty) continue;
+      final profileKey = profileKeyForName(row['userName'] ?? row['user_name']);
+      final timestamp = DateTime.tryParse('${row['timestamp']}');
+      if (timestamp == null) {
+        bundle.warnings.add(
+          'An intake for $productName has no valid timestamp.',
+        );
+        continue;
+      }
+      bundle.intakes.add(
+        _LegacyIntake(
+          token: '${row['id'] ?? index}|$profileKey|$productName',
+          profileKey: profileKey,
+          productName: productName,
+          takenAt: timestamp,
+          dose: _double(row['amount']) ?? 1,
+          unit: row['unit']?.toString() ?? 'unit',
+          ingredients: _maps(
+            row['ingredientsSnapshot'],
+          ).map((item) => Map<String, Object?>.from(item)).toList(),
+        ),
+      );
+    }
+
+    final tags = <String, Map<String, dynamic>>{};
+    for (final raw in bundle.symptomTagNodes) {
+      final row = Map<String, dynamic>.from(raw);
+      final id = row['id']?.toString();
+      if (id != null) tags[id] = row;
+    }
+    for (
+      var entryIndex = 0;
+      entryIndex < bundle.symptomEntryNodes.length;
+      entryIndex++
+    ) {
+      final row = Map<String, dynamic>.from(
+        bundle.symptomEntryNodes[entryIndex],
+      );
+      final profileKey = profileKeyForName(row['userName'] ?? row['user_name']);
+      final observedAt = DateTime.tryParse(
+        (row['checkInTimestamp'] ?? row['date'] ?? '').toString(),
+      );
+      if (observedAt == null) continue;
+      final scoresNode = row['tagScores'] ?? row['tag_scores'];
+      if (scoresNode is! Map) continue;
+      for (final scoreEntry in scoresNode.entries) {
+        final tagId = '${scoreEntry.key}';
+        final tag = tags[tagId];
+        final name = tag?['name']?.toString() ?? tagId;
+        final score =
+            (scoreEntry.value as num?)?.toInt() ??
+            int.tryParse('${scoreEntry.value}');
+        if (score == null) continue;
+        bundle.events.add(
+          _LegacyEvent(
+            token: '$entryIndex|$tagId|${observedAt.toIso8601String()}',
+            profileKey: profileKey,
+            name: name,
+            kind: tag?['isSymptom'] == false
+                ? EventKind.tag
+                : EventKind.symptom,
+            observedAt: observedAt,
+            score: score.clamp(0, 5),
+            notes: row['note']?.toString() ?? '',
+            colorValue: tag?['color'] is num
+                ? (tag!['color'] as num).toInt()
+                : null,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<LegacyImportResult> commit(LegacyImportPreview preview) async {
+    if (!preview.canImport) {
+      throw StateError('This preview cannot be imported');
+    }
+    final bundle = preview._bundle;
+    final db = await _database.database;
+    final importId = _uuid.v4();
+    final inserted = <String, int>{};
+    var auditSequence = 0;
+
+    await db.transaction((txn) async {
+      final already = await txn.query(
+        'import_runs',
+        where: 'source_hash = ? AND rolled_back_at IS NULL',
+        whereArgs: [preview.sourceHash],
+        limit: 1,
+      );
+      if (already.isNotEmpty) {
+        throw StateError('Source has already been imported');
+      }
+
+      await txn.insert('import_runs', {
+        'id': importId,
+        'source_type': preview.sourceKinds.join(', '),
+        'source_hash': preview.sourceHash,
+        'profile_id': bundle.fallbackProfileId,
+        'preview_json': jsonEncode(preview.toJson()),
+        'imported_at': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      Future<bool> insertAudited(
+        String table,
+        String rowId,
+        Map<String, Object?> row,
+      ) async {
+        final existing = await txn.query(
+          table,
+          where: 'id = ?',
+          whereArgs: [rowId],
+          limit: 1,
+        );
+        if (existing.isNotEmpty) return false;
+        await txn.insert(table, row);
+        await txn.insert('import_audit', {
+          'import_id': importId,
+          'sequence': auditSequence++,
+          'table_name': table,
+          'row_id': rowId,
+          'action': 'insert',
+        });
+        inserted[table] = (inserted[table] ?? 0) + 1;
+        return true;
+      }
+
+      final existingProfiles = await txn.query(
+        'profiles',
+        where: 'deleted = 0',
+      );
+      final profileIds = <String, String>{};
+      for (final profile in bundle.profiles.values) {
+        if (profile.directProfileId != null) {
+          profileIds[profile.key] = profile.directProfileId!;
+          continue;
+        }
+        final matching = existingProfiles.where(
+          (row) =>
+              _normalized('${row['display_name']}') ==
+              _normalized(profile.displayName),
+        );
+        if (matching.isNotEmpty) {
+          profileIds[profile.key] = '${matching.first['id']}';
+          continue;
+        }
+        final id = _legacyId(bundle.sourceHash, 'profile', profile.key);
+        final now = DateTime.now();
+        await insertAudited(
+          'profiles',
+          id,
+          Profile(
+            id: id,
+            displayName: profile.displayName,
+            dateOfBirth: profile.dateOfBirth,
+            sex: profile.sex,
+            weightKg: profile.weightKg,
+            notes: profile.notes,
+            createdAt: now,
+            updatedAt: now,
+          ).toMap(),
+        );
+        profileIds[profile.key] = id;
+      }
+
+      String resolveProfile(String? legacyId) {
+        if (legacyId != null) {
+          final byId = bundle.profiles['id:$legacyId'];
+          if (byId != null) return profileIds[byId.key]!;
+        }
+        return bundle.fallbackProfileId;
+      }
+
+      final existingBiomarkers = await txn.query(
+        'biomarkers',
+        where: 'deleted = 0',
+      );
+      final biomarkerIds = <String, String>{};
+      for (final item in bundle.biomarkers) {
+        final matching = existingBiomarkers.where(
+          (row) => row['canonical_name'] == item.canonicalName,
+        );
+        if (matching.isNotEmpty) {
+          biomarkerIds[item.legacyId] = '${matching.first['id']}';
+          continue;
+        }
+        final id = _legacyId(bundle.sourceHash, 'biomarker', item.legacyId);
+        final now = DateTime.now();
+        await insertAudited(
+          'biomarkers',
+          id,
+          Biomarker(
+            id: id,
+            canonicalName: item.canonicalName,
+            displayName: item.displayName,
+            category: item.category,
+            defaultUnit: item.unit,
+            priceEur: item.priceEur,
+            description: item.description,
+            synonyms: item.synonyms,
+            createdAt: now,
+            updatedAt: now,
+          ).toMap(),
+        );
+        biomarkerIds[item.legacyId] = id;
+      }
+      for (final row in existingBiomarkers) {
+        biomarkerIds.putIfAbsent('${row['id']}', () => '${row['id']}');
+      }
+
+      final supplementIds = <String, String>{};
+      for (final item in bundle.supplements) {
+        final profileId = profileIds[item.profileKey]!;
+        final existing = await txn.query(
+          'supplements',
+          where: 'profile_id = ? AND lower(name) = lower(?) AND deleted = 0',
+          whereArgs: [profileId, item.name],
+          limit: 1,
+        );
+        if (existing.isNotEmpty) {
+          supplementIds[item.token] = '${existing.first['id']}';
+          continue;
+        }
+        final id = _legacyId(bundle.sourceHash, 'supplement', item.token);
+        final now = DateTime.now();
+        await insertAudited(
+          'supplements',
+          id,
+          Supplement(
+            id: id,
+            profileId: profileId,
+            name: item.name,
+            brand: item.brand,
+            form: item.form,
+            ingredients: item.ingredients,
+            unitsPerContainer: item.unitsPerContainer,
+            containerCount: item.containerCount,
+            priceEur: item.priceEur,
+            bioavailability: item.bioavailability,
+            lowStockAlerts: item.lowStockAlerts,
+            sourceId: item.token,
+            createdAt: now,
+            updatedAt: now,
+          ).toMap(),
+        );
+        supplementIds[item.token] = id;
+      }
+
+      for (final item in bundle.schedules) {
+        final supplementToken =
+            '${item.profileKey}|${_normalized(item.productName)}';
+        final supplementId = supplementIds[supplementToken];
+        if (supplementId == null) continue;
+        final id = _legacyId(bundle.sourceHash, 'schedule', item.token);
+        final now = DateTime.now();
+        await insertAudited(
+          'supplement_schedules',
+          id,
+          SupplementSchedule(
+            id: id,
+            profileId: profileIds[item.profileKey]!,
+            supplementId: supplementId,
+            dose: item.dose,
+            unit: item.unit,
+            timeOfDay: item.timeOfDay,
+            weekdays: item.weekdays.toList()..sort(),
+            createdAt: now,
+            updatedAt: now,
+          ).toMap(),
+        );
+      }
+
+      for (final item in bundle.intakes) {
+        final supplementToken =
+            '${item.profileKey}|${_normalized(item.productName)}';
+        final supplementId = supplementIds[supplementToken];
+        if (supplementId == null) continue;
+        final id = _legacyId(bundle.sourceHash, 'intake', item.token);
+        final now = DateTime.now();
+        await insertAudited(
+          'supplement_intakes',
+          id,
+          SupplementIntake(
+            id: id,
+            profileId: profileIds[item.profileKey]!,
+            supplementId: supplementId,
+            takenAt: item.takenAt,
+            dose: item.dose,
+            unit: item.unit,
+            ingredientSnapshot: item.ingredients,
+            createdAt: now,
+            updatedAt: now,
+          ).toMap(),
+        );
+      }
+
+      for (final item in bundle.events) {
+        final id = _legacyId(bundle.sourceHash, 'event', item.token);
+        final now = DateTime.now();
+        await insertAudited(
+          'health_events',
+          id,
+          HealthEvent(
+            id: id,
+            profileId: profileIds[item.profileKey]!,
+            kind: item.kind,
+            name: item.name,
+            observedAt: item.observedAt,
+            score: item.score,
+            notes: item.notes,
+            colorValue: item.colorValue,
+            createdAt: now,
+            updatedAt: now,
+          ).toMap(),
+        );
+      }
+
+      final documentIds = <String, String>{};
+      for (var index = 0; index < bundle.documentNodes.length; index++) {
+        final row = Map<String, dynamic>.from(bundle.documentNodes[index]);
+        final oldId = row['id']?.toString() ?? '$index';
+        final id = _legacyId(bundle.sourceHash, 'document', oldId);
+        final now = DateTime.now().toUtc().toIso8601String();
+        await insertAudited('documents', id, {
+          'id': id,
+          'profile_id': resolveProfile(row['profile_id']?.toString()),
+          'file_name':
+              (row['file_name'] ?? row['filename'] ?? 'Imported document')
+                  .toString(),
+          'mime_type': row['mime_type'],
+          'sha256': row['sha256'],
+          'local_path': row['local_path'] ?? row['path'],
+          'one_drive_item_id': row['one_drive_item_id'],
+          'document_date': row['document_date'] ?? row['taken_at'],
+          'parsed_at': row['parsed_at'],
+          'parser_provider': row['parser_provider'],
+          'parser_model': row['parser_model'],
+          'created_at': row['created_at'] ?? now,
+          'updated_at': row['updated_at'] ?? now,
+          'deleted': row['deleted'] == 1 ? 1 : 0,
+        });
+        documentIds[oldId] = id;
+      }
+
+      for (var index = 0; index < bundle.measurementNodes.length; index++) {
+        final row = Map<String, dynamic>.from(bundle.measurementNodes[index]);
+        final oldBiomarkerId = row['biomarker_id']?.toString();
+        final biomarkerId = oldBiomarkerId == null
+            ? null
+            : biomarkerIds[oldBiomarkerId];
+        final value = _double(row['value']);
+        if (biomarkerId == null || value == null) continue;
+        final oldId = row['id']?.toString() ?? '$index';
+        final id = _legacyId(bundle.sourceHash, 'measurement', oldId);
+        final now = DateTime.now();
+        final oldDocumentId = row['document_id']?.toString();
+        await insertAudited(
+          'measurements',
+          id,
+          Measurement(
+            id: id,
+            profileId: resolveProfile(row['profile_id']?.toString()),
+            biomarkerId: biomarkerId,
+            documentId: oldDocumentId == null
+                ? null
+                : documentIds[oldDocumentId],
+            takenAt:
+                DateTime.tryParse(
+                  '${row['taken_at'] ?? row['measured_at'] ?? row['created_at']}',
+                ) ??
+                now,
+            value: value,
+            unit: (row['unit_reported'] ?? row['unit'] ?? '').toString(),
+            labRefLow: _double(row['lab_ref_low']),
+            labRefHigh: _double(row['lab_ref_high']),
+            notes: row['notes']?.toString() ?? '',
+            createdAt: DateTime.tryParse('${row['created_at']}') ?? now,
+            updatedAt: DateTime.tryParse('${row['updated_at']}') ?? now,
+          ).toMap(),
+        );
+      }
+
+      for (var index = 0; index < bundle.rangeNodes.length; index++) {
+        final row = Map<String, dynamic>.from(bundle.rangeNodes[index]);
+        final oldBiomarkerId = row['biomarker_id']?.toString();
+        final biomarkerId = oldBiomarkerId == null
+            ? null
+            : biomarkerIds[oldBiomarkerId];
+        if (biomarkerId == null) continue;
+        final oldId = row['id']?.toString() ?? '$index';
+        final id = _legacyId(bundle.sourceHash, 'range', oldId);
+        final now = DateTime.now().toUtc().toIso8601String();
+        await insertAudited('biomarker_ranges', id, {
+          'id': id,
+          'biomarker_id': biomarkerId,
+          'range_type': (row['range_type'] ?? row['type'] ?? 'lab_reference')
+              .toString(),
+          'sex': row['sex'],
+          'age_min': row['age_min'],
+          'age_max': row['age_max'],
+          'low': row['low'] ?? row['min'],
+          'high': row['high'] ?? row['max'],
+          'optimal_low': row['optimal_low'],
+          'optimal_high': row['optimal_high'],
+          'unit': (row['unit'] ?? '').toString(),
+          'evidence_label': row['evidence_label'],
+          'evidence_url': row['evidence_url'],
+          'notes': row['notes']?.toString() ?? '',
+          'created_at': row['created_at'] ?? now,
+          'updated_at': row['updated_at'] ?? now,
+          'deleted': row['deleted'] == 1 ? 1 : 0,
+        });
+      }
+
+      for (final rawList in bundle.biomarkerListNodes) {
+        final list = Map<String, dynamic>.from(rawList);
+        final oldListId = list['id']?.toString();
+        if (oldListId == null) continue;
+        final planId = _legacyId(bundle.sourceHash, 'lab_plan', oldListId);
+        final now = DateTime.now();
+        final entries = bundle.biomarkerListEntryNodes
+            .where((entry) => entry['list_id']?.toString() == oldListId)
+            .toList();
+        final items = <LabPlanItem>[];
+        for (var index = 0; index < entries.length; index++) {
+          final oldBiomarkerId = entries[index]['biomarker_id']?.toString();
+          final biomarkerId = oldBiomarkerId == null
+              ? null
+              : biomarkerIds[oldBiomarkerId];
+          if (biomarkerId == null) continue;
+          final markerRow = await txn.query(
+            'biomarkers',
+            where: 'id = ?',
+            whereArgs: [biomarkerId],
+            limit: 1,
+          );
+          if (markerRow.isEmpty) continue;
+          items.add(
+            LabPlanItem(
+              id: _legacyId(bundle.sourceHash, 'lab_item', '$oldListId|$index'),
+              planId: planId,
+              biomarkerId: biomarkerId,
+              biomarkerName: '${markerRow.first['display_name']}',
+              tier: LabTier.core,
+              priority: index + 1,
+              rationale: 'Imported from a Biomarkers checklist.',
+              evidenceClass: EvidenceClass.unclassified,
+              priceEur: _double(markerRow.first['price_eur']),
+            ),
+          );
+        }
+        if (items.isEmpty) continue;
+        final plan = LabPlan(
+          id: planId,
+          profileId: resolveProfile(list['profile_id']?.toString()),
+          title: (list['display_name'] ?? list['name'] ?? 'Imported checklist')
+              .toString(),
+          createdAt: DateTime.tryParse('${list['created_at']}') ?? now,
+          updatedAt: DateTime.tryParse('${list['updated_at']}') ?? now,
+          contextHash: 'legacy-import:${preview.sourceHash}',
+          status: 'imported',
+          items: items,
+        );
+        final didInsert = await insertAudited(
+          'lab_plans',
+          planId,
+          plan.toMap(),
+        );
+        if (didInsert) {
+          for (final item in items) {
+            await insertAudited('lab_plan_items', item.id, item.toMap());
+          }
+        }
+      }
+    });
+
+    return LegacyImportResult(importId: importId, inserted: inserted);
+  }
+
+  Future<void> rollback(String importId) async {
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final run = await txn.query(
+        'import_runs',
+        where: 'id = ? AND rolled_back_at IS NULL',
+        whereArgs: [importId],
+        limit: 1,
+      );
+      if (run.isEmpty) throw StateError('Active import run not found');
+      final audit = await txn.query(
+        'import_audit',
+        where: 'import_id = ?',
+        whereArgs: [importId],
+        orderBy: 'sequence DESC',
+      );
+      for (final entry in audit) {
+        final table = '${entry['table_name']}';
+        if (!AppDatabase.synchronizedTables.contains(table)) continue;
+        final rowId = '${entry['row_id']}';
+        if (entry['action'] == 'insert') {
+          await txn.delete(table, where: 'id = ?', whereArgs: [rowId]);
+        } else if (entry['action'] == 'update' &&
+            entry['before_json'] != null) {
+          final before = jsonDecode('${entry['before_json']}');
+          if (before is Map) {
+            await txn.insert(
+              table,
+              Map<String, Object?>.from(before),
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
+        }
+      }
+      await txn.update(
+        'import_runs',
+        {'rolled_back_at': DateTime.now().toUtc().toIso8601String()},
+        where: 'id = ?',
+        whereArgs: [importId],
+      );
+    });
+  }
+
+  String _legacyId(String hash, String kind, String token) {
+    final digest = sha256.convert(utf8.encode('$hash|$kind|$token')).toString();
+    return 'legacy-${digest.substring(0, 32)}';
+  }
+}
+
+class _LegacyBundle {
+  _LegacyBundle({
+    required this.sourceHash,
+    required this.fallbackProfileId,
+    required this.fallbackProfileName,
+  });
+
+  final String sourceHash;
+  final String fallbackProfileId;
+  final String fallbackProfileName;
+  final Set<String> sourceKinds = {};
+  final List<String> warnings = [];
+  final List<String> duplicates = [];
+  final Map<String, _LegacyProfile> profiles = {};
+  final Set<String> supplementProfileKeys = {};
+  final List<Map<dynamic, dynamic>> productNodes = [];
+  final Map<String, dynamic> scheduleNode = {};
+  final List<Map<dynamic, dynamic>> intakeNodes = [];
+  final List<Map<dynamic, dynamic>> symptomEntryNodes = [];
+  final List<Map<dynamic, dynamic>> symptomTagNodes = [];
+  final List<_LegacySupplement> supplements = [];
+  final List<_LegacySchedule> schedules = [];
+  final List<_LegacyIntake> intakes = [];
+  final List<_LegacyEvent> events = [];
+  final List<_LegacyBiomarker> biomarkers = [];
+  final List<Map<dynamic, dynamic>> measurementNodes = [];
+  final List<Map<dynamic, dynamic>> documentNodes = [];
+  final List<Map<dynamic, dynamic>> rangeNodes = [];
+  final List<Map<dynamic, dynamic>> biomarkerListNodes = [];
+  final List<Map<dynamic, dynamic>> biomarkerListEntryNodes = [];
+
+  Map<String, int> get counts => {
+    'profiles': profiles.values
+        .where((item) => item.directProfileId == null)
+        .length,
+    'supplements': supplements.length,
+    'schedules': schedules.length,
+    'intakes': intakes.length,
+    'symptoms_and_tags': events.length,
+    'biomarkers': biomarkers.length,
+    'measurements': measurementNodes.length,
+    'documents': documentNodes.length,
+    'ranges': rangeNodes.length,
+    'checklists': biomarkerListNodes.length,
+  };
+}
+
+class _LegacyProfile {
+  const _LegacyProfile({
+    required this.key,
+    required this.displayName,
+    this.legacyId,
+    this.directProfileId,
+    this.dateOfBirth,
+    this.sex,
+    this.weightKg,
+    this.notes = '',
+  });
+
+  final String key;
+  final String displayName;
+  final String? legacyId;
+  final String? directProfileId;
+  final DateTime? dateOfBirth;
+  final String? sex;
+  final double? weightKg;
+  final String notes;
+}
+
+class _LegacySupplement {
+  const _LegacySupplement({
+    required this.token,
+    required this.profileKey,
+    required this.name,
+    required this.brand,
+    required this.form,
+    required this.ingredients,
+    required this.unitsPerContainer,
+    required this.containerCount,
+    required this.priceEur,
+    required this.bioavailability,
+    required this.lowStockAlerts,
+  });
+
+  final String token;
+  final String profileKey;
+  final String name;
+  final String brand;
+  final String form;
+  final List<Map<String, Object?>> ingredients;
+  final int? unitsPerContainer;
+  final double? containerCount;
+  final double? priceEur;
+  final String bioavailability;
+  final bool lowStockAlerts;
+}
+
+class _LegacySchedule {
+  _LegacySchedule({
+    required this.token,
+    required this.profileKey,
+    required this.productName,
+    required this.dose,
+    required this.unit,
+    required this.timeOfDay,
+  });
+
+  final String token;
+  final String profileKey;
+  final String productName;
+  final double dose;
+  final String unit;
+  final String timeOfDay;
+  final Set<String> weekdays = {};
+}
+
+class _LegacyIntake {
+  const _LegacyIntake({
+    required this.token,
+    required this.profileKey,
+    required this.productName,
+    required this.takenAt,
+    required this.dose,
+    required this.unit,
+    required this.ingredients,
+  });
+
+  final String token;
+  final String profileKey;
+  final String productName;
+  final DateTime takenAt;
+  final double dose;
+  final String unit;
+  final List<Map<String, Object?>> ingredients;
+}
+
+class _LegacyEvent {
+  const _LegacyEvent({
+    required this.token,
+    required this.profileKey,
+    required this.name,
+    required this.kind,
+    required this.observedAt,
+    required this.score,
+    required this.notes,
+    required this.colorValue,
+  });
+
+  final String token;
+  final String profileKey;
+  final String name;
+  final EventKind kind;
+  final DateTime observedAt;
+  final int score;
+  final String notes;
+  final int? colorValue;
+}
+
+class _LegacyBiomarker {
+  const _LegacyBiomarker({
+    required this.legacyId,
+    required this.canonicalName,
+    required this.displayName,
+    required this.category,
+    required this.unit,
+    required this.priceEur,
+    required this.description,
+    required this.synonyms,
+  });
+
+  final String legacyId;
+  final String canonicalName;
+  final String displayName;
+  final String category;
+  final String unit;
+  final double? priceEur;
+  final String description;
+  final List<String> synonyms;
+}
