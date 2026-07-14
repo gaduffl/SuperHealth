@@ -560,21 +560,6 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  Future<LegacyImportPreview> previewOneDriveLegacyImport() async {
-    return _withBusy(() async {
-      final cloudFiles = await oneDriveService.downloadLegacyFiles();
-      if (cloudFiles.isEmpty) {
-        throw StateError(
-          'No legacy Biomarkers or Supplement Manager files were found.',
-        );
-      }
-      return importService.preview([
-        for (final file in cloudFiles)
-          ImportSourceFile(name: file.name, bytes: file.bytes),
-      ], fallbackProfile: activeProfile!);
-    });
-  }
-
   Future<LegacyImportResult> commitImport(LegacyImportPreview preview) async {
     return _withBusy(() async {
       final result = await importService.commit(preview);

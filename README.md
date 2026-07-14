@@ -12,7 +12,7 @@ SuperHealth is a private, Android-first personal health companion combining supp
 - Saved lab plans plus PDF, CSV, and JSON export.
 - Direct BYOK integrations for OpenAI, Anthropic, and Gemini, with live model discovery and conservative per-model reasoning/tool controls.
 - Separate model configuration for PDF parsing and the main advisor.
-- OneDrive AppFolder snapshot sync, document upload, conflict recording, and legacy-cloud import.
+- OneDrive snapshot sync through a dedicated SuperHealth Microsoft identity, using either a private AppFolder or an explicitly selected shared family folder.
 - Previewed import of existing Supplement Manager and Biomarkers JSON data with deterministic deduplication, audit history, and rollback support.
 - A profile-scoped advisor workspace. The AI may read workspace text and propose file changes, but every create, replace, or delete requires an exact user preview and confirmation.
 
@@ -22,7 +22,7 @@ SuperHealth is a private, Android-first personal health companion combining supp
 - API keys and OneDrive tokens use Android secure storage and are never synchronized, exported, or placed in AI context.
 - The advisor receives a serialized, read-only active-profile snapshot. No AI service is given a database or repository handle.
 - Complete health context is never silently truncated. The app asks for a larger-context model when a known model limit is insufficient.
-- OneDrive uses `Files.ReadWrite.AppFolder`; SuperHealth cannot browse the rest of the drive.
+- Private OneDrive mode requests only `Files.ReadWrite.AppFolder`. Shared-family mode requests delegated `Files.ReadWrite`, lists folders solely for explicit selection, and constrains all app file operations to a `SuperHealth` subfolder beneath the selected folder.
 - Provider-hosted web search and code execution are exposed only for models whose support is registered from provider documentation.
 - Recommendations distinguish guideline-supported, longevity-oriented, experimental, and unclassified evidence. The app is planning support, not diagnosis or emergency care.
 
