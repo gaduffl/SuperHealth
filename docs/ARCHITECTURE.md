@@ -25,9 +25,9 @@ PDF parsing ports the useful extraction contract from the former Biomarkers back
 
 ## Synchronization
 
-OneDrive uses Microsoft Graph AppFolder scope and a single `superhealth_snapshot.json`. Synchronization downloads, validates, merges, records divergent changes, uploads with an ETag, and advances a per-row sync shadow. API keys, tokens, import audit tables, and local device paths are excluded.
+OneDrive uses a dedicated SuperHealth Microsoft app registration, Microsoft Graph AppFolder scope, and a single `superhealth_snapshot.json`. Synchronization downloads, validates, merges, records divergent changes, uploads with an ETag, and advances a per-row sync shadow. Stored tokens are bound to the configured client ID so an upgrade cannot reuse credentials issued to another app identity. API keys, tokens, import audit tables, and local device paths are excluded.
 
-Legacy exports are read without modification and passed through the same previewed import pipeline. Import hashes prevent accidental repeats, deterministic identifiers make retries safe, and an audit table supports rollback.
+AppFolder isolation prevents direct reads from the former apps’ folders. Legacy exports are selected explicitly through Android’s file picker, read without modification, and passed through the previewed import pipeline. Import hashes prevent accidental repeats, deterministic identifiers make retries safe, and an audit table supports rollback.
 
 ## Lab plans
 
