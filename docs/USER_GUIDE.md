@@ -19,6 +19,10 @@ SQLite on each device is the working record. API keys and OneDrive tokens are ne
 
 AppFolder isolation prevents direct reads from the former apps’ private folders. For the one-time migration, select the old JSON exports explicitly with Android’s file picker. After reviewing and committing the import, use **Sync now** to populate the chosen SuperHealth storage.
 
+## Adding another phone
+
+On the welcome screen, choose **Restore from OneDrive** instead of creating a placeholder profile. Connect with that person’s Microsoft account, choose the same shared family folder, and tap **Sync now**. After the remote profiles appear, return to the main screen. This avoids duplicate profiles with different internal IDs.
+
 ## Daily use
 
 - Add supplement products and schedules under Track. Tap a product to log an intake.
