@@ -104,7 +104,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SectionHeader(
             title: 'OneDrive AppFolder',
             subtitle:
-                'Private snapshot and approved files; no Google or PC linking',
+                'Dedicated SuperHealth storage; no Google or PC linking',
             action: _oneDriveSignedIn == true
                 ? const Chip(
                     avatar: Icon(Icons.check, size: 16),
@@ -166,25 +166,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'Import Supplement Manager or Biomarkers data',
                   ),
                   subtitle: const Text(
-                    'Select supplement_sync.json, individual backup JSON files, or Biomarkers JSON files.',
+                    'Use Android’s file picker for exported JSON files, including files stored in OneDrive.',
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: controller.busy ? null : () => _importData(controller),
                 ),
-                if (_oneDriveSignedIn == true) ...[
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.cloud_download_outlined),
-                    title: const Text('Import legacy files from OneDrive'),
-                    subtitle: const Text(
-                      'Reads known exports from AppFolder; originals stay untouched.',
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: controller.busy
-                        ? null
-                        : () => _importOneDriveLegacy(controller),
-                  ),
-                ],
               ],
             ),
           ),
@@ -222,7 +208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 22),
             child: Text(
-              'SuperHealth 0.1.0 · Personal-use Android build',
+              'SuperHealth 0.1.1 · Personal-use Android build',
               textAlign: TextAlign.center,
             ),
           ),
@@ -341,29 +327,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SnackBar(
               content: Text(
                 'Import completed: ${result.inserted.values.fold(0, (a, b) => a + b)} rows.',
-              ),
-            ),
-          );
-        }
-      }
-    } on Object catch (error) {
-      if (mounted) await showAppError(context, error);
-    }
-  }
-
-  Future<void> _importOneDriveLegacy(AppController controller) async {
-    try {
-      final preview = await controller.previewOneDriveLegacyImport();
-      if (!mounted) return;
-      final approved = await _showImportPreview(preview);
-      if (approved == true) {
-        final result = await controller.commitImport(preview);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'OneDrive import completed: '
-                '${result.inserted.values.fold(0, (a, b) => a + b)} rows.',
               ),
             ),
           );
