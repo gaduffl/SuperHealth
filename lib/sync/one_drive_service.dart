@@ -121,8 +121,7 @@ class OneDriveService {
   static const _authority = 'https://login.microsoftonline.com/consumers';
   static const _graphBase = 'https://graph.microsoft.com/v1.0';
   static const _snapshotName = 'superhealth_snapshot.json';
-  static const _appFolderScope =
-      'offline_access Files.ReadWrite.AppFolder';
+  static const _appFolderScope = 'offline_access Files.ReadWrite.AppFolder';
   static const _sharedFolderScope = 'offline_access Files.ReadWrite';
   static const _simpleUploadLimit = 4 * 1024 * 1024;
   static const _chunkSize = 320 * 1024;
@@ -703,9 +702,7 @@ class OneDriveService {
   };
 
   String _modeStorageValue(OneDriveStorageMode mode) =>
-      mode == OneDriveStorageMode.appFolder
-      ? 'app_folder'
-      : 'shared_folder';
+      mode == OneDriveStorageMode.appFolder ? 'app_folder' : 'shared_folder';
 
   String _safeRelativePath(String input) {
     final normalized = input.replaceAll('\\', '/');
