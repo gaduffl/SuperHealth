@@ -314,10 +314,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             SimpleDialogOption(
-              onPressed: () => Navigator.pop(
-                dialogContext,
-                OneDriveStorageMode.appFolder,
-              ),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, OneDriveStorageMode.appFolder),
               child: const ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.lock_outline),
