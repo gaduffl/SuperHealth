@@ -76,6 +76,7 @@ void main() {
 
     expect(find.text('Welcome to SuperHealth'), findsOneWidget);
     expect(find.text('Create first profile'), findsOneWidget);
+    expect(find.text('Restore from OneDrive'), findsOneWidget);
 
     controller.dispose();
   });
