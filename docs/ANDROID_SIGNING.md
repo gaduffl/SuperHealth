@@ -1,12 +1,41 @@
 # Android signing
 
-The project uses debug signing when no private release key is supplied. That is convenient for a first personal install, but APK updates require every build to use the same key.
+APK updates require every build to use the same private key. Local development
+may use debug signing, but CI deliberately refuses to create a release until a
+permanent key is configured.
 
-Create and retain a private upload keystore outside this repository. Configure these GitHub repository secrets:
+## Recommended setup
+
+From a trusted macOS, Linux, or WSL machine with Java's `keytool` and the
+[GitHub CLI](https://cli.github.com/) installed, run:
+
+```bash
+gh auth login
+bash tool/configure_android_signing.sh
+```
+
+The interactive script offers two modes:
+
+1. Generate a new dedicated SuperHealth keystore. Use this for a new app.
+2. Reuse an existing keystore. Use this only when new builds must update an app
+   already installed with that key.
+
+Passwords are read without echo and passed directly to GitHub CLI; they are not
+written to the repository or printed. The script configures these repository
+secrets:
 
 - `ANDROID_KEYSTORE_BASE64`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 - `ANDROID_STORE_PASSWORD`
 
-The workflow decodes the keystore only inside the Actions runner. Never commit a keystore or password. Back up the keystore securely; losing it prevents updating an installed build signed with that key.
+The workflow decodes the keystore only inside the Actions runner and deletes it
+with the ephemeral runner. Never commit a keystore or password.
+
+Back up the keystore and its passwords in separate secure locations. Losing
+either prevents updating an installed build signed with that key. After setup,
+rerun the PR's Flutter workflow and confirm that `Require private Android
+signing` and `Build release APK` both pass before merging.
+
+The connected ChatGPT GitHub integration cannot create Actions secrets, so this
+one security-sensitive setup must be run by the repository owner.
