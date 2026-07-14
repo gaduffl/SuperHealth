@@ -38,7 +38,11 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
         run: flutter build apk --release
-      - uses: actions/upload-artifact@v4
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        # Building is a required gate. Artifact retention is best-effort because
+        # repository-level Actions storage quotas are outside this workflow.
+        continue-on-error: true
         with:
           name: superhealth-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
