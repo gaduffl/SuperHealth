@@ -289,7 +289,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (folder == null) {
       return 'Shared-folder access is approved; select the folder to use.';
     }
-    return 'Shared: ' + folder.name + '/SuperHealth';
+    return 'Shared: ${folder.name}/SuperHealth';
   }
 
   Future<OneDriveStorageMode?> _chooseStorageMode() =>
@@ -456,9 +456,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Using ' + chosen.name + '/SuperHealth for shared data.',
-            ),
+            content: Text('Using ${chosen.name}/SuperHealth for shared data.'),
           ),
         );
       }
