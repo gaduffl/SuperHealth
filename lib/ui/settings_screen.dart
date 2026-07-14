@@ -166,7 +166,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'Import Supplement Manager or Biomarkers data',
                   ),
                   subtitle: const Text(
-                    'Use Android’s file picker for exported JSON files, including files stored in OneDrive.',
+                    'Use Android’s file picker for exported JSON files, '
+                    'including files stored in OneDrive.',
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: controller.busy ? null : () => _importData(controller),
