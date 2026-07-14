@@ -221,7 +221,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'including files stored in OneDrive.',
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: controller.busy ? null : () => _importData(controller),
+                  onTap: controller.busy || controller.activeProfile == null
+                      ? null
+                      : () => _importData(controller),
                 ),
               ],
             ),
