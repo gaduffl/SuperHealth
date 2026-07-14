@@ -37,5 +37,16 @@ either prevents updating an installed build signed with that key. After setup,
 rerun the PR's Flutter workflow and confirm that `Require private Android
 signing` and `Build release APK` both pass before merging.
 
+After a successful merge to `main`, CI publishes the signed APK under the
+matching private GitHub Release, for example `v0.1.0+1`. Release assets are
+used for installation downloads because they do not consume Actions artifact
+storage. Increment both parts of the `version` field in `pubspec.yaml` before
+publishing an update so Android receives a higher build number and GitHub gets
+a distinct release tag.
+
+Repository contents remain read-only during pull-request verification. Only
+the `main`-only release job receives `contents: write`, which it uses to create
+the version tag and upload the APK.
+
 The connected ChatGPT GitHub integration cannot create Actions secrets, so this
 one security-sensitive setup must be run by the repository owner.
