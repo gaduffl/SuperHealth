@@ -9,6 +9,7 @@ import '../ai/ai_models.dart';
 import '../ai/ai_settings.dart';
 import '../app/app_controller.dart';
 import '../import/legacy_import_service.dart';
+import '../sync/one_drive_service.dart';
 import 'common.dart';
 import 'dialogs.dart';
 
@@ -21,6 +22,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _oneDriveSignedIn;
+  OneDriveStorageMode? _oneDriveMode;
+  OneDriveFolder? _oneDriveFolder;
 
   @override
   void initState() {
@@ -29,16 +32,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _refreshOneDriveStatus() async {
-    final value = await context
-        .read<AppController>()
-        .oneDriveService
-        .isSignedIn();
-    if (mounted) setState(() => _oneDriveSignedIn = value);
+    final service = context.read<AppController>().oneDriveService;
+    final signedIn = await service.isSignedIn();
+    final mode = signedIn ? await service.currentStorageMode() : null;
+    final folder = mode == OneDriveStorageMode.sharedFolder
+        ? await service.selectedFolder()
+        : null;
+    if (!mounted) return;
+    setState(() {
+      _oneDriveSignedIn = signedIn;
+      _oneDriveMode = mode;
+      _oneDriveFolder = folder;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final oneDriveReady =
+        _oneDriveSignedIn == true &&
+        (_oneDriveMode == OneDriveStorageMode.appFolder ||
+            _oneDriveFolder != null);
     return PageBody(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 110),
@@ -102,13 +116,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             allowTools: false,
           ),
           SectionHeader(
-            title: 'OneDrive AppFolder',
+            title: 'OneDrive storage',
             subtitle:
-                'Dedicated SuperHealth storage; no Google or PC linking',
+                'Choose a private AppFolder or an explicitly selected shared folder',
             action: _oneDriveSignedIn == true
-                ? const Chip(
-                    avatar: Icon(Icons.check, size: 16),
-                    label: Text('Connected'),
+                ? Chip(
+                    avatar: Icon(
+                      oneDriveReady ? Icons.check : Icons.warning_amber,
+                      size: 16,
+                    ),
+                    label: Text(oneDriveReady ? 'Ready' : 'Needs folder'),
                   )
                 : null,
           ),
@@ -120,14 +137,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: Text(
                     _oneDriveSignedIn == null
                         ? 'Checking connection…'
-                        : _oneDriveSignedIn == true
-                        ? 'OneDrive is connected'
-                        : 'Connect OneDrive',
+                        : _oneDriveSignedIn != true
+                        ? 'Connect OneDrive'
+                        : oneDriveReady
+                        ? 'OneDrive is ready'
+                        : 'Choose a shared folder',
                   ),
-                  subtitle: const Text(
-                    'Uses Microsoft Files.ReadWrite.AppFolder and cannot browse your whole drive.',
-                  ),
-                  trailing: _oneDriveSignedIn == true
+                  subtitle: Text(_oneDriveDescription()),
+                  trailing: _oneDriveSignedIn == null
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : _oneDriveSignedIn != true
+                      ? TextButton(
+                          onPressed: controller.busy
+                              ? null
+                              : () => _connectOneDrive(controller),
+                          child: const Text('Connect'),
+                        )
+                      : oneDriveReady
                       ? TextButton(
                           onPressed: controller.busy
                               ? null
@@ -137,19 +167,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : TextButton(
                           onPressed: controller.busy
                               ? null
-                              : () => _connectOneDrive(controller),
-                          child: const Text('Connect'),
+                              : () => _chooseSharedFolder(controller),
+                          child: const Text('Choose'),
                         ),
                 ),
-                if (_oneDriveSignedIn == true)
+                if (_oneDriveMode == OneDriveStorageMode.sharedFolder &&
+                    _oneDriveFolder != null) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.folder_shared_outlined),
+                    title: Text(_oneDriveFolder!.name),
+                    subtitle: const Text(
+                      'SuperHealth uses only the SuperHealth subfolder here.',
+                    ),
+                    trailing: TextButton(
+                      onPressed: controller.busy
+                          ? null
+                          : () => _chooseSharedFolder(controller),
+                      child: const Text('Change'),
+                    ),
+                  ),
+                ],
+                if (_oneDriveSignedIn == true) ...[
+                  const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.link_off),
                     title: const Text('Disconnect this device'),
-                    onTap: () async {
-                      await controller.oneDriveService.signOut();
-                      await _refreshOneDriveStatus();
-                    },
+                    onTap: controller.busy
+                        ? null
+                        : () async {
+                            await controller.oneDriveService.signOut();
+                            await _refreshOneDriveStatus();
+                          },
                   ),
+                ],
               ],
             ),
           ),
@@ -188,6 +239,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 Divider(height: 1),
                 ListTile(
+                  leading: Icon(Icons.cloud_done_outlined),
+                  title: Text('Mode-specific OneDrive permission'),
+                  subtitle: Text(
+                    'Private mode is AppFolder-only. Shared mode receives Files.ReadWrite, '
+                    'while app operations stay inside the selected folder’s SuperHealth subfolder.',
+                  ),
+                ),
+                Divider(height: 1),
+                ListTile(
                   leading: Icon(Icons.folder_outlined),
                   title: Text('File changes require approval'),
                   subtitle: Text(
@@ -209,7 +269,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 22),
             child: Text(
-              'SuperHealth 0.1.1 · Personal-use Android build',
+              'SuperHealth 0.2.0 · Personal-use Android build',
               textAlign: TextAlign.center,
             ),
           ),
@@ -218,9 +278,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  String _oneDriveDescription() {
+    if (_oneDriveSignedIn != true) {
+      return 'Private AppFolder or shared family folder.';
+    }
+    if (_oneDriveMode == OneDriveStorageMode.appFolder) {
+      return 'Private: OneDrive/Apps/SuperHealth';
+    }
+    final folder = _oneDriveFolder;
+    if (folder == null) {
+      return 'Shared-folder access is approved; select the folder to use.';
+    }
+    return 'Shared: ' + folder.name + '/SuperHealth';
+  }
+
+  Future<OneDriveStorageMode?> _chooseStorageMode() =>
+      showDialog<OneDriveStorageMode>(
+        context: context,
+        builder: (dialogContext) => SimpleDialog(
+          title: const Text('Choose OneDrive storage'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                OneDriveStorageMode.sharedFolder,
+              ),
+              child: const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.folder_shared_outlined),
+                title: Text('Shared family folder'),
+                subtitle: Text(
+                  'Separate Microsoft accounts select the same shared folder. '
+                  'Requests Files.ReadWrite.',
+                ),
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                OneDriveStorageMode.appFolder,
+              ),
+              child: const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.lock_outline),
+                title: Text('Private AppFolder'),
+                subtitle: Text(
+                  'Least privilege. Multiple devices must use the same '
+                  'Microsoft account.',
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+
   Future<void> _connectOneDrive(AppController controller) async {
     try {
-      final code = await controller.oneDriveService.startDeviceCodeSignIn();
+      final mode = await _chooseStorageMode();
+      if (mode == null) return;
+      final code = await controller.oneDriveService.startDeviceCodeSignIn(mode);
       if (!mounted) return;
       final proceed = await showDialog<bool>(
         context: context,
@@ -230,6 +346,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Text(
+                mode == OneDriveStorageMode.sharedFolder
+                    ? 'Microsoft will request Files.ReadWrite so you can select '
+                          'a shared folder.'
+                    : 'Microsoft will grant access only to the SuperHealth '
+                          'AppFolder.',
+              ),
+              const SizedBox(height: 12),
               const Text(
                 'Open Microsoft sign-in and enter this one-time code:',
               ),
@@ -259,20 +383,91 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       );
-      if (proceed == true) {
-        final success = await controller.oneDriveService.pollForSignIn(code);
-        if (!success) {
-          throw StateError('OneDrive authorization did not complete.');
+      if (proceed != true) return;
+      final success = await controller.oneDriveService.pollForSignIn(code);
+      if (!success) {
+        throw StateError('OneDrive authorization did not complete.');
+      }
+      await _refreshOneDriveStatus();
+      if (mode == OneDriveStorageMode.sharedFolder) {
+        final selected = await _chooseSharedFolder(controller);
+        if (!selected && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Connected. Choose a shared folder before sync.'),
+            ),
+          );
         }
-        await _refreshOneDriveStatus();
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('OneDrive connected.')));
-        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('OneDrive connected.')));
       }
     } on Object catch (error) {
       if (mounted) await showAppError(context, error);
+    }
+  }
+
+  Future<bool> _chooseSharedFolder(AppController controller) async {
+    try {
+      final folders = await controller.oneDriveService.listAvailableFolders();
+      if (folders.isEmpty) {
+        throw StateError(
+          'No OneDrive folders were found. Create or share a folder first.',
+        );
+      }
+      if (!mounted) return false;
+      final chosen = await showDialog<OneDriveFolder>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Select the family data folder'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 420),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: folders.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (_, index) {
+                final folder = folders[index];
+                return ListTile(
+                  leading: Icon(
+                    folder.isShared
+                        ? Icons.folder_shared_outlined
+                        : Icons.folder_outlined,
+                  ),
+                  title: Text(folder.name),
+                  subtitle: Text(
+                    folder.isShared ? 'Shared with me' : 'My OneDrive',
+                  ),
+                  onTap: () => Navigator.pop(dialogContext, folder),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      );
+      if (chosen == null) return false;
+      await controller.oneDriveService.selectSharedFolder(chosen);
+      await _refreshOneDriveStatus();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Using ' + chosen.name + '/SuperHealth for shared data.',
+            ),
+          ),
+        );
+      }
+      return true;
+    } on Object catch (error) {
+      if (mounted) await showAppError(context, error);
+      return false;
     }
   }
 
