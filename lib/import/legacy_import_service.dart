@@ -971,9 +971,10 @@ class LegacyImportService {
             : 'Imported Biomarkers user override for the former profile '
                   '${row['profile_id']}. Applied to the shared catalog by user choice.';
         final notes = isOverride
-            ? [originalNotes, profileNote]
-                  .where((value) => value.isNotEmpty)
-                  .join('\n')
+            ? [
+                originalNotes,
+                profileNote,
+              ].where((value) => value.isNotEmpty).join('\n')
             : originalNotes;
         await insertAudited('biomarker_ranges', id, {
           'id': id,
@@ -992,8 +993,8 @@ class LegacyImportService {
           'high': row['high'] ?? row['max'],
           'optimal_low': row['optimal_low'] ?? row['borderline_low'],
           'optimal_high': row['optimal_high'] ?? row['borderline_high'],
-          'unit':
-              (row['unit'] ?? biomarkerUnits[oldBiomarkerId] ?? '').toString(),
+          'unit': (row['unit'] ?? biomarkerUnits[oldBiomarkerId] ?? '')
+              .toString(),
           'evidence_label': isOverride
               ? 'Imported personal target'
               : row['evidence_label'] ?? row['source'],
@@ -1164,9 +1165,7 @@ class LegacyImportService {
     return LegacyPdfImportPreview._(
       selectedFiles: selectedByHash.length,
       matchedDocuments: matches.length,
-      alreadyAvailable: matches
-          .where((match) => match.alreadyAvailable)
-          .length,
+      alreadyAvailable: matches.where((match) => match.alreadyAvailable).length,
       unmatchedFiles: unmatchedFiles,
       warnings: warnings,
       matches: matches,
@@ -1203,10 +1202,7 @@ class LegacyImportService {
       for (final match in pending) {
         await txn.update(
           'documents',
-          {
-            'local_path': match.targetPath,
-            'mime_type': 'application/pdf',
-          },
+          {'local_path': match.targetPath, 'mime_type': 'application/pdf'},
           where: 'id = ?',
           whereArgs: [match.documentId],
         );
