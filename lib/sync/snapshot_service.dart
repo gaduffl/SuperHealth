@@ -104,9 +104,12 @@ class SnapshotService {
           var applyRemote =
               existing == null ||
               _isAfter(remoteUpdated, localUpdated) ||
-              (remoteUpdated == localUpdated && _rowsDiffer(existing, row, table: table));
+              (remoteUpdated == localUpdated &&
+                  _rowsDiffer(existing, row, table: table));
 
-          if (localChanged && remoteChanged && _rowsDiffer(existing, row, table: table)) {
+          if (localChanged &&
+              remoteChanged &&
+              _rowsDiffer(existing, row, table: table)) {
             conflicts++;
             await txn.insert('sync_conflicts', {
               'table_name': table,
