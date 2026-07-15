@@ -310,7 +310,7 @@ class DocumentParsingService {
         final uploaded = await _oneDriveService.uploadDocument(
           profileId: report.profileId,
           file: localFile,
-          fileName: path.basename(report.fileName),
+          fileName: '${report.sha256}.pdf',
         );
         oneDriveItemId = uploaded['id']?.toString();
       } on Object catch (error) {
