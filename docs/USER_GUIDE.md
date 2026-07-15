@@ -19,6 +19,10 @@ SQLite on each device is the working record. API keys and OneDrive tokens are ne
 
 AppFolder isolation prevents direct reads from the former apps’ private folders. For the one-time migration, select the old JSON exports explicitly with Android’s file picker. After reviewing and committing the import, use **Sync now** to populate the chosen SuperHealth storage.
 
+For Supplement Manager, select `supplement_sync.json`. For Biomarkers, select `profiles.json`, `biomarkers.json`, `ranges.json`, `biomarker_lists.json`, `biomarker_list_entries.json`, `documents.json`, and `measurements.json` together from its `data` folder. Do not select `manifest.json`. Profile-specific `user_overrides.json` targets are deliberately not mapped to global SuperHealth ranges.
+
+The Biomarkers import preserves structured results and document metadata. Original PDF files remain in the former Biomarkers AppFolder; they are not copied by the JSON migration.
+
 ## Adding another phone
 
 On the welcome screen, choose **Restore from OneDrive** instead of creating a placeholder profile. Connect with that person’s Microsoft account, choose the same shared family folder, and tap **Sync now**. After the remote profiles appear, return to the main screen. This avoids duplicate profiles with different internal IDs.

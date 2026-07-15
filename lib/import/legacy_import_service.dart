@@ -308,13 +308,17 @@ class LegacyImportService {
 
   void _parseBiomarker(_LegacyBundle bundle, Map<String, dynamic> row) {
     final displayName =
-        (row['display_name'] ??
-                row['displayName'] ??
-                row['name'] ??
-                row['canonical_name'])
-            ?.toString()
-            .trim();
-    if (displayName == null || displayName.isEmpty) return;
+        [
+              row['display_name_custom'],
+              row['display_name'],
+              row['displayName'],
+              row['name'],
+              row['canonical_name'],
+            ]
+            .map((value) => value?.toString().trim())
+            .whereType<String>()
+            .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+    if (displayName.isEmpty) return;
     final canonical = HealthRepository.normalizeName(
       (row['canonical_name'] ?? row['canonicalName'] ?? displayName).toString(),
     );
@@ -324,10 +328,20 @@ class LegacyImportService {
         canonicalName: canonical,
         displayName: displayName,
         category: row['category']?.toString() ?? '',
-        unit: (row['default_unit'] ?? row['unit'])?.toString() ?? '',
+        unit:
+            (row['default_unit'] ?? row['unit_primary'] ?? row['unit'])
+                ?.toString() ??
+            '',
         priceEur: _double(row['price_eur'] ?? row['price']),
-        description: row['description']?.toString() ?? '',
-        synonyms: _stringList(row['synonyms'] ?? row['synonyms_json']),
+        description: (row['description'] ?? row['notes'])?.toString() ?? '',
+        synonyms: _combinedStringList([
+          row['synonyms'],
+          row['synonyms_json'],
+          row['parser_synonyms'],
+          row['parser_synonyms_json'],
+          row['common_abbr'],
+          row['common_abbr_json'],
+        ]),
       ),
     );
   }
@@ -354,6 +368,20 @@ class LegacyImportService {
       }
     }
     return value is List ? value.map((item) => '$item').toList() : const [];
+  }
+
+  static List<String> _combinedStringList(Iterable<Object?> values) {
+    final result = <String>[];
+    final seen = <String>{};
+    for (final value in values) {
+      for (final item in _stringList(value)) {
+        final trimmed = item.trim();
+        if (trimmed.isNotEmpty && seen.add(_normalized(trimmed))) {
+          result.add(trimmed);
+        }
+      }
+    }
+    return result;
   }
 
   static String _normalized(String value) =>
@@ -862,17 +890,21 @@ class LegacyImportService {
         await insertAudited('biomarker_ranges', id, {
           'id': id,
           'biomarker_id': biomarkerId,
-          'range_type': (row['range_type'] ?? row['type'] ?? 'lab_reference')
-              .toString(),
+          'range_type':
+              (row['range_type'] ??
+                      row['kind'] ??
+                      row['type'] ??
+                      'lab_reference')
+                  .toString(),
           'sex': row['sex'],
           'age_min': row['age_min'],
           'age_max': row['age_max'],
           'low': row['low'] ?? row['min'],
           'high': row['high'] ?? row['max'],
-          'optimal_low': row['optimal_low'],
-          'optimal_high': row['optimal_high'],
+          'optimal_low': row['optimal_low'] ?? row['borderline_low'],
+          'optimal_high': row['optimal_high'] ?? row['borderline_high'],
           'unit': (row['unit'] ?? '').toString(),
-          'evidence_label': row['evidence_label'],
+          'evidence_label': row['evidence_label'] ?? row['source'],
           'evidence_url': row['evidence_url'],
           'notes': row['notes']?.toString() ?? '',
           'created_at': row['created_at'] ?? now,
