@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/data/app_database.dart';
@@ -104,10 +106,25 @@ void main() {
           },
         ]),
       ),
+      ImportSourceFile(
+        name: 'user_overrides.json',
+        bytes: jsonBytes([
+          {
+            'id': 'ldl_override',
+            'biomarker_id': 'ldl',
+            'profile_id': 'old-profile',
+            'low': 0,
+            'high': 70,
+            'borderline_high': 85,
+            'notes': 'Personal LDL target.',
+          },
+        ]),
+      ),
     ], fallbackProfile: profile);
 
     expect(preview.counts['biomarkers'], 1);
     expect(preview.counts['ranges'], 1);
+    expect(preview.counts['target_overrides'], 1);
     await service.commit(preview);
 
     final biomarker = (await repository.biomarkers()).single;
@@ -118,10 +135,86 @@ void main() {
     expect(biomarker.synonyms, containsAll(['LDL-Cholesterin', 'LDL']));
 
     final db = await database.database;
-    final range = (await db.query('biomarker_ranges')).single;
-    expect(range['range_type'], 'longevity_target');
-    expect(range['optimal_high'], 100.0);
-    expect(range['evidence_label'], 'Imported personal catalog');
+    final ranges = await db.query('biomarker_ranges');
+    expect(ranges, hasLength(2));
+    final catalogRange = ranges.singleWhere(
+      (row) => row['range_type'] == 'longevity_target',
+    );
+    expect(catalogRange['optimal_high'], 100.0);
+    expect(catalogRange['evidence_label'], 'Imported personal catalog');
+    final personalTarget = ranges.singleWhere(
+      (row) => row['range_type'] == 'personal_target',
+    );
+    expect(personalTarget['high'], 70.0);
+    expect(personalTarget['optimal_high'], 85.0);
+    expect(personalTarget['unit'], 'mg/dL');
+    expect(personalTarget['notes'], contains('old-profile'));
     await database.close();
+  });
+
+  test('Biomarkers PDFs are hash-matched and attached idempotently', () async {
+    sqfliteFfiInit();
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'superhealth-pdf-import-',
+    );
+    final database = AppDatabase(
+      factory: databaseFactoryFfi,
+      databasePath: inMemoryDatabasePath,
+    );
+    final repository = HealthRepository(database);
+    final profile = await repository.createProfile(displayName: 'Me');
+    final service = LegacyImportService(
+      database,
+      repository,
+      documentsDirectory: () async => temporaryDirectory,
+    );
+    final pdfBytes = Uint8List.fromList(
+      utf8.encode('%PDF-1.4\nlegacy report\n%%EOF'),
+    );
+    final hash = sha256.convert(pdfBytes).toString();
+    Uint8List jsonBytes(Object value) =>
+        Uint8List.fromList(utf8.encode(jsonEncode(value)));
+
+    final dataPreview = await service.preview([
+      ImportSourceFile(
+        name: 'documents.json',
+        bytes: jsonBytes([
+          {
+            'id': 'legacy-document',
+            'file_name': 'blood-test.pdf',
+            'sha256': hash,
+            'report_date': '2026-01-15',
+            'lab_name': 'Example Lab',
+          },
+        ]),
+      ),
+    ], fallbackProfile: profile);
+    await service.commit(dataPreview);
+
+    final pdfPreview = await service.previewPdfs([
+      ImportSourceFile(name: '$hash.pdf', bytes: pdfBytes),
+    ]);
+    expect(pdfPreview.selectedFiles, 1);
+    expect(pdfPreview.matchedDocuments, 1);
+    expect(pdfPreview.alreadyAvailable, 0);
+    expect(pdfPreview.unmatchedFiles, 0);
+    expect(pdfPreview.canImport, isTrue);
+
+    final result = await service.commitPdfs(pdfPreview);
+    expect(result.attachedDocuments, 1);
+    final document = (await repository.documents(profile.id)).single;
+    expect(document.labName, 'Example Lab');
+    expect(document.documentDate, DateTime(2026, 1, 15));
+    expect(document.localPath, isNotNull);
+    expect(await File(document.localPath!).readAsBytes(), pdfBytes);
+
+    final repeatedPreview = await service.previewPdfs([
+      ImportSourceFile(name: '$hash.pdf', bytes: pdfBytes),
+    ]);
+    expect(repeatedPreview.alreadyAvailable, 1);
+    expect(repeatedPreview.canImport, isFalse);
+
+    await database.close();
+    await temporaryDirectory.delete(recursive: true);
   });
 }
