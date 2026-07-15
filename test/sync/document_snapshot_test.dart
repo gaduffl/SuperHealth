@@ -43,15 +43,10 @@ void main() {
 
     final remote = jsonDecode(jsonEncode(snapshot)) as Map<String, dynamic>;
     final remoteDocument =
-        ((remote['tables'] as Map<String, dynamic>)['documents'] as List)
-            .single
+        ((remote['tables'] as Map<String, dynamic>)['documents'] as List).single
             as Map<String, dynamic>;
     remoteDocument['lab_name'] = 'Remote lab';
-    remoteDocument['updated_at'] = DateTime.utc(
-      2026,
-      1,
-      2,
-    ).toIso8601String();
+    remoteDocument['updated_at'] = DateTime.utc(2026, 1, 2).toIso8601String();
 
     final snapshotService = SnapshotService(database, repository);
     await snapshotService.merge(Map<String, Object?>.from(remote));
