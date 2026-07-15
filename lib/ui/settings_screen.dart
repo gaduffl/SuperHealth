@@ -282,7 +282,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 22),
             child: Text(
-              'SuperHealth 0.2.1 · Personal-use Android build',
+              'SuperHealth 0.3.0 · Personal-use Android build',
               textAlign: TextAlign.center,
             ),
           ),
