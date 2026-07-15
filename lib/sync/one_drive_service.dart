@@ -492,7 +492,9 @@ class OneDriveService {
       );
       final itemId = uploaded['id']?.toString();
       if (itemId == null || itemId.isEmpty) {
-        throw StateError('OneDrive returned no item ID for ${document.fileName}.');
+        throw StateError(
+          'OneDrive returned no item ID for ${document.fileName}.',
+        );
       }
       await repository.setDocumentCloudItem(document.id, itemId);
       uploadedCount++;
