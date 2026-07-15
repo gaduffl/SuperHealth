@@ -245,10 +245,7 @@ class HealthRepository {
     );
   }
 
-  Future<void> setDocumentLocalPath(
-    String documentId,
-    String localPath,
-  ) async {
+  Future<void> setDocumentLocalPath(String documentId, String localPath) async {
     final db = await _database.database;
     // Device-local paths are deliberately not synchronization metadata.
     await db.update(
