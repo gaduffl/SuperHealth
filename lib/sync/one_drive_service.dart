@@ -1,11 +1,17 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 
+import '../data/health_repository.dart';
 import 'snapshot_service.dart';
 
 enum OneDriveStorageMode { appFolder, sharedFolder }
@@ -89,6 +95,8 @@ class OneDriveSyncResult {
     required this.keptLocalRows,
     required this.conflicts,
     required this.uploadedBytes,
+    this.uploadedDocuments = 0,
+    this.downloadedDocuments = 0,
   });
 
   final bool remoteFound;
@@ -96,6 +104,8 @@ class OneDriveSyncResult {
   final int keptLocalRows;
   final int conflicts;
   final int uploadedBytes;
+  final int uploadedDocuments;
+  final int downloadedDocuments;
 }
 
 class OneDriveService {
@@ -103,7 +113,12 @@ class OneDriveService {
     this._snapshotService, {
     Dio? dio,
     FlutterSecureStorage? secureStorage,
-  }) : _dio =
+    HealthRepository? repository,
+    Future<Directory> Function()? documentsDirectory,
+  }) : _repository = repository,
+       _documentsDirectory =
+           documentsDirectory ?? getApplicationDocumentsDirectory,
+       _dio =
            dio ??
            Dio(
              BaseOptions(
@@ -140,6 +155,8 @@ class OneDriveService {
   final Dio _dio;
   final FlutterSecureStorage _secureStorage;
   final SnapshotService _snapshotService;
+  final HealthRepository? _repository;
+  final Future<Directory> Function() _documentsDirectory;
 
   static String scopeFor(OneDriveStorageMode mode) =>
       mode == OneDriveStorageMode.appFolder
@@ -346,6 +363,7 @@ class OneDriveService {
 
   Future<OneDriveSyncResult> synchronize() async {
     await _ensureStorageRoot();
+    final uploadedDocuments = await _uploadPendingDocuments();
     final snapshotAddress = await _itemAddress(_snapshotName);
     Map<String, dynamic>? metadata;
     Uint8List? remoteBytes;
@@ -373,6 +391,7 @@ class OneDriveService {
     if (remoteBytes != null && remoteBytes.isNotEmpty) {
       merge = await _snapshotService.mergeJson(utf8.decode(remoteBytes));
     }
+    final downloadedDocuments = await _downloadMissingDocuments();
 
     final localJson = await _snapshotService.buildSnapshotJson();
     final bytes = Uint8List.fromList(utf8.encode(localJson));
@@ -394,6 +413,8 @@ class OneDriveService {
       keptLocalRows: merge.keptLocalRows,
       conflicts: merge.conflicts,
       uploadedBytes: bytes.length,
+      uploadedDocuments: uploadedDocuments,
+      downloadedDocuments: downloadedDocuments,
     );
   }
 
@@ -443,6 +464,132 @@ class OneDriveService {
       contentType: contentType,
     );
   }
+
+  Future<int> _uploadPendingDocuments() async {
+    final repository = _repository;
+    if (repository == null) return 0;
+    var uploadedCount = 0;
+    for (final document in await repository.documentsPendingCloudUpload()) {
+      final localPath = document.localPath;
+      if (localPath == null || localPath.isEmpty) continue;
+      final file = File(localPath);
+      if (!await file.exists()) continue;
+      final bytes = await file.readAsBytes();
+      final actualHash = sha256.convert(bytes).toString();
+      final expectedHash = document.sha256?.trim().toLowerCase();
+      if (expectedHash != null &&
+          expectedHash.isNotEmpty &&
+          actualHash != expectedHash) {
+        throw StateError(
+          'The local PDF for ${document.fileName} no longer matches its hash.',
+        );
+      }
+      if (!_looksLikePdf(bytes)) {
+        throw StateError('${document.fileName} is not a readable PDF.');
+      }
+      final uploaded = await uploadDocument(
+        profileId: document.profileId,
+        file: file,
+        fileName: '${expectedHash ?? actualHash}.pdf',
+      );
+      final itemId = uploaded['id']?.toString();
+      if (itemId == null || itemId.isEmpty) {
+        throw StateError(
+          'OneDrive returned no item ID for ${document.fileName}.',
+        );
+      }
+      await repository.setDocumentCloudItem(document.id, itemId);
+      uploadedCount++;
+    }
+    return uploadedCount;
+  }
+
+  Future<int> _downloadMissingDocuments() async {
+    final repository = _repository;
+    if (repository == null) return 0;
+    final base = await _documentsDirectory();
+    var downloadedCount = 0;
+    for (final document in await repository.documentsWithCloudCopies()) {
+      final itemId = document.oneDriveItemId;
+      if (itemId == null || itemId.isEmpty) continue;
+      final expectedHash = document.sha256?.trim().toLowerCase();
+      final fileName = expectedHash?.isNotEmpty == true
+          ? '$expectedHash.pdf'
+          : '${document.id}.pdf';
+      final target = File(
+        path.join(base.path, 'documents', document.profileId, fileName),
+      );
+      final candidates = <File>[
+        if (document.localPath?.isNotEmpty == true) File(document.localPath!),
+        target,
+      ];
+      File? available;
+      for (final candidate in candidates) {
+        if (!await candidate.exists()) continue;
+        if (expectedHash == null || expectedHash.isEmpty) {
+          available = candidate;
+          break;
+        }
+        final candidateHash = sha256.convert(await candidate.readAsBytes());
+        if (candidateHash.toString() == expectedHash) {
+          available = candidate;
+          break;
+        }
+      }
+      if (available != null) {
+        if (document.localPath != available.path) {
+          await repository.setDocumentLocalPath(document.id, available.path);
+        }
+        continue;
+      }
+
+      final address = await _documentContentAddress(itemId);
+      final response = await _graph<List<int>>(
+        'GET',
+        address,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = Uint8List.fromList(response.data ?? const []);
+      if (!_looksLikePdf(bytes)) {
+        throw StateError(
+          'OneDrive returned invalid PDF data for ${document.fileName}.',
+        );
+      }
+      final actualHash = sha256.convert(bytes).toString();
+      if (expectedHash != null &&
+          expectedHash.isNotEmpty &&
+          actualHash != expectedHash) {
+        throw StateError(
+          'OneDrive PDF hash mismatch for ${document.fileName}.',
+        );
+      }
+      await target.parent.create(recursive: true);
+      final temporary = File('${target.path}.downloading');
+      await temporary.writeAsBytes(bytes, flush: true);
+      if (await target.exists()) await target.delete();
+      await temporary.rename(target.path);
+      await repository.setDocumentLocalPath(document.id, target.path);
+      downloadedCount++;
+    }
+    return downloadedCount;
+  }
+
+  Future<String> _documentContentAddress(String itemId) async {
+    final mode = await currentStorageMode();
+    if (mode == OneDriveStorageMode.appFolder) {
+      return '/me/drive/items/${Uri.encodeComponent(itemId)}/content';
+    }
+    if (mode == OneDriveStorageMode.sharedFolder) {
+      final folder = await _requireSelectedFolder();
+      return '/drives/${Uri.encodeComponent(folder.driveId)}/items/'
+          '${Uri.encodeComponent(itemId)}/content';
+    }
+    throw StateError('OneDrive is not signed in.');
+  }
+
+  bool _looksLikePdf(Uint8List bytes) =>
+      bytes.length >= 5 &&
+      ascii.decode(bytes.sublist(0, 5), allowInvalid: true) == '%PDF-';
 
   Future<Map<String, dynamic>> _uploadBytes(
     String relativePath,

@@ -2,12 +2,13 @@
 
 ## First setup
 
-1. Create the first profile. To merge old data cleanly, use the same display name as the corresponding profile in the former apps. Add a separate profile for each person.
-2. Import the existing apps with exported JSON files selected through Android’s file picker. Review the counts and merge warnings before confirming.
-3. In Settings, connect OneDrive. The Microsoft approval page must identify the app as **SuperHealth**.
-4. Choose **Shared family folder** for separate Microsoft accounts, or **Private AppFolder** when every device will connect to the same Microsoft account.
-5. Tap **Sync now** after the import to create the first clean SuperHealth snapshot.
-6. Add an OpenAI, Anthropic, or Gemini key. Load the provider’s current models, then save separate Advisor and Lab document parser configurations.
+1. On the primary phone, create the first profile. To merge old data cleanly, use the same display name as the corresponding profile in the former apps. Add a separate profile for each person.
+2. Import the former apps’ JSON exports in Settings. Select all Biomarkers data files together, including `user_overrides.json`, and review the counts before confirming.
+3. Choose **Attach Biomarkers PDF files**, select all old report PDFs, review the SHA-256 matches, and confirm.
+4. Connect OneDrive. The Microsoft approval page must identify the app as **SuperHealth**.
+5. Choose **Shared family folder** for separate Microsoft accounts, or **Private AppFolder** when every device will connect to the same Microsoft account.
+6. Tap **Sync now**. This uploads the clean SuperHealth snapshot and matched PDFs.
+7. Add an OpenAI, Anthropic, or Gemini key. Load the provider’s current models, then save separate Advisor and Lab document parser configurations.
 
 ## OneDrive storage
 
@@ -17,11 +18,11 @@ SQLite on each device is the working record. API keys and OneDrive tokens are ne
 
 **Shared family folder** requests delegated `Files.ReadWrite`. Create a OneDrive folder, share it with edit permission, and select that same folder on both phones. SuperHealth creates a `SuperHealth` subfolder and constrains its file operations to that location. The Microsoft token is technically broader than the AppFolder token, which is why this mode is always an explicit choice.
 
-AppFolder isolation prevents direct reads from the former apps’ private folders. For the one-time migration, select the old JSON exports explicitly with Android’s file picker. After reviewing and committing the import, use **Sync now** to populate the chosen SuperHealth storage.
+AppFolder isolation prevents silent reads from the former apps’ private folders. Migration therefore uses Android’s file picker and leaves every original file untouched.
 
-For Supplement Manager, select `supplement_sync.json`. For Biomarkers, select `profiles.json`, `biomarkers.json`, `ranges.json`, `biomarker_lists.json`, `biomarker_list_entries.json`, `documents.json`, and `measurements.json` together from its `data` folder. Do not select `manifest.json`. Profile-specific `user_overrides.json` targets are deliberately not mapped to global SuperHealth ranges.
+For Supplement Manager, select `supplement_sync.json`. For Biomarkers, select `profiles.json`, `biomarkers.json`, `ranges.json`, `biomarker_lists.json`, `biomarker_list_entries.json`, `user_overrides.json`, `documents.json`, and `measurements.json` together from `OneDrive/Apps/Biomarkers/data`. Do not select `manifest.json`. Approved former-profile overrides are imported as shared personal-target ranges.
 
-The Biomarkers import preserves structured results and document metadata. Original PDF files remain in the former Biomarkers AppFolder; they are not copied by the JSON migration.
+After the JSON import, choose **Attach Biomarkers PDF files** and select all PDFs from `OneDrive/Apps/Biomarkers/documents`. SuperHealth matches each PDF to `documents.json` by its SHA-256 hash before copying it locally. **Sync now** then uploads the matched PDFs into the selected SuperHealth storage; another phone downloads them with its next sync.
 
 ## Adding another phone
 

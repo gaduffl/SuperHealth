@@ -213,17 +213,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 ListTile(
                   leading: const Icon(Icons.move_to_inbox_outlined),
-                  title: const Text(
-                    'Import Supplement Manager or Biomarkers data',
-                  ),
+                  title: const Text('Import legacy JSON data'),
                   subtitle: const Text(
-                    'Use Android’s file picker for exported JSON files, '
-                    'including files stored in OneDrive.',
+                    'Supplement Manager and Biomarkers exports, including '
+                    'user_overrides.json.',
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: controller.busy || controller.activeProfile == null
                       ? null
                       : () => _importData(controller),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.picture_as_pdf_outlined),
+                  title: const Text('Attach Biomarkers PDF files'),
+                  subtitle: const Text(
+                    'After importing documents.json, select the PDFs from the '
+                    'former Biomarkers documents folder.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: controller.busy || controller.activeProfile == null
+                      ? null
+                      : () => _importPdfs(controller),
                 ),
               ],
             ),
@@ -271,7 +282,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 22),
             child: Text(
-              'SuperHealth 0.2.1 · Personal-use Android build',
+              'SuperHealth 0.3.0 · Personal-use Android build',
               textAlign: TextAlign.center,
             ),
           ),
@@ -476,7 +487,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Synced ${result.uploadedBytes} bytes · ${result.appliedRows} remote changes · '
+              'Synced ${result.uploadedBytes} bytes · '
+              '${result.appliedRows} remote changes · '
+              '${result.uploadedDocuments} PDFs uploaded · '
+              '${result.downloadedDocuments} PDFs downloaded · '
               '${result.conflicts} conflicts',
             ),
           ),
@@ -530,6 +544,112 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) await showAppError(context, error);
     }
   }
+
+  Future<void> _importPdfs(AppController controller) async {
+    try {
+      final selection = await FilePicker.platform.pickFiles(
+        dialogTitle: 'Select Biomarkers PDF files',
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        allowMultiple: true,
+        withData: true,
+      );
+      if (selection == null || selection.files.isEmpty) return;
+      final files = <ImportSourceFile>[];
+      for (final selected in selection.files) {
+        final bytes =
+            selected.bytes ??
+            (selected.path == null
+                ? null
+                : await File(selected.path!).readAsBytes());
+        if (bytes != null) {
+          files.add(ImportSourceFile(name: selected.name, bytes: bytes));
+        }
+      }
+      if (files.isEmpty) {
+        throw StateError('The selected PDFs could not be read.');
+      }
+      final preview = await controller.previewLegacyPdfs(files);
+      if (!mounted) return;
+      final approved = await _showPdfImportPreview(preview);
+      if (approved == true) {
+        final result = await controller.commitLegacyPdfs(preview);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Attached ${result.attachedDocuments} PDFs. '
+                'They will be copied to shared OneDrive on the next sync.',
+              ),
+            ),
+          );
+        }
+      }
+    } on Object catch (error) {
+      if (mounted) await showAppError(context, error);
+    }
+  }
+
+  Future<bool?> _showPdfImportPreview(
+    LegacyPdfImportPreview preview,
+  ) => showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Review PDF migration'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Selected PDF files'),
+                trailing: Text('${preview.selectedFiles}'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Matched document records'),
+                trailing: Text('${preview.matchedDocuments}'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Already available'),
+                trailing: Text('${preview.alreadyAvailable}'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Unmatched files'),
+                trailing: Text('${preview.unmatchedFiles}'),
+              ),
+              if (preview.warnings.isNotEmpty) ...[
+                const Divider(),
+                Text('Warnings', style: Theme.of(context).textTheme.titleSmall),
+                for (final item in preview.warnings) Text('• $item'),
+              ],
+              const SizedBox(height: 8),
+              const Text(
+                'Matched PDFs are verified by SHA-256 before they are attached.',
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: preview.canImport
+              ? () => Navigator.pop(dialogContext, true)
+              : null,
+          child: const Text('Attach PDFs'),
+        ),
+      ],
+    ),
+  );
 
   Future<bool?> _showImportPreview(
     LegacyImportPreview preview,

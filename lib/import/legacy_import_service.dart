@@ -1,9 +1,12 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -58,13 +61,53 @@ class LegacyImportResult {
   final Map<String, int> inserted;
 }
 
+class LegacyPdfImportPreview {
+  LegacyPdfImportPreview._({
+    required this.selectedFiles,
+    required this.matchedDocuments,
+    required this.alreadyAvailable,
+    required this.unmatchedFiles,
+    required this.warnings,
+    required List<_LegacyPdfMatch> matches,
+  }) : _matches = matches;
+
+  final int selectedFiles;
+  final int matchedDocuments;
+  final int alreadyAvailable;
+  final int unmatchedFiles;
+  final List<String> warnings;
+  final List<_LegacyPdfMatch> _matches;
+
+  int get pendingDocuments => matchedDocuments - alreadyAvailable;
+  bool get canImport => pendingDocuments > 0;
+}
+
+class LegacyPdfImportResult {
+  const LegacyPdfImportResult({
+    required this.attachedDocuments,
+    required this.alreadyAvailable,
+    required this.unmatchedFiles,
+  });
+
+  final int attachedDocuments;
+  final int alreadyAvailable;
+  final int unmatchedFiles;
+}
+
 class LegacyImportService {
-  LegacyImportService(this._database, this._repository, {Uuid? uuid})
-    : _uuid = uuid ?? const Uuid();
+  LegacyImportService(
+    this._database,
+    this._repository, {
+    Uuid? uuid,
+    Future<Directory> Function()? documentsDirectory,
+  }) : _uuid = uuid ?? const Uuid(),
+       _documentsDirectory =
+           documentsDirectory ?? getApplicationDocumentsDirectory;
 
   final AppDatabase _database;
   final HealthRepository _repository;
   final Uuid _uuid;
+  final Future<Directory> Function() _documentsDirectory;
 
   Future<LegacyImportPreview> preview(
     List<ImportSourceFile> files, {
@@ -220,6 +263,9 @@ class LegacyImportService {
       bundle.sourceKinds.add('Biomarkers');
     } else if (name.contains('biomarker_lists')) {
       bundle.biomarkerListNodes.addAll(rows.whereType<Map>());
+      bundle.sourceKinds.add('Biomarkers');
+    } else if (name.contains('user_overrides')) {
+      bundle.userOverrideNodes.addAll(rows.whereType<Map>());
       bundle.sourceKinds.add('Biomarkers');
     } else if (name.contains('biomarker')) {
       bundle.sourceKinds.add('Biomarkers');
@@ -824,15 +870,23 @@ class LegacyImportService {
           'file_name':
               (row['file_name'] ?? row['filename'] ?? 'Imported document')
                   .toString(),
-          'mime_type': row['mime_type'],
+          'mime_type': row['mime_type'] ?? 'application/pdf',
           'sha256': row['sha256'],
-          'local_path': row['local_path'] ?? row['path'],
-          'one_drive_item_id': row['one_drive_item_id'],
-          'document_date': row['document_date'] ?? row['taken_at'],
-          'parsed_at': row['parsed_at'],
-          'parser_provider': row['parser_provider'],
+          // Paths and OneDrive item IDs from the former app are not valid in
+          // SuperHealth. PDF binaries are attached in a separate reviewed step.
+          'local_path': null,
+          'one_drive_item_id': null,
+          'document_date':
+              row['document_date'] ?? row['report_date'] ?? row['taken_at'],
+          'parsed_at': row['parsed_at'] ?? row['imported_at'],
+          'parser_provider': row['parser_provider'] ?? row['provider'],
           'parser_model': row['parser_model'],
-          'created_at': row['created_at'] ?? now,
+          'lab_name': row['lab_name'],
+          'report_comment': row['report_comment']?.toString() ?? '',
+          'parse_status': 'imported',
+          'warnings_json': '[]',
+          'errors_json': '[]',
+          'created_at': row['created_at'] ?? row['imported_at'] ?? now,
           'updated_at': row['updated_at'] ?? now,
           'deleted': row['deleted'] == 1 ? 1 : 0,
         });
@@ -870,6 +924,10 @@ class LegacyImportService {
             unit: (row['unit_reported'] ?? row['unit'] ?? '').toString(),
             labRefLow: _double(row['lab_ref_low']),
             labRefHigh: _double(row['lab_ref_high']),
+            page: _double(row['page'])?.toInt(),
+            rowText: row['row_text']?.toString(),
+            extractionConfidence: _double(row['extraction_confidence']),
+            flags: _stringList(row['flags'] ?? row['flags_json']),
             notes: row['notes']?.toString() ?? '',
             createdAt: DateTime.tryParse('${row['created_at']}') ?? now,
             updatedAt: DateTime.tryParse('${row['updated_at']}') ?? now,
@@ -877,25 +935,57 @@ class LegacyImportService {
         );
       }
 
-      for (var index = 0; index < bundle.rangeNodes.length; index++) {
-        final row = Map<String, dynamic>.from(bundle.rangeNodes[index]);
+      final biomarkerUnits = {
+        for (final item in bundle.biomarkers) item.legacyId: item.unit,
+      };
+
+      Future<void> importRange(
+        Map<dynamic, dynamic> raw, {
+        required int index,
+        required bool isOverride,
+      }) async {
+        final row = Map<String, dynamic>.from(raw);
         final oldBiomarkerId = row['biomarker_id']?.toString();
         final biomarkerId = oldBiomarkerId == null
             ? null
             : biomarkerIds[oldBiomarkerId];
-        if (biomarkerId == null) continue;
+        if (biomarkerId == null) {
+          if (isOverride) {
+            throw StateError(
+              'A user override could not be matched. Select '
+              'biomarkers.json together with user_overrides.json.',
+            );
+          }
+          return;
+        }
         final oldId = row['id']?.toString() ?? '$index';
-        final id = _legacyId(bundle.sourceHash, 'range', oldId);
+        final id = _legacyId(
+          bundle.sourceHash,
+          'range',
+          isOverride ? 'user-override:$oldId' : oldId,
+        );
         final now = DateTime.now().toUtc().toIso8601String();
+        final originalNotes = row['notes']?.toString().trim() ?? '';
+        final profileNote = row['profile_id'] == null
+            ? 'Imported global Biomarkers user override.'
+            : 'Imported Biomarkers user override for the former profile '
+                  '${row['profile_id']}. Applied to the shared catalog by user choice.';
+        final notes = isOverride
+            ? [
+                originalNotes,
+                profileNote,
+              ].where((value) => value.isNotEmpty).join('\n')
+            : originalNotes;
         await insertAudited('biomarker_ranges', id, {
           'id': id,
           'biomarker_id': biomarkerId,
-          'range_type':
-              (row['range_type'] ??
-                      row['kind'] ??
-                      row['type'] ??
-                      'lab_reference')
-                  .toString(),
+          'range_type': isOverride
+              ? 'personal_target'
+              : (row['range_type'] ??
+                        row['kind'] ??
+                        row['type'] ??
+                        'lab_reference')
+                    .toString(),
           'sex': row['sex'],
           'age_min': row['age_min'],
           'age_max': row['age_max'],
@@ -903,14 +993,32 @@ class LegacyImportService {
           'high': row['high'] ?? row['max'],
           'optimal_low': row['optimal_low'] ?? row['borderline_low'],
           'optimal_high': row['optimal_high'] ?? row['borderline_high'],
-          'unit': (row['unit'] ?? '').toString(),
-          'evidence_label': row['evidence_label'] ?? row['source'],
+          'unit': (row['unit'] ?? biomarkerUnits[oldBiomarkerId] ?? '')
+              .toString(),
+          'evidence_label': isOverride
+              ? 'Imported personal target'
+              : row['evidence_label'] ?? row['source'],
           'evidence_url': row['evidence_url'],
-          'notes': row['notes']?.toString() ?? '',
+          'notes': notes,
           'created_at': row['created_at'] ?? now,
           'updated_at': row['updated_at'] ?? now,
           'deleted': row['deleted'] == 1 ? 1 : 0,
         });
+      }
+
+      for (var index = 0; index < bundle.rangeNodes.length; index++) {
+        await importRange(
+          bundle.rangeNodes[index],
+          index: index,
+          isOverride: false,
+        );
+      }
+      for (var index = 0; index < bundle.userOverrideNodes.length; index++) {
+        await importRange(
+          bundle.userOverrideNodes[index],
+          index: index,
+          isOverride: true,
+        );
       }
 
       for (final rawList in bundle.biomarkerListNodes) {
@@ -978,6 +1086,141 @@ class LegacyImportService {
     return LegacyImportResult(importId: importId, inserted: inserted);
   }
 
+  Future<LegacyPdfImportPreview> previewPdfs(
+    List<ImportSourceFile> files,
+  ) async {
+    if (files.isEmpty) {
+      throw ArgumentError('Select at least one PDF file.');
+    }
+    final warnings = <String>[];
+    final selectedByHash = <String, ImportSourceFile>{};
+    for (final file in files) {
+      if (!file.name.toLowerCase().endsWith('.pdf') ||
+          !_looksLikePdf(file.bytes)) {
+        warnings.add('${file.name}: not a readable PDF file.');
+        continue;
+      }
+      final hash = sha256.convert(file.bytes).toString();
+      if (selectedByHash.containsKey(hash)) {
+        warnings.add('${file.name}: duplicate PDF selection ignored.');
+      } else {
+        selectedByHash[hash] = file;
+      }
+    }
+
+    final db = await _database.database;
+    final base = await _documentsDirectory();
+    final matches = <_LegacyPdfMatch>[];
+    var unmatchedFiles = 0;
+    for (final entry in selectedByHash.entries) {
+      final hash = entry.key;
+      final rows = await db.query(
+        'documents',
+        where: 'lower(sha256) = ? AND deleted = 0',
+        whereArgs: [hash],
+      );
+      if (rows.isEmpty) {
+        unmatchedFiles++;
+        warnings.add(
+          '${entry.value.name}: no imported documents.json record has this hash.',
+        );
+        continue;
+      }
+      for (final row in rows) {
+        final profileId = '${row['profile_id']}';
+        final targetPath = path.join(
+          base.path,
+          'documents',
+          profileId,
+          '$hash.pdf',
+        );
+        String? availablePath;
+        final candidates = <String>{
+          targetPath,
+          if (row['local_path']?.toString().isNotEmpty == true)
+            row['local_path'].toString(),
+        };
+        for (final candidate in candidates) {
+          final existing = File(candidate);
+          if (!await existing.exists()) continue;
+          final existingHash = sha256.convert(await existing.readAsBytes());
+          if (existingHash.toString() == hash) {
+            availablePath = candidate;
+            break;
+          }
+        }
+        final storedPath = row['local_path']?.toString();
+        final alreadyAvailable =
+            availablePath != null && storedPath == availablePath;
+        matches.add(
+          _LegacyPdfMatch(
+            documentId: '${row['id']}',
+            hash: hash,
+            targetPath: targetPath,
+            file: entry.value,
+            alreadyAvailable: alreadyAvailable,
+          ),
+        );
+      }
+    }
+
+    return LegacyPdfImportPreview._(
+      selectedFiles: selectedByHash.length,
+      matchedDocuments: matches.length,
+      alreadyAvailable: matches.where((match) => match.alreadyAvailable).length,
+      unmatchedFiles: unmatchedFiles,
+      warnings: warnings,
+      matches: matches,
+    );
+  }
+
+  Future<LegacyPdfImportResult> commitPdfs(
+    LegacyPdfImportPreview preview,
+  ) async {
+    if (!preview.canImport) {
+      throw StateError('There are no new matched PDFs to import.');
+    }
+    final pending = preview._matches
+        .where((match) => !match.alreadyAvailable)
+        .toList();
+    final writtenPaths = <String>{};
+    for (final match in pending) {
+      if (!writtenPaths.add(match.targetPath)) continue;
+      final target = File(match.targetPath);
+      await target.parent.create(recursive: true);
+      final temporary = File('${match.targetPath}.importing');
+      await temporary.writeAsBytes(match.file.bytes, flush: true);
+      final writtenHash = sha256.convert(await temporary.readAsBytes());
+      if (writtenHash.toString() != match.hash) {
+        await temporary.delete();
+        throw StateError('PDF verification failed for ${match.file.name}.');
+      }
+      if (await target.exists()) await target.delete();
+      await temporary.rename(target.path);
+    }
+
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      for (final match in pending) {
+        await txn.update(
+          'documents',
+          {'local_path': match.targetPath, 'mime_type': 'application/pdf'},
+          where: 'id = ?',
+          whereArgs: [match.documentId],
+        );
+      }
+    });
+    return LegacyPdfImportResult(
+      attachedDocuments: pending.length,
+      alreadyAvailable: preview.alreadyAvailable,
+      unmatchedFiles: preview.unmatchedFiles,
+    );
+  }
+
+  bool _looksLikePdf(Uint8List bytes) =>
+      bytes.length >= 5 &&
+      ascii.decode(bytes.sublist(0, 5), allowInvalid: true) == '%PDF-';
+
   Future<void> rollback(String importId) async {
     final db = await _database.database;
     await db.transaction((txn) async {
@@ -1027,6 +1270,22 @@ class LegacyImportService {
   }
 }
 
+class _LegacyPdfMatch {
+  const _LegacyPdfMatch({
+    required this.documentId,
+    required this.hash,
+    required this.targetPath,
+    required this.file,
+    required this.alreadyAvailable,
+  });
+
+  final String documentId;
+  final String hash;
+  final String targetPath;
+  final ImportSourceFile file;
+  final bool alreadyAvailable;
+}
+
 class _LegacyBundle {
   _LegacyBundle({
     required this.sourceHash,
@@ -1055,6 +1314,7 @@ class _LegacyBundle {
   final List<Map<dynamic, dynamic>> measurementNodes = [];
   final List<Map<dynamic, dynamic>> documentNodes = [];
   final List<Map<dynamic, dynamic>> rangeNodes = [];
+  final List<Map<dynamic, dynamic>> userOverrideNodes = [];
   final List<Map<dynamic, dynamic>> biomarkerListNodes = [];
   final List<Map<dynamic, dynamic>> biomarkerListEntryNodes = [];
 
@@ -1070,6 +1330,7 @@ class _LegacyBundle {
     'measurements': measurementNodes.length,
     'documents': documentNodes.length,
     'ranges': rangeNodes.length,
+    'target_overrides': userOverrideNodes.length,
     'checklists': biomarkerListNodes.length,
   };
 }

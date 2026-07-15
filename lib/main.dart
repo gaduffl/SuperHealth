@@ -29,7 +29,10 @@ void main() {
   final clientFactory = AiProviderClientFactory();
   final contextBuilder = HealthContextBuilder(repository);
   final snapshotService = SnapshotService(database, repository);
-  final oneDriveService = OneDriveService(snapshotService);
+  final oneDriveService = OneDriveService(
+    snapshotService,
+    repository: repository,
+  );
   final workspaceService = SafeWorkspaceService(
     oneDriveService: oneDriveService,
   );

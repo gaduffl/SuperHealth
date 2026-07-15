@@ -205,6 +205,57 @@ class HealthRepository {
     return rows.isEmpty ? null : HealthDocument.fromMap(rows.first);
   }
 
+  Future<List<HealthDocument>> documentsPendingCloudUpload() async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'documents',
+      where:
+          'deleted = 0 AND local_path IS NOT NULL AND local_path != ? '
+          'AND (one_drive_item_id IS NULL OR one_drive_item_id = ?)',
+      whereArgs: ['', ''],
+    );
+    return rows.map(HealthDocument.fromMap).toList();
+  }
+
+  Future<List<HealthDocument>> documentsWithCloudCopies() async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'documents',
+      where:
+          'deleted = 0 AND one_drive_item_id IS NOT NULL '
+          'AND one_drive_item_id != ?',
+      whereArgs: [''],
+    );
+    return rows.map(HealthDocument.fromMap).toList();
+  }
+
+  Future<void> setDocumentCloudItem(
+    String documentId,
+    String oneDriveItemId,
+  ) async {
+    final db = await _database.database;
+    await db.update(
+      'documents',
+      {
+        'one_drive_item_id': oneDriveItemId,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [documentId],
+    );
+  }
+
+  Future<void> setDocumentLocalPath(String documentId, String localPath) async {
+    final db = await _database.database;
+    // Device-local paths are deliberately not synchronization metadata.
+    await db.update(
+      'documents',
+      {'local_path': localPath},
+      where: 'id = ?',
+      whereArgs: [documentId],
+    );
+  }
+
   Future<void> saveDocumentBundle({
     required HealthDocument document,
     required List<Biomarker> newBiomarkers,
@@ -454,7 +505,13 @@ class HealthRepository {
     final db = await _database.database;
     final tables = <String, Object?>{};
     for (final table in AppDatabase.synchronizedTables) {
-      tables[table] = await db.query(table);
+      final rows = await db.query(table);
+      tables[table] = table == 'documents'
+          ? [
+              for (final row in rows)
+                Map<String, Object?>.from(row)..remove('local_path'),
+            ]
+          : rows;
     }
     return {
       'schema': 'superhealth.snapshot',

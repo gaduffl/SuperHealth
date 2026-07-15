@@ -59,6 +59,7 @@ class SnapshotService {
         for (final untyped in incoming) {
           if (untyped is! Map) continue;
           final row = Map<String, Object?>.from(untyped);
+          if (table == 'documents') row.remove('local_path');
           final rowId = row['id']?.toString();
           if (rowId == null || rowId.isEmpty) continue;
 
@@ -103,9 +104,12 @@ class SnapshotService {
           var applyRemote =
               existing == null ||
               _isAfter(remoteUpdated, localUpdated) ||
-              (remoteUpdated == localUpdated && _rowsDiffer(existing, row));
+              (remoteUpdated == localUpdated &&
+                  _rowsDiffer(existing, row, table: table));
 
-          if (localChanged && remoteChanged && _rowsDiffer(existing, row)) {
+          if (localChanged &&
+              remoteChanged &&
+              _rowsDiffer(existing, row, table: table)) {
             conflicts++;
             await txn.insert('sync_conflicts', {
               'table_name': table,
@@ -122,9 +126,13 @@ class SnapshotService {
           }
 
           if (applyRemote) {
+            final rowToInsert = Map<String, Object?>.from(row);
+            if (table == 'documents' && existing != null) {
+              rowToInsert['local_path'] = existing['local_path'];
+            }
             await txn.insert(
               table,
-              _sanitize(row),
+              _sanitize(rowToInsert),
               conflictAlgorithm: ConflictAlgorithm.replace,
             );
             applied++;
@@ -190,9 +198,17 @@ class SnapshotService {
     return a.isAfter(b);
   }
 
-  bool _rowsDiffer(Map<String, Object?> a, Map<String, Object?> b) {
+  bool _rowsDiffer(
+    Map<String, Object?> a,
+    Map<String, Object?> b, {
+    required String table,
+  }) {
     final left = Map<String, Object?>.from(a)..remove('updated_at');
     final right = Map<String, Object?>.from(b)..remove('updated_at');
+    if (table == 'documents') {
+      left.remove('local_path');
+      right.remove('local_path');
+    }
     return HealthRepository.stableJson(left) !=
         HealthRepository.stableJson(right);
   }
