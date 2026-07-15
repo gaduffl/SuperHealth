@@ -12,8 +12,8 @@ SuperHealth is a private, Android-first personal health companion combining supp
 - Saved lab plans plus PDF, CSV, and JSON export.
 - Direct BYOK integrations for OpenAI, Anthropic, and Gemini, with live model discovery and conservative per-model reasoning/tool controls.
 - Separate model configuration for PDF parsing and the main advisor.
-- OneDrive snapshot sync through a dedicated SuperHealth Microsoft identity, using either a private AppFolder or an explicitly selected shared family folder.
-- Previewed import of existing Supplement Manager and Biomarkers JSON data with deterministic deduplication, audit history, and rollback support.
+- OneDrive snapshot and lab-PDF sync through a dedicated SuperHealth Microsoft identity, using either a private AppFolder or an explicitly selected shared family folder.
+- Previewed import of existing Supplement Manager and Biomarkers JSON data, personal target overrides, and SHA-256-matched report PDFs with deterministic deduplication, audit history, and rollback support.
 - A profile-scoped advisor workspace. The AI may read workspace text and propose file changes, but every create, replace, or delete requires an exact user preview and confirmation.
 
 ## Privacy and safety model
