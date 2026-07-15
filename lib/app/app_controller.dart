@@ -568,6 +568,20 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  Future<LegacyPdfImportPreview> previewLegacyPdfs(
+    List<ImportSourceFile> files,
+  ) => _withBusy(() => importService.previewPdfs(files));
+
+  Future<LegacyPdfImportResult> commitLegacyPdfs(
+    LegacyPdfImportPreview preview,
+  ) {
+    return _withBusy(() async {
+      final result = await importService.commitPdfs(preview);
+      await refreshActiveData();
+      return result;
+    });
+  }
+
   Future<OneDriveSyncResult> synchronizeOneDrive() async {
     return _withBusy(() async {
       final result = await oneDriveService.synchronize();
