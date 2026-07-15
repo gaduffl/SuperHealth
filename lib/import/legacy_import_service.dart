@@ -1134,7 +1134,7 @@ class LegacyImportService {
           profileId,
           '$hash.pdf',
         );
-        var alreadyAvailable = false;
+        String? availablePath;
         final candidates = <String>{
           targetPath,
           if (row['local_path']?.toString().isNotEmpty == true)
@@ -1145,14 +1145,16 @@ class LegacyImportService {
           if (!await existing.exists()) continue;
           final existingHash = sha256.convert(await existing.readAsBytes());
           if (existingHash.toString() == hash) {
-            alreadyAvailable = true;
+            availablePath = candidate;
             break;
           }
         }
+        final storedPath = row['local_path']?.toString();
+        final alreadyAvailable =
+            availablePath != null && storedPath == availablePath;
         matches.add(
           _LegacyPdfMatch(
             documentId: '${row['id']}',
-            profileId: profileId,
             hash: hash,
             targetPath: targetPath,
             file: entry.value,
@@ -1271,7 +1273,6 @@ class LegacyImportService {
 class _LegacyPdfMatch {
   const _LegacyPdfMatch({
     required this.documentId,
-    required this.profileId,
     required this.hash,
     required this.targetPath,
     required this.file,
@@ -1279,7 +1280,6 @@ class _LegacyPdfMatch {
   });
 
   final String documentId;
-  final String profileId;
   final String hash;
   final String targetPath;
   final ImportSourceFile file;
