@@ -123,9 +123,13 @@ class SnapshotService {
           }
 
           if (applyRemote) {
+            final rowToInsert = Map<String, Object?>.from(row);
+            if (table == 'documents' && existing != null) {
+              rowToInsert['local_path'] = existing['local_path'];
+            }
             await txn.insert(
               table,
-              _sanitize(row),
+              _sanitize(rowToInsert),
               conflictAlgorithm: ConflictAlgorithm.replace,
             );
             applied++;
