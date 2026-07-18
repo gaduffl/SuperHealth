@@ -39,7 +39,7 @@ class SnapshotService {
       throw const FormatException('Unsupported snapshot schema');
     }
     final version = (snapshot['schema_version'] as num?)?.toInt();
-    if (version == null || version > AppDatabase.schemaVersion) {
+    if (version != AppDatabase.schemaVersion) {
       throw FormatException('Unsupported snapshot version: $version');
     }
     final tablesNode = snapshot['tables'];
@@ -62,16 +62,6 @@ class SnapshotService {
           if (table == 'documents') row.remove('local_path');
           final rowId = row['id']?.toString();
           if (rowId == null || rowId.isEmpty) continue;
-
-          if (table == 'lab_plan_items') {
-            await txn.insert(
-              table,
-              _sanitize(row),
-              conflictAlgorithm: ConflictAlgorithm.replace,
-            );
-            applied++;
-            continue;
-          }
 
           final existingRows = await txn.query(
             table,
@@ -156,7 +146,6 @@ class SnapshotService {
     final db = await _database.database;
     await db.transaction((txn) async {
       for (final table in AppDatabase.synchronizedTables) {
-        if (table == 'lab_plan_items') continue;
         final rows = await txn.query(table, columns: ['id', 'updated_at']);
         for (final row in rows) {
           await _saveShadow(
