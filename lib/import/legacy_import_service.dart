@@ -753,11 +753,12 @@ class LegacyImportService {
 
       final supplementIds = <String, String>{};
       for (final item in bundle.supplements) {
-        final profileId = profileIds[item.profileKey]!;
         final existing = await txn.query(
           'supplements',
-          where: 'profile_id = ? AND lower(name) = lower(?) AND deleted = 0',
-          whereArgs: [profileId, item.name],
+          where:
+              'lower(name) = lower(?) AND lower(brand) = lower(?) '
+              'AND deleted = 0',
+          whereArgs: [item.name, item.brand],
           limit: 1,
         );
         if (existing.isNotEmpty) {
@@ -771,7 +772,6 @@ class LegacyImportService {
           id,
           Supplement(
             id: id,
-            profileId: profileId,
             name: item.name,
             brand: item.brand,
             form: item.form,
@@ -781,12 +781,31 @@ class LegacyImportService {
             priceEur: item.priceEur,
             bioavailability: item.bioavailability,
             lowStockAlerts: item.lowStockAlerts,
+            stockUnit: item.form.trim().isEmpty ? 'unit' : item.form.trim(),
             sourceId: item.token,
             createdAt: now,
             updatedAt: now,
           ).toMap(),
         );
         supplementIds[item.token] = id;
+        final initialUnits = item.unitsPerContainer * item.containerCount;
+        if (initialUnits != 0) {
+          final movementId = _legacyId(bundle.sourceHash, 'inventory', id);
+          await insertAudited(
+            'inventory_movements',
+            movementId,
+            InventoryMovement(
+              id: movementId,
+              supplementId: id,
+              quantityUnits: initialUnits,
+              occurredAt: now,
+              reason: 'import',
+              notes: 'Current stock imported from Supplement Manager.',
+              createdAt: now,
+              updatedAt: now,
+            ).toMap(),
+          );
+        }
       }
 
       for (final item in bundle.schedules) {
@@ -840,12 +859,33 @@ class LegacyImportService {
       for (final item in bundle.events) {
         final id = _legacyId(bundle.sourceHash, 'event', item.token);
         final now = DateTime.now();
+        final profileId = profileIds[item.profileKey]!;
+        final definitionId = _legacyId(
+          bundle.sourceHash,
+          'event_definition',
+          '$profileId|${item.kind.name}|${_normalized(item.name)}',
+        );
+        await insertAudited(
+          'health_event_definitions',
+          definitionId,
+          HealthEventDefinition(
+            id: definitionId,
+            profileId: profileId,
+            kind: item.kind,
+            name: item.name,
+            useScore: item.score != null,
+            colorValue: item.colorValue,
+            createdAt: now,
+            updatedAt: now,
+          ).toMap(),
+        );
         await insertAudited(
           'health_events',
           id,
           HealthEvent(
             id: id,
-            profileId: profileIds[item.profileKey]!,
+            profileId: profileId,
+            definitionId: definitionId,
             kind: item.kind,
             name: item.name,
             observedAt: item.observedAt,
@@ -905,33 +945,32 @@ class LegacyImportService {
         final id = _legacyId(bundle.sourceHash, 'measurement', oldId);
         final now = DateTime.now();
         final oldDocumentId = row['document_id']?.toString();
+        final measurement = Measurement(
+          id: id,
+          profileId: resolveProfile(row['profile_id']?.toString()),
+          biomarkerId: biomarkerId,
+          documentId: oldDocumentId == null ? null : documentIds[oldDocumentId],
+          takenAt:
+              DateTime.tryParse(
+                '${row['taken_at'] ?? row['measured_at'] ?? row['created_at']}',
+              ) ??
+              now,
+          value: value,
+          unit: (row['unit_reported'] ?? row['unit'] ?? '').toString(),
+          labRefLow: _double(row['lab_ref_low']),
+          labRefHigh: _double(row['lab_ref_high']),
+          page: _double(row['page'])?.toInt(),
+          rowText: row['row_text']?.toString(),
+          extractionConfidence: _double(row['extraction_confidence']),
+          flags: _stringList(row['flags'] ?? row['flags_json']),
+          notes: row['notes']?.toString() ?? '',
+          createdAt: DateTime.tryParse('${row['created_at']}') ?? now,
+          updatedAt: DateTime.tryParse('${row['updated_at']}') ?? now,
+        );
         await insertAudited(
           'measurements',
           id,
-          Measurement(
-            id: id,
-            profileId: resolveProfile(row['profile_id']?.toString()),
-            biomarkerId: biomarkerId,
-            documentId: oldDocumentId == null
-                ? null
-                : documentIds[oldDocumentId],
-            takenAt:
-                DateTime.tryParse(
-                  '${row['taken_at'] ?? row['measured_at'] ?? row['created_at']}',
-                ) ??
-                now,
-            value: value,
-            unit: (row['unit_reported'] ?? row['unit'] ?? '').toString(),
-            labRefLow: _double(row['lab_ref_low']),
-            labRefHigh: _double(row['lab_ref_high']),
-            page: _double(row['page'])?.toInt(),
-            rowText: row['row_text']?.toString(),
-            extractionConfidence: _double(row['extraction_confidence']),
-            flags: _stringList(row['flags'] ?? row['flags_json']),
-            notes: row['notes']?.toString() ?? '',
-            createdAt: DateTime.tryParse('${row['created_at']}') ?? now,
-            updatedAt: DateTime.tryParse('${row['updated_at']}') ?? now,
-          ).toMap(),
+          await _repository.measurementMapWithCanonicalUnits(txn, measurement),
         );
       }
 
@@ -958,34 +997,59 @@ class LegacyImportService {
           }
           return;
         }
+        if (isOverride) {
+          final requestedProfile = row['profile_id']?.toString();
+          final targetProfiles = requestedProfile == null
+              ? profileIds.values.toSet()
+              : {resolveProfile(requestedProfile)};
+          final unit = (row['unit'] ?? biomarkerUnits[oldBiomarkerId] ?? '')
+              .toString();
+          final originalNotes = row['notes']?.toString().trim() ?? '';
+          for (final targetProfileId in targetProfiles) {
+            final id = _legacyId(
+              bundle.sourceHash,
+              'profile_target',
+              '${row['id'] ?? index}|$targetProfileId',
+            );
+            final now = DateTime.now();
+            await insertAudited(
+              'profile_biomarker_targets',
+              id,
+              ProfileBiomarkerTarget(
+                id: id,
+                profileId: targetProfileId,
+                biomarkerId: biomarkerId,
+                low: _double(row['low'] ?? row['min']),
+                high: _double(row['high'] ?? row['max']),
+                borderlineLow: _double(row['borderline_low']),
+                borderlineHigh: _double(row['borderline_high']),
+                unit: unit,
+                source: 'legacy_biomarkers_override',
+                notes: [
+                  originalNotes,
+                  if (requestedProfile != null)
+                    'Imported from former profile $requestedProfile.',
+                ].where((value) => value.isNotEmpty).join('\n'),
+                createdAt: DateTime.tryParse('${row['created_at']}') ?? now,
+                updatedAt: DateTime.tryParse('${row['updated_at']}') ?? now,
+              ).toMap(),
+            );
+          }
+          return;
+        }
         final oldId = row['id']?.toString() ?? '$index';
-        final id = _legacyId(
-          bundle.sourceHash,
-          'range',
-          isOverride ? 'user-override:$oldId' : oldId,
-        );
+        final id = _legacyId(bundle.sourceHash, 'range', oldId);
         final now = DateTime.now().toUtc().toIso8601String();
-        final originalNotes = row['notes']?.toString().trim() ?? '';
-        final profileNote = row['profile_id'] == null
-            ? 'Imported global Biomarkers user override.'
-            : 'Imported Biomarkers user override for the former profile '
-                  '${row['profile_id']}. Applied to the shared catalog by user choice.';
-        final notes = isOverride
-            ? [
-                originalNotes,
-                profileNote,
-              ].where((value) => value.isNotEmpty).join('\n')
-            : originalNotes;
+        final notes = row['notes']?.toString().trim() ?? '';
         await insertAudited('biomarker_ranges', id, {
           'id': id,
           'biomarker_id': biomarkerId,
-          'range_type': isOverride
-              ? 'personal_target'
-              : (row['range_type'] ??
-                        row['kind'] ??
-                        row['type'] ??
-                        'lab_reference')
-                    .toString(),
+          'range_type':
+              (row['range_type'] ??
+                      row['kind'] ??
+                      row['type'] ??
+                      'lab_reference')
+                  .toString(),
           'sex': row['sex'],
           'age_min': row['age_min'],
           'age_max': row['age_max'],
@@ -995,9 +1059,7 @@ class LegacyImportService {
           'optimal_high': row['optimal_high'] ?? row['borderline_high'],
           'unit': (row['unit'] ?? biomarkerUnits[oldBiomarkerId] ?? '')
               .toString(),
-          'evidence_label': isOverride
-              ? 'Imported personal target'
-              : row['evidence_label'] ?? row['source'],
+          'evidence_label': row['evidence_label'] ?? row['source'],
           'evidence_url': row['evidence_url'],
           'notes': notes,
           'created_at': row['created_at'] ?? now,
@@ -1025,60 +1087,56 @@ class LegacyImportService {
         final list = Map<String, dynamic>.from(rawList);
         final oldListId = list['id']?.toString();
         if (oldListId == null) continue;
-        final planId = _legacyId(bundle.sourceHash, 'lab_plan', oldListId);
+        final listId = _legacyId(
+          bundle.sourceHash,
+          'biomarker_list',
+          oldListId,
+        );
         final now = DateTime.now();
+        final dueIntervalDays = _double(list['due_duration'])?.toInt();
+        final importedList = BiomarkerList(
+          id: listId,
+          profileId: resolveProfile(list['profile_id']?.toString()),
+          name: (list['display_name'] ?? list['name'] ?? 'Imported checklist')
+              .toString(),
+          description: (list['notes'] ?? '').toString(),
+          createdAt: DateTime.tryParse('${list['created_at']}') ?? now,
+          updatedAt: DateTime.tryParse('${list['updated_at']}') ?? now,
+          deleted: list['deleted'] == 1,
+        );
+        await insertAudited('biomarker_lists', listId, importedList.toMap());
         final entries = bundle.biomarkerListEntryNodes
             .where((entry) => entry['list_id']?.toString() == oldListId)
             .toList();
-        final items = <LabPlanItem>[];
         for (var index = 0; index < entries.length; index++) {
           final oldBiomarkerId = entries[index]['biomarker_id']?.toString();
           final biomarkerId = oldBiomarkerId == null
               ? null
               : biomarkerIds[oldBiomarkerId];
           if (biomarkerId == null) continue;
-          final markerRow = await txn.query(
-            'biomarkers',
-            where: 'id = ?',
-            whereArgs: [biomarkerId],
-            limit: 1,
+          final itemId = _legacyId(
+            bundle.sourceHash,
+            'biomarker_list_item',
+            '$oldListId|$oldBiomarkerId|$index',
           );
-          if (markerRow.isEmpty) continue;
-          items.add(
-            LabPlanItem(
-              id: _legacyId(bundle.sourceHash, 'lab_item', '$oldListId|$index'),
-              planId: planId,
+          await insertAudited(
+            'biomarker_list_items',
+            itemId,
+            BiomarkerListItem(
+              id: itemId,
+              listId: listId,
               biomarkerId: biomarkerId,
-              biomarkerName: '${markerRow.first['display_name']}',
-              tier: LabTier.core,
-              priority: index + 1,
-              rationale: 'Imported from a Biomarkers checklist.',
-              evidenceClass: EvidenceClass.unclassified,
-              priceEur: _double(markerRow.first['price_eur']),
-            ),
+              dueIntervalDays:
+                  _double(entries[index]['due_duration'])?.toInt() ??
+                  dueIntervalDays,
+              notes: (entries[index]['notes'] ?? '').toString(),
+              createdAt:
+                  DateTime.tryParse('${entries[index]['created_at']}') ?? now,
+              updatedAt:
+                  DateTime.tryParse('${entries[index]['updated_at']}') ?? now,
+              deleted: entries[index]['deleted'] == 1,
+            ).toMap(),
           );
-        }
-        if (items.isEmpty) continue;
-        final plan = LabPlan(
-          id: planId,
-          profileId: resolveProfile(list['profile_id']?.toString()),
-          title: (list['display_name'] ?? list['name'] ?? 'Imported checklist')
-              .toString(),
-          createdAt: DateTime.tryParse('${list['created_at']}') ?? now,
-          updatedAt: DateTime.tryParse('${list['updated_at']}') ?? now,
-          contextHash: 'legacy-import:${preview.sourceHash}',
-          status: 'imported',
-          items: items,
-        );
-        final didInsert = await insertAudited(
-          'lab_plans',
-          planId,
-          plan.toMap(),
-        );
-        if (didInsert) {
-          for (final item in items) {
-            await insertAudited('lab_plan_items', item.id, item.toMap());
-          }
         }
       }
     });
