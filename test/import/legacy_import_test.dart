@@ -136,15 +136,13 @@ void main() {
 
     final db = await database.database;
     final ranges = await db.query('biomarker_ranges');
-    expect(ranges, hasLength(2));
+    expect(ranges, hasLength(1));
     final catalogRange = ranges.singleWhere(
       (row) => row['range_type'] == 'longevity_target',
     );
     expect(catalogRange['optimal_high'], 100.0);
     expect(catalogRange['evidence_label'], 'Imported personal catalog');
-    final personalTarget = ranges.singleWhere(
-      (row) => row['range_type'] == 'personal_target',
-    );
+    final personalTarget = (await db.query('profile_biomarker_targets')).single;
     expect(personalTarget['high'], 70.0);
     expect(personalTarget['optimal_high'], 85.0);
     expect(personalTarget['unit'], 'mg/dL');
