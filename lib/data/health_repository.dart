@@ -449,12 +449,9 @@ class HealthRepository {
         profileId,
         includeDeletedClause: false,
       ),
-      'advisor_messages': await _profileRows(
-        db,
-        'advisor_messages',
-        profileId,
-        includeDeletedClause: false,
-      ),
+      // Advisor messages are not health evidence. The active conversation is
+      // supplied separately in conversational order by AdvisorService so old
+      // model output cannot be mistaken for a measured fact.
       // The full catalog is needed to choose unmeasured tests and calculate price tiers.
       'biomarker_catalog': await db.query('biomarkers', where: 'deleted = 0'),
       'biomarker_ranges': await db.query(
@@ -495,6 +492,7 @@ class HealthRepository {
           'onedrive_tokens',
           'sync_metadata',
           'other_profiles',
+          'advisor_messages_outside_active_conversation',
         ],
       },
       'data': data,
