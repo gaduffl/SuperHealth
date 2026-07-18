@@ -5,7 +5,7 @@ import '../ui/advisor_screen.dart';
 import '../ui/common.dart';
 import '../ui/dashboard_screen.dart';
 import '../ui/dialogs.dart';
-import '../ui/labs_screen.dart';
+import '../ui/health_screen.dart';
 import '../ui/settings_screen.dart';
 import '../ui/tracking_screen.dart';
 import 'app_controller.dart';
@@ -228,11 +228,17 @@ class _HomeShell extends StatefulWidget {
 class _HomeShellState extends State<_HomeShell> {
   var _index = 0;
 
-  static const _titles = ['Today', 'Track', 'Labs', 'Advisor', 'Settings'];
+  static const _titles = [
+    'Today',
+    'Supplements',
+    'Health',
+    'Advisor',
+    'Settings',
+  ];
   static const _screens = [
     DashboardScreen(),
     TrackingScreen(),
-    LabsScreen(),
+    HealthScreen(),
     AdvisorScreen(),
     SettingsScreen(),
   ];
@@ -319,14 +325,14 @@ class _HomeShellState extends State<_HomeShell> {
             label: 'Today',
           ),
           NavigationDestination(
-            icon: Icon(Icons.add_chart_outlined),
-            selectedIcon: Icon(Icons.add_chart),
-            label: 'Track',
+            icon: Icon(Icons.medication_outlined),
+            selectedIcon: Icon(Icons.medication),
+            label: 'Supplements',
           ),
           NavigationDestination(
-            icon: Icon(Icons.science_outlined),
-            selectedIcon: Icon(Icons.science),
-            label: 'Labs',
+            icon: Icon(Icons.monitor_heart_outlined),
+            selectedIcon: Icon(Icons.monitor_heart),
+            label: 'Health',
           ),
           NavigationDestination(
             icon: Icon(Icons.psychology_outlined),
