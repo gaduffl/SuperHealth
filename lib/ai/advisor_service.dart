@@ -90,7 +90,9 @@ Be direct and useful. State what is known from the profile, what is inferred, an
                   {
                     'role': message.role,
                     'content': message.content,
-                    'created_at': message.createdAt.toUtc().toIso8601String(),
+                    'created_at': message.createdAt
+                        .toUtc()
+                        .toIso8601String(),
                   },
               ])}'
               '\n</active_conversation_history>';
