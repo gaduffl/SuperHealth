@@ -11,8 +11,9 @@ import '../ai/lab_planner_service.dart';
 import '../app/app_controller.dart';
 import '../domain/entities.dart';
 import '../export/lab_plan_export_service.dart';
-import 'common.dart';
 import 'biomarker_detail_sheet.dart';
+import 'biomarker_lists_sheet.dart';
+import 'common.dart';
 import 'dialogs.dart';
 
 class LabsScreen extends StatelessWidget {
@@ -109,7 +110,49 @@ class LabsScreen extends StatelessWidget {
               _SavedPlanCard(
                 plan: plan,
                 onExport: () => _export(context, controller, plan),
+                onToggle: (item, checked) =>
+                    controller.setLabPlanItemChecked(plan, item, checked),
+                onDelete: () async {
+                  final confirmed = await showConfirmAction(
+                    context,
+                    title: 'Delete ${plan.title}?',
+                    message: 'The exported files, if any, are not affected.',
+                    confirmLabel: 'Delete',
+                    destructive: true,
+                  );
+                  if (confirmed) await controller.deleteLabPlan(plan);
+                },
               ),
+          ],
+          if (controller.dueBiomarkers.isNotEmpty) ...[
+            const SectionHeader(
+              title: 'Due for retest',
+              subtitle: 'From the active profile’s saved biomarker lists',
+            ),
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  for (final due in controller.dueBiomarkers)
+                    ListTile(
+                      leading: const CircleAvatar(
+                        child: Icon(Icons.event_repeat_outlined),
+                      ),
+                      title: Text(due.biomarker.displayName),
+                      subtitle: Text(
+                        '${due.listName} · every ${due.intervalDays} days · '
+                        '${due.lastMeasuredAt == null ? 'never measured' : '${due.daysOverdue} days overdue'}',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showBiomarkerDetail(
+                        context,
+                        controller,
+                        due.biomarker,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
           if (controller.documents.isNotEmpty) ...[
             const SectionHeader(
@@ -142,6 +185,7 @@ class LabsScreen extends StatelessWidget {
                             ? Icons.phone_android
                             : Icons.cloud_done_outlined,
                       ),
+                      onTap: () => _showDocument(context, controller, document),
                     ),
                 ],
               ),
@@ -151,50 +195,27 @@ class LabsScreen extends StatelessWidget {
             title: 'Biomarker catalog',
             subtitle:
                 '${controller.biomarkers.length} tests · ${controller.measurements.length} results',
-            action: IconButton.filledTonal(
-              tooltip: 'Add biomarker',
-              onPressed: () => showAddBiomarkerDialog(context, controller),
-              icon: const Icon(Icons.add),
+            action: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton.filledTonal(
+                  tooltip: 'Saved biomarker lists',
+                  onPressed: () => showBiomarkerListsSheet(context, controller),
+                  icon: const Icon(Icons.checklist_outlined),
+                ),
+                const SizedBox(width: 6),
+                IconButton.filledTonal(
+                  tooltip: 'Add biomarker',
+                  onPressed: () => showAddBiomarkerDialog(context, controller),
+                  icon: const Icon(Icons.add),
+                ),
+              ],
             ),
           ),
           if (controller.biomarkers.isNotEmpty)
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (final biomarker in controller.biomarkers)
-                    ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.science_outlined),
-                      ),
-                      title: Text(biomarker.displayName),
-                      subtitle: Text(
-                        [
-                          if (biomarker.category.isNotEmpty) biomarker.category,
-                          if (latestByBiomarker[biomarker.id]
-                              case final latest?)
-                            '${latest.value} ${latest.unit} · ${DateFormat.yMMMd().format(latest.takenAt)}'
-                          else
-                            'No result yet',
-                        ].join(' · '),
-                      ),
-                      trailing: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            biomarker.priceEur == null
-                                ? 'No price'
-                                : '${biomarker.priceEur!.toStringAsFixed(2)} €',
-                          ),
-                          const Icon(Icons.chevron_right, size: 18),
-                        ],
-                      ),
-                      onTap: () =>
-                          showBiomarkerDetail(context, controller, biomarker),
-                    ),
-                ],
-              ),
+            _BiomarkerCatalog(
+              controller: controller,
+              latestByBiomarker: latestByBiomarker,
             ),
         ],
       ),
@@ -436,6 +457,148 @@ class LabsScreen extends StatelessWidget {
     comment.dispose();
   }
 
+  Future<void> _showDocument(
+    BuildContext context,
+    AppController controller,
+    HealthDocument document,
+  ) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: Text(document.fileName),
+              subtitle: Text(
+                '${controller.measurements.where((item) => item.documentId == document.id).length} linked results',
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Edit report metadata'),
+              onTap: () => Navigator.pop(context, 'edit'),
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_outline,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              title: const Text('Delete report and linked results'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted || action == null) return;
+    if (action == 'edit') {
+      await _editDocument(context, controller, document);
+    } else {
+      final confirmed = await showConfirmAction(
+        context,
+        title: 'Delete ${document.fileName}?',
+        message:
+            'The PDF record and every measurement imported from it will be removed.',
+        confirmLabel: 'Delete all',
+        destructive: true,
+      );
+      if (confirmed) await controller.deleteDocument(document);
+    }
+  }
+
+  Future<void> _editDocument(
+    BuildContext context,
+    AppController controller,
+    HealthDocument document,
+  ) async {
+    final lab = TextEditingController(text: document.labName);
+    final comment = TextEditingController(text: document.reportComment);
+    var date = document.documentDate;
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Edit lab report'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: lab,
+                decoration: const InputDecoration(labelText: 'Lab name'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Report date'),
+                subtitle: Text(
+                  date == null
+                      ? 'Not set'
+                      : DateFormat('dd.MM.yyyy').format(date!),
+                ),
+                trailing: const Icon(Icons.calendar_today_outlined),
+                onTap: () async {
+                  final selected = await showDatePicker(
+                    context: context,
+                    firstDate: DateTime(1950),
+                    lastDate: DateTime.now(),
+                    initialDate: date ?? DateTime.now(),
+                  );
+                  if (selected != null) setState(() => date = selected);
+                },
+              ),
+              TextField(
+                controller: comment,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Comment'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    try {
+      if (save == true) {
+        await controller.updateDocument(
+          HealthDocument(
+            id: document.id,
+            profileId: document.profileId,
+            fileName: document.fileName,
+            mimeType: document.mimeType,
+            sha256: document.sha256,
+            localPath: document.localPath,
+            oneDriveItemId: document.oneDriveItemId,
+            documentDate: date,
+            parsedAt: document.parsedAt,
+            parserProvider: document.parserProvider,
+            parserModel: document.parserModel,
+            labName: lab.text,
+            reportComment: comment.text,
+            parseStatus: document.parseStatus,
+            warnings: document.warnings,
+            errors: document.errors,
+            createdAt: document.createdAt,
+            updatedAt: DateTime.now(),
+          ),
+        );
+      }
+    } finally {
+      lab.dispose();
+      comment.dispose();
+    }
+  }
+
   Future<void> _generate(BuildContext context, AppController controller) async {
     final priorities = TextEditingController();
     DateTime? targetDate;
@@ -650,10 +813,17 @@ class _DraftPlanCard extends StatelessWidget {
 }
 
 class _SavedPlanCard extends StatelessWidget {
-  const _SavedPlanCard({required this.plan, required this.onExport});
+  const _SavedPlanCard({
+    required this.plan,
+    required this.onExport,
+    required this.onToggle,
+    required this.onDelete,
+  });
 
   final LabPlan plan;
   final VoidCallback onExport;
+  final Future<void> Function(LabPlanItem, bool) onToggle;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -663,15 +833,18 @@ class _SavedPlanCard extends StatelessWidget {
         '${DateFormat.yMMMd().format(plan.plannedFor ?? plan.createdAt)} · '
         '${plan.items.length} tests · ${plan.provider ?? 'manual'}',
       ),
-      trailing: IconButton(
-        tooltip: 'Export',
-        onPressed: onExport,
-        icon: const Icon(Icons.ios_share_outlined),
+      trailing: PopupMenuButton<String>(
+        tooltip: 'Plan actions',
+        onSelected: (value) => value == 'export' ? onExport() : onDelete(),
+        itemBuilder: (context) => const [
+          PopupMenuItem(value: 'export', child: Text('Export')),
+          PopupMenuItem(value: 'delete', child: Text('Delete')),
+        ],
       ),
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: _PlanTiers(plan: plan),
+          child: _PlanTiers(plan: plan, onToggle: onToggle),
         ),
       ],
     ),
@@ -679,9 +852,10 @@ class _SavedPlanCard extends StatelessWidget {
 }
 
 class _PlanTiers extends StatelessWidget {
-  const _PlanTiers({required this.plan});
+  const _PlanTiers({required this.plan, this.onToggle});
 
   final LabPlan plan;
+  final Future<void> Function(LabPlanItem, bool)? onToggle;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -698,19 +872,25 @@ class _PlanTiers extends StatelessWidget {
           ),
           children: [
             for (final item in plan.itemsThrough(tier))
-              ListTile(
+              CheckboxListTile(
                 dense: true,
                 contentPadding: const EdgeInsets.only(left: 8),
-                leading: const Icon(Icons.check_box_outline_blank, size: 20),
                 title: Text(item.biomarkerName),
                 subtitle: Text(
-                  '${item.evidenceClass.name} · ${item.rationale}',
+                  [
+                    item.evidenceClass.name,
+                    item.rationale,
+                    if (item.preparation.isNotEmpty) item.preparation,
+                    item.priceEur == null
+                        ? 'Price unknown'
+                        : '${item.priceEur!.toStringAsFixed(2)} €',
+                  ].join(' · '),
                 ),
-                trailing: Text(
-                  item.priceEur == null
-                      ? '—'
-                      : '${item.priceEur!.toStringAsFixed(2)} €',
-                ),
+                value: item.checked,
+                onChanged: onToggle == null
+                    ? null
+                    : (checked) => onToggle!(item, checked ?? false),
+                controlAffinity: ListTileControlAffinity.leading,
               ),
           ],
         ),
@@ -722,4 +902,183 @@ class _PlanTiers extends StatelessWidget {
     LabTier.advanced => 'Advanced (includes Core)',
     LabTier.comprehensive => 'Comprehensive (includes all)',
   };
+}
+
+class _BiomarkerCatalog extends StatefulWidget {
+  const _BiomarkerCatalog({
+    required this.controller,
+    required this.latestByBiomarker,
+  });
+
+  final AppController controller;
+  final Map<String, Measurement> latestByBiomarker;
+
+  @override
+  State<_BiomarkerCatalog> createState() => _BiomarkerCatalogState();
+}
+
+class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
+  final _search = TextEditingController();
+  String _category = 'All';
+  String _status = 'All';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = {
+      'All',
+      ...widget.controller.biomarkers
+          .map((item) => item.category.trim())
+          .where((item) => item.isNotEmpty),
+    }.toList()..sort();
+    final query = _search.text.trim().toLowerCase();
+    final filtered = widget.controller.biomarkers.where((biomarker) {
+      final latest = widget.latestByBiomarker[biomarker.id];
+      final matchesQuery =
+          query.isEmpty ||
+          biomarker.displayName.toLowerCase().contains(query) ||
+          biomarker.synonyms.any((item) => item.toLowerCase().contains(query));
+      final matchesCategory =
+          _category == 'All' || biomarker.category == _category;
+      final matchesStatus = switch (_status) {
+        'Measured' => latest != null,
+        'Never measured' => latest == null,
+        'Missing price' => biomarker.priceEur == null,
+        'Conversion issue' => widget.controller.measurements.any(
+          (item) =>
+              item.biomarkerId == biomarker.id &&
+              item.conversionStatus == 'unsupported',
+        ),
+        _ => true,
+      };
+      return matchesQuery && matchesCategory && matchesStatus;
+    }).toList();
+    return Column(
+      children: [
+        TextField(
+          controller: _search,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            hintText: 'Search names and lab synonyms',
+            suffixIcon: _search.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear',
+                    onPressed: () => setState(_search.clear),
+                    icon: const Icon(Icons.close),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              DropdownButton<String>(
+                value: _category,
+                items: [
+                  for (final category in categories)
+                    DropdownMenuItem(value: category, child: Text(category)),
+                ],
+                onChanged: (value) => setState(() => _category = value!),
+              ),
+              const SizedBox(width: 12),
+              DropdownButton<String>(
+                value: _status,
+                items: const [
+                  DropdownMenuItem(value: 'All', child: Text('All statuses')),
+                  DropdownMenuItem(value: 'Measured', child: Text('Measured')),
+                  DropdownMenuItem(
+                    value: 'Never measured',
+                    child: Text('Never measured'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Missing price',
+                    child: Text('Missing price'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Conversion issue',
+                    child: Text('Conversion issue'),
+                  ),
+                ],
+                onChanged: (value) => setState(() => _status = value!),
+              ),
+              const SizedBox(width: 12),
+              Text('${filtered.length} shown'),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (filtered.isEmpty)
+          const EmptyState(
+            icon: Icons.filter_alt_off_outlined,
+            title: 'No matching biomarkers',
+            message: 'Clear or change the catalog filters.',
+          )
+        else
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (final biomarker in filtered)
+                  _BiomarkerTile(
+                    biomarker: biomarker,
+                    latest: widget.latestByBiomarker[biomarker.id],
+                    controller: widget.controller,
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _BiomarkerTile extends StatelessWidget {
+  const _BiomarkerTile({
+    required this.biomarker,
+    required this.latest,
+    required this.controller,
+  });
+
+  final Biomarker biomarker;
+  final Measurement? latest;
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    leading: const CircleAvatar(child: Icon(Icons.science_outlined)),
+    title: Text(biomarker.displayName),
+    subtitle: Text(
+      [
+        if (biomarker.category.isNotEmpty) biomarker.category,
+        if (latest != null)
+          '${latest!.value} ${latest!.unit} · ${DateFormat.yMMMd().format(latest!.takenAt)}'
+        else
+          'No result yet',
+        if (latest?.conversionStatus == 'unsupported') 'Conversion unavailable',
+      ].join(' · '),
+    ),
+    trailing: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          biomarker.priceEur == null
+              ? 'No price'
+              : '${biomarker.priceEur!.toStringAsFixed(2)} €',
+        ),
+        const Icon(Icons.chevron_right, size: 18),
+      ],
+    ),
+    onTap: () => showBiomarkerDetail(context, controller, biomarker),
+    onLongPress: () =>
+        showAddBiomarkerDialog(context, controller, existing: biomarker),
+  );
 }
