@@ -75,6 +75,7 @@ class AppController extends ChangeNotifier {
   List<Profile> profiles = const [];
   List<Supplement> supplements = const [];
   List<SupplementSchedule> schedules = const [];
+  List<SupplementSchedule> householdSchedules = const [];
   List<SupplementIntake> intakes = const [];
   List<InventoryMovement> inventoryMovements = const [];
   Map<String, double> stockLevels = const {};
@@ -219,6 +220,7 @@ class AppController extends ChangeNotifier {
       repository.dueBiomarkers(profile.id),
       repository.labPlans(profile.id),
       repository.messages(profile.id, 'primary'),
+      repository.householdSchedules(),
     ]);
     supplements = values[0] as List<Supplement>;
     schedules = values[1] as List<SupplementSchedule>;
@@ -237,12 +239,14 @@ class AppController extends ChangeNotifier {
     dueBiomarkers = values[14] as List<DueBiomarker>;
     labPlans = values[15] as List<LabPlan>;
     advisorMessages = values[16] as List<AdvisorMessage>;
+    householdSchedules = values[17] as List<SupplementSchedule>;
     notifyListeners();
   }
 
   Future<void> _clearActiveData() async {
     supplements = const [];
     schedules = const [];
+    householdSchedules = const [];
     intakes = const [];
     inventoryMovements = const [];
     stockLevels = const {};
