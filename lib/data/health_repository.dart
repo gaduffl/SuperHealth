@@ -147,6 +147,16 @@ class HealthRepository {
     return rows.map(SupplementSchedule.fromMap).toList();
   }
 
+  Future<List<SupplementSchedule>> householdSchedules() async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'supplement_schedules',
+      where: 'active = 1 AND deleted = 0',
+      orderBy: 'profile_id, time_of_day, supplement_id',
+    );
+    return rows.map(SupplementSchedule.fromMap).toList();
+  }
+
   Future<void> saveSchedule(SupplementSchedule schedule) async {
     final db = await _database.database;
     await db.insert(
