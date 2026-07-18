@@ -41,11 +41,7 @@ void main() {
           'updated_at': '2026-01-01T00:00:00Z',
         },
         'biomarker_catalog': [
-          {
-            'id': 'apo-b',
-            'display_name': 'ApoB',
-            'default_unit': 'mg/dL',
-          },
+          {'id': 'apo-b', 'display_name': 'ApoB', 'default_unit': 'mg/dL'},
         ],
         'measurements': reverseMeasurements
             ? measurements.reversed.toList()
@@ -66,7 +62,10 @@ void main() {
     final measurements = ledger['measurements'] as List<dynamic>;
 
     expect(measurements, hasLength(2));
-    expect(measurements.map((row) => row['id']), containsAll(['m-old', 'm-new']));
+    expect(
+      measurements.map((row) => row['id']),
+      containsAll(['m-old', 'm-new']),
+    );
     expect(envelope.manifest['complete'], isTrue);
     expect(envelope.manifest['lossless'], isTrue);
     expect(envelope.recordCount, 4);
@@ -74,19 +73,22 @@ void main() {
     expect(envelope.sectionHashes['measurements'], hasLength(64));
   });
 
-  test('attention index exposes mixed units without changing source values', () async {
-    final builder = HealthContextBuilder.fromLoader((_) async => snapshot());
-    final envelope = await builder.build('profile-1');
-    final decoded = jsonDecode(envelope.json) as Map<String, dynamic>;
-    final attention = decoded['attention_index'] as Map<String, dynamic>;
-    final latest = (attention['latest_biomarkers'] as List<dynamic>).single;
-    final flags = attention['data_quality_flags'] as List<dynamic>;
+  test(
+    'attention index exposes mixed units without changing source values',
+    () async {
+      final builder = HealthContextBuilder.fromLoader((_) async => snapshot());
+      final envelope = await builder.build('profile-1');
+      final decoded = jsonDecode(envelope.json) as Map<String, dynamic>;
+      final attention = decoded['attention_index'] as Map<String, dynamic>;
+      final latest = (attention['latest_biomarkers'] as List<dynamic>).single;
+      final flags = attention['data_quality_flags'] as List<dynamic>;
 
-    expect(latest['latest_value'], 75);
-    expect(latest['previous_value'], 0.85);
-    expect(latest['units_seen'], ['g/L', 'mg/dL']);
-    expect(flags.single['type'], 'mixed_biomarker_units');
-  });
+      expect(latest['latest_value'], 75);
+      expect(latest['previous_value'], 0.85);
+      expect(latest['reported_units_seen'], ['g/L', 'mg/dL']);
+      expect(flags.single['type'], 'mixed_biomarker_units_unresolved');
+    },
+  );
 
   test('context hash is stable when source row order changes', () async {
     final normal = HealthContextBuilder.fromLoader((_) async => snapshot());
@@ -100,16 +102,16 @@ void main() {
     );
   });
 
-  test('count mismatch fails instead of silently sending partial context', () async {
-    final value = snapshot();
-    (value['manifest']! as Map<String, Object?>)['counts'] = {
-      'measurements': 3,
-    };
-    final builder = HealthContextBuilder.fromLoader((_) async => value);
+  test(
+    'count mismatch fails instead of silently sending partial context',
+    () async {
+      final value = snapshot();
+      (value['manifest']! as Map<String, Object?>)['counts'] = {
+        'measurements': 3,
+      };
+      final builder = HealthContextBuilder.fromLoader((_) async => value);
 
-    await expectLater(
-      builder.build('profile-1'),
-      throwsA(isA<StateError>()),
-    );
-  });
+      await expectLater(builder.build('profile-1'), throwsA(isA<StateError>()));
+    },
+  );
 }
