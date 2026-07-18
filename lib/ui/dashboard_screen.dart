@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:collection/collection.dart';
 import 'package:provider/provider.dart';
 
+import '../analysis/supplement_insights.dart';
 import '../app/app_controller.dart';
 import '../domain/entities.dart';
 import 'common.dart';
@@ -16,6 +17,7 @@ class DashboardScreen extends StatelessWidget {
     final controller = context.watch<AppController>();
     final profile = controller.activeProfile!;
     final today = DateTime.now();
+    const insights = SupplementInsights();
     final todayIntakes = controller.intakes
         .where((item) => _sameDay(item.takenAt, today))
         .toList();
@@ -30,6 +32,18 @@ class DashboardScreen extends StatelessWidget {
         .where((item) => item.active)
         .length;
     final recentEvents = controller.events.take(4).toList();
+    final scheduledToday = insights.dosesForDay(
+      day: today,
+      schedules: controller.schedules,
+      supplements: controller.supplements,
+      intakes: controller.intakes,
+    );
+    final stock = insights.stockProjections(
+      supplements: controller.supplements,
+      householdSchedules: controller.householdSchedules,
+      stockLevels: controller.stockLevels,
+    );
+    final lowStock = stock.where((item) => item.low).toList();
 
     return PageBody(
       child: RefreshIndicator(
@@ -58,22 +72,23 @@ class DashboardScreen extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 MetricCard(
-                  label: 'Today’s intakes',
-                  value: '${todayIntakes.length}',
+                  label: 'Today’s doses',
+                  value:
+                      '${scheduledToday.where((item) => item.taken).length}/${scheduledToday.length}',
                   icon: Icons.medication_outlined,
                   detail: '$activeSupplements active products',
                 ),
                 MetricCard(
-                  label: 'Biomarkers',
-                  value: '${latestMeasurements.length}',
+                  label: 'Biomarkers due',
+                  value: '${controller.dueBiomarkers.length}',
                   icon: Icons.science_outlined,
-                  detail: '${controller.biomarkers.length} in catalog',
+                  detail: '${latestMeasurements.length} measured',
                 ),
                 MetricCard(
-                  label: 'Health events',
-                  value: '${controller.events.length}',
-                  icon: Icons.monitor_heart_outlined,
-                  detail: 'Symptoms and tags',
+                  label: 'Low stock',
+                  value: '${lowStock.length}',
+                  icon: Icons.inventory_2_outlined,
+                  detail: 'Household inventory',
                 ),
                 MetricCard(
                   label: 'Lab plans',
@@ -161,6 +176,78 @@ class DashboardScreen extends StatelessWidget {
                   ],
                 ),
               ),
+            if (scheduledToday.any((item) => !item.taken) ||
+                controller.dueBiomarkers.isNotEmpty ||
+                lowStock.isNotEmpty) ...[
+              const SectionHeader(
+                title: 'Needs attention',
+                subtitle: 'The most useful next actions',
+              ),
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    for (final dose in scheduledToday.where(
+                      (item) => !item.taken && !item.skipped,
+                    ))
+                      ListTile(
+                        leading: const Icon(Icons.schedule),
+                        title: Text(dose.supplement.name),
+                        subtitle: Text(
+                          '${dose.schedule.dose} ${dose.schedule.unit} · ${dose.schedule.timeOfDay}',
+                        ),
+                        trailing: FilledButton.tonal(
+                          onPressed: () async {
+                            try {
+                              await controller.logIntake(
+                                supplement: dose.supplement,
+                                dose: dose.schedule.dose,
+                                unit: dose.schedule.unit,
+                                schedule: dose.schedule,
+                              );
+                            } on Object catch (error) {
+                              if (context.mounted) {
+                                await showAppError(context, error);
+                              }
+                            }
+                          },
+                          child: const Text('Taken'),
+                        ),
+                      ),
+                    for (final due in controller.dueBiomarkers.take(3))
+                      ListTile(
+                        leading: const Icon(Icons.event_busy_outlined),
+                        title: Text('${due.biomarker.displayName} is due'),
+                        subtitle: Text(
+                          due.lastMeasuredAt == null
+                              ? '${due.listName} · never measured'
+                              : '${due.listName} · ${due.daysOverdue} days overdue',
+                        ),
+                      ),
+                    for (final item in lowStock.take(3))
+                      ListTile(
+                        leading: Icon(
+                          Icons.inventory_outlined,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        title: Text('${item.supplement.name} is low'),
+                        subtitle: Text(
+                          '${item.unitsOnHand.toStringAsFixed(1)} ${item.supplement.stockUnit} remaining',
+                        ),
+                        trailing: TextButton(
+                          onPressed: () => showAdjustStockDialog(
+                            context,
+                            controller,
+                            item.supplement,
+                            purchase: true,
+                          ),
+                          child: const Text('Refill'),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
             const SectionHeader(
               title: 'Privacy boundary',
               subtitle: 'Designed for a private, local-first health record',
