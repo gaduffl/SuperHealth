@@ -3,14 +3,21 @@ import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
+import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import 'app_database.dart';
 
 class HealthRepository {
-  HealthRepository(this._database, {Uuid? uuid}) : _uuid = uuid ?? const Uuid();
+  HealthRepository(
+    this._database, {
+    Uuid? uuid,
+    UnitConversionService? unitConversionService,
+  }) : _uuid = uuid ?? const Uuid(),
+       _unitConversion = unitConversionService ?? UnitConversionService();
 
   final AppDatabase _database;
   final Uuid _uuid;
+  final UnitConversionService _unitConversion;
 
   String newId() => _uuid.v4();
 
@@ -56,12 +63,27 @@ class HealthRepository {
     );
   }
 
-  Future<List<Supplement>> supplements(String profileId) async {
+  Future<void> softDelete(String table, String id) async {
+    if (!AppDatabase.synchronizedTables.contains(table)) {
+      throw ArgumentError.value(table, 'table', 'Table is not synchronized.');
+    }
+    final db = await _database.database;
+    final changed = await db.update(
+      table,
+      {'deleted': 1, 'updated_at': DateTime.now().toUtc().toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (changed != 1) {
+      throw StateError('The record no longer exists. Refresh and try again.');
+    }
+  }
+
+  Future<List<Supplement>> supplements([String? profileId]) async {
     final db = await _database.database;
     final rows = await db.query(
       'supplements',
-      where: 'profile_id = ? AND deleted = 0',
-      whereArgs: [profileId],
+      where: 'deleted = 0',
       orderBy: 'active DESC, name COLLATE NOCASE',
     );
     return rows.map(Supplement.fromMap).toList();
@@ -72,6 +94,44 @@ class HealthRepository {
     await db.insert(
       'supplements',
       supplement.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<InventoryMovement>> inventoryMovements({
+    String? supplementId,
+  }) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'inventory_movements',
+      where: supplementId == null
+          ? 'deleted = 0'
+          : 'supplement_id = ? AND deleted = 0',
+      whereArgs: supplementId == null ? null : [supplementId],
+      orderBy: 'occurred_at DESC, created_at DESC',
+    );
+    return rows.map(InventoryMovement.fromMap).toList();
+  }
+
+  Future<Map<String, double>> stockLevels() async {
+    final db = await _database.database;
+    final rows = await db.rawQuery('''
+      SELECT supplement_id, COALESCE(SUM(quantity_units), 0) AS stock
+      FROM inventory_movements
+      WHERE deleted = 0
+      GROUP BY supplement_id
+    ''');
+    return {
+      for (final row in rows)
+        '${row['supplement_id']}': (row['stock'] as num?)?.toDouble() ?? 0,
+    };
+  }
+
+  Future<void> saveInventoryMovement(InventoryMovement movement) async {
+    final db = await _database.database;
+    await db.insert(
+      'inventory_movements',
+      movement.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -121,13 +181,57 @@ class HealthRepository {
     return rows.map(SupplementIntake.fromMap).toList();
   }
 
-  Future<void> saveIntake(SupplementIntake intake) async {
+  Future<void> saveIntake(
+    SupplementIntake intake, {
+    double? inventoryUnits,
+  }) async {
     final db = await _database.database;
-    await db.insert(
-      'supplement_intakes',
-      intake.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.transaction((txn) async {
+      await txn.insert(
+        'supplement_intakes',
+        intake.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      final existing = await txn.query(
+        'inventory_movements',
+        where: 'intake_id = ?',
+        whereArgs: [intake.id],
+        limit: 1,
+      );
+      if (intake.deleted || intake.skipped || inventoryUnits == null) {
+        if (existing.isNotEmpty) {
+          await txn.update(
+            'inventory_movements',
+            {
+              'deleted': 1,
+              'updated_at': intake.updatedAt.toUtc().toIso8601String(),
+            },
+            where: 'id = ?',
+            whereArgs: [existing.single['id']],
+          );
+        }
+        return;
+      }
+      final now = intake.updatedAt;
+      final movement = InventoryMovement(
+        id: existing.isEmpty ? newId() : '${existing.single['id']}',
+        supplementId: intake.supplementId,
+        profileId: intake.profileId,
+        intakeId: intake.id,
+        quantityUnits: -inventoryUnits.abs(),
+        occurredAt: intake.takenAt,
+        reason: 'intake',
+        createdAt: existing.isEmpty
+            ? intake.createdAt
+            : DateTime.tryParse('${existing.single['created_at']}') ?? now,
+        updatedAt: now,
+      );
+      await txn.insert(
+        'inventory_movements',
+        movement.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
   }
 
   Future<List<HealthEvent>> events(
@@ -164,6 +268,31 @@ class HealthRepository {
     );
   }
 
+  Future<List<HealthEventDefinition>> eventDefinitions(
+    String profileId, {
+    bool includeArchived = false,
+  }) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'health_event_definitions',
+      where: includeArchived
+          ? 'profile_id = ? AND deleted = 0'
+          : 'profile_id = ? AND archived = 0 AND deleted = 0',
+      whereArgs: [profileId],
+      orderBy: 'kind, name COLLATE NOCASE',
+    );
+    return rows.map(HealthEventDefinition.fromMap).toList();
+  }
+
+  Future<void> saveEventDefinition(HealthEventDefinition definition) async {
+    final db = await _database.database;
+    await db.insert(
+      'health_event_definitions',
+      definition.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<List<Biomarker>> biomarkers() async {
     final db = await _database.database;
     final rows = await db.query(
@@ -183,6 +312,55 @@ class HealthRepository {
     );
   }
 
+  Future<List<BiomarkerReferenceRange>> biomarkerRanges({
+    String? biomarkerId,
+  }) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'biomarker_ranges',
+      where: biomarkerId == null
+          ? 'deleted = 0'
+          : 'biomarker_id = ? AND deleted = 0',
+      whereArgs: biomarkerId == null ? null : [biomarkerId],
+      orderBy: 'biomarker_id, range_type, sex, age_min',
+    );
+    return rows.map(BiomarkerReferenceRange.fromMap).toList();
+  }
+
+  Future<void> saveBiomarkerRange(BiomarkerReferenceRange range) async {
+    final db = await _database.database;
+    await db.insert(
+      'biomarker_ranges',
+      range.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<ProfileBiomarkerTarget>> profileTargets(
+    String profileId, {
+    String? biomarkerId,
+  }) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'profile_biomarker_targets',
+      where: biomarkerId == null
+          ? 'profile_id = ? AND deleted = 0'
+          : 'profile_id = ? AND biomarker_id = ? AND deleted = 0',
+      whereArgs: biomarkerId == null ? [profileId] : [profileId, biomarkerId],
+      orderBy: 'biomarker_id',
+    );
+    return rows.map(ProfileBiomarkerTarget.fromMap).toList();
+  }
+
+  Future<void> saveProfileTarget(ProfileBiomarkerTarget target) async {
+    final db = await _database.database;
+    await db.insert(
+      'profile_biomarker_targets',
+      target.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<List<HealthDocument>> documents(String profileId) async {
     final db = await _database.database;
     final rows = await db.query(
@@ -192,6 +370,37 @@ class HealthRepository {
       orderBy: 'COALESCE(document_date, created_at) DESC',
     );
     return rows.map(HealthDocument.fromMap).toList();
+  }
+
+  Future<void> saveDocument(HealthDocument document) async {
+    final db = await _database.database;
+    await db.insert(
+      'documents',
+      document.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deleteDocumentWithMeasurements(String documentId) async {
+    final db = await _database.database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      final changed = await txn.update(
+        'documents',
+        {'deleted': 1, 'updated_at': now},
+        where: 'id = ? AND deleted = 0',
+        whereArgs: [documentId],
+      );
+      if (changed != 1) {
+        throw StateError('The document no longer exists.');
+      }
+      await txn.update(
+        'measurements',
+        {'deleted': 1, 'updated_at': now},
+        where: 'document_id = ? AND deleted = 0',
+        whereArgs: [documentId],
+      );
+    });
   }
 
   Future<HealthDocument?> documentByHash(String profileId, String hash) async {
@@ -278,7 +487,7 @@ class HealthRepository {
       for (final measurement in measurements) {
         await txn.insert(
           'measurements',
-          measurement.toMap(),
+          await measurementMapWithCanonicalUnits(txn, measurement),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
@@ -312,9 +521,51 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'measurements',
-      measurement.toMap(),
+      await measurementMapWithCanonicalUnits(db, measurement),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  Future<Map<String, Object?>> measurementMapWithCanonicalUnits(
+    DatabaseExecutor db,
+    Measurement measurement,
+  ) async {
+    final map = measurement.toMap();
+    final rows = await db.query(
+      'biomarkers',
+      columns: ['canonical_name', 'default_unit'],
+      where: 'id = ? AND deleted = 0',
+      whereArgs: [measurement.biomarkerId],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      map['conversion_status'] = 'missing_biomarker';
+      map['canonical_value'] = null;
+      map['canonical_unit'] = null;
+      return map;
+    }
+    final biomarker = rows.single;
+    final canonicalName = biomarker['canonical_name']?.toString() ?? '';
+    final preferredUnit = _unitConversion.normalizeUnit(
+      biomarker['default_unit']?.toString() ?? measurement.unit,
+    );
+    final reportedUnit = _unitConversion.normalizeUnit(measurement.unit);
+    map['unit_reported'] = reportedUnit;
+    map['canonical_unit'] = preferredUnit;
+    if (reportedUnit == preferredUnit) {
+      map['canonical_value'] = measurement.value;
+      map['conversion_status'] = 'not_required';
+      return map;
+    }
+    final converted = _unitConversion.convertValue(
+      measurement.value,
+      reportedUnit,
+      preferredUnit,
+      canonicalName,
+    );
+    map['canonical_value'] = converted;
+    map['conversion_status'] = converted == null ? 'unsupported' : 'converted';
+    return map;
   }
 
   Future<List<NamedHealthRecord>> namedRecords(
@@ -342,11 +593,99 @@ class HealthRepository {
     );
   }
 
+  Future<List<BiomarkerList>> biomarkerLists(String profileId) async {
+    final db = await _database.database;
+    final listRows = await db.query(
+      'biomarker_lists',
+      where: 'profile_id = ? AND deleted = 0',
+      whereArgs: [profileId],
+      orderBy: 'name COLLATE NOCASE',
+    );
+    final result = <BiomarkerList>[];
+    for (final row in listRows) {
+      final itemRows = await db.query(
+        'biomarker_list_items',
+        where: 'list_id = ? AND deleted = 0',
+        whereArgs: [row['id']],
+        orderBy: 'biomarker_id',
+      );
+      result.add(
+        BiomarkerList.fromMap(
+          row,
+          itemRows.map(BiomarkerListItem.fromMap).toList(),
+        ),
+      );
+    }
+    return result;
+  }
+
+  Future<void> saveBiomarkerList(BiomarkerList list) async {
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      await txn.insert(
+        'biomarker_lists',
+        list.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      for (final item in list.items) {
+        await txn.insert(
+          'biomarker_list_items',
+          item.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  Future<void> saveBiomarkerListItem(BiomarkerListItem item) async {
+    final db = await _database.database;
+    await db.insert(
+      'biomarker_list_items',
+      item.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<DueBiomarker>> dueBiomarkers(String profileId) async {
+    final lists = await biomarkerLists(profileId);
+    final catalog = {for (final item in await biomarkers()) item.id: item};
+    final latest = <String, DateTime>{};
+    for (final measurement in await measurements(profileId)) {
+      latest.putIfAbsent(measurement.biomarkerId, () => measurement.takenAt);
+    }
+    final now = DateTime.now();
+    final result = <DueBiomarker>[];
+    for (final list in lists) {
+      for (final item in list.items) {
+        final interval = item.dueIntervalDays;
+        final biomarker = catalog[item.biomarkerId];
+        if (interval == null || interval <= 0 || biomarker == null) continue;
+        final measured = latest[item.biomarkerId];
+        final dueDate =
+            measured?.add(Duration(days: interval)) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        if (!dueDate.isAfter(now)) {
+          result.add(
+            DueBiomarker(
+              biomarker: biomarker,
+              listName: list.name,
+              lastMeasuredAt: measured,
+              dueDate: dueDate,
+              intervalDays: interval,
+            ),
+          );
+        }
+      }
+    }
+    result.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    return result;
+  }
+
   Future<List<LabPlan>> labPlans(String profileId) async {
     final db = await _database.database;
     final planRows = await db.query(
       'lab_plans',
-      where: 'profile_id = ?',
+      where: 'profile_id = ? AND deleted = 0',
       whereArgs: [profileId],
       orderBy: 'created_at DESC',
     );
@@ -354,7 +693,7 @@ class HealthRepository {
     for (final row in planRows) {
       final itemRows = await db.query(
         'lab_plan_items',
-        where: 'plan_id = ?',
+        where: 'plan_id = ? AND deleted = 0',
         whereArgs: [row['id']],
         orderBy: 'tier, priority, biomarker_name',
       );
@@ -373,13 +712,39 @@ class HealthRepository {
         plan.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      await txn.delete(
+      final incomingIds = plan.items.map((item) => item.id).toSet();
+      final existing = await txn.query(
         'lab_plan_items',
-        where: 'plan_id = ?',
+        where: 'plan_id = ? AND deleted = 0',
         whereArgs: [plan.id],
       );
+      for (final row in existing) {
+        final id = '${row['id']}';
+        if (!incomingIds.contains(id)) {
+          await txn.update(
+            'lab_plan_items',
+            {
+              'deleted': 1,
+              'updated_at': plan.updatedAt.toUtc().toIso8601String(),
+            },
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+      }
       for (final item in plan.items) {
-        await txn.insert('lab_plan_items', item.toMap());
+        final map = item.toMap();
+        map['created_at'] = (item.createdAt ?? plan.createdAt)
+            .toUtc()
+            .toIso8601String();
+        map['updated_at'] = (item.updatedAt ?? plan.updatedAt)
+            .toUtc()
+            .toIso8601String();
+        await txn.insert(
+          'lab_plan_items',
+          map,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
     });
   }
@@ -391,7 +756,7 @@ class HealthRepository {
     final db = await _database.database;
     final rows = await db.query(
       'advisor_messages',
-      where: 'profile_id = ? AND conversation_id = ?',
+      where: 'profile_id = ? AND conversation_id = ? AND deleted = 0',
       whereArgs: [profileId, conversationId],
       orderBy: 'created_at',
     );
@@ -418,7 +783,7 @@ class HealthRepository {
 
     final data = <String, Object?>{
       'profile': profileRows.single,
-      'supplements': await _profileRows(db, 'supplements', profileId),
+      'supplements': await db.query('supplements', where: 'deleted = 0'),
       'supplement_schedules': await _profileRows(
         db,
         'supplement_schedules',
@@ -427,6 +792,16 @@ class HealthRepository {
       'supplement_intakes': await _profileRows(
         db,
         'supplement_intakes',
+        profileId,
+      ),
+      'inventory_movements': await db.query(
+        'inventory_movements',
+        where: '(profile_id IS NULL OR profile_id = ?) AND deleted = 0',
+        whereArgs: [profileId],
+      ),
+      'health_event_definitions': await _profileRows(
+        db,
+        'health_event_definitions',
         profileId,
       ),
       'health_events': await _profileRows(db, 'health_events', profileId),
@@ -443,6 +818,12 @@ class HealthRepository {
         'named_health_records',
         profileId,
       ),
+      'profile_biomarker_targets': await _profileRows(
+        db,
+        'profile_biomarker_targets',
+        profileId,
+      ),
+      'biomarker_lists': await _profileRows(db, 'biomarker_lists', profileId),
       'lab_plans': await _profileRows(
         db,
         'lab_plans',
@@ -459,6 +840,20 @@ class HealthRepository {
         where: 'deleted = 0',
       ),
     };
+
+    final listIds = (data['biomarker_lists']! as List<Map<String, Object?>>)
+        .map((row) => row['id'])
+        .whereType<String>()
+        .toList();
+    data['biomarker_list_items'] = listIds.isEmpty
+        ? <Map<String, Object?>>[]
+        : await db.query(
+            'biomarker_list_items',
+            where:
+                'list_id IN (${List.filled(listIds.length, '?').join(',')}) '
+                'AND deleted = 0',
+            whereArgs: listIds,
+          );
 
     final planIds = (data['lab_plans']! as List<Map<String, Object?>>)
         .map((row) => row['id'])
@@ -492,6 +887,7 @@ class HealthRepository {
           'onedrive_tokens',
           'sync_metadata',
           'other_profiles',
+          'other_profiles_intakes_and_events',
           'advisor_messages_outside_active_conversation',
         ],
       },
