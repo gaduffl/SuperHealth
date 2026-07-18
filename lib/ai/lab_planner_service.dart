@@ -59,6 +59,7 @@ Return exactly one JSON object and no markdown. Use this shape:
   "title": "string",
   "planned_for": "YYYY-MM-DD or null",
   "warnings": ["string"],
+  "context_receipt": {"sha256":"exact supplied hash","record_count":123,"reviewed_sections":["every manifest section name"]},
   "tiers": [
     {"tier":"core","items":[ITEM...]},
     {"tier":"advanced","items":[ITEM...]},
@@ -97,6 +98,8 @@ Create a three-tier German lab visit checklist for this profile.
 Target date: $dateText
 User priorities: ${priorities.trim().isEmpty ? 'Use the stored goals and health context.' : priorities.trim()}
 
+Required context receipt: sha256=${context.sha256}; record_count=${context.recordCount}; reviewed_sections must contain every key in the package manifest sections. Use the attention index only to navigate, then verify the plan against the complete raw ledger.
+
 $_schemaInstructions
 ''';
     final client = _clientFactory.create(settings.provider);
@@ -132,6 +135,9 @@ $_schemaInstructions
           userPrompt:
               'Repair the prior lab-plan response. Validation failed: '
               '${firstError.message}\n\nPrior response:\n${response.text}\n\n'
+              'Required context receipt: sha256=${context.sha256}; '
+              'record_count=${context.recordCount}; reviewed_sections must '
+              'contain every manifest section.\n\n'
               '$_schemaInstructions',
           contextJson: context.json,
           reasoningLevel: settings.reasoningLevel,
@@ -159,6 +165,7 @@ $_schemaInstructions
     required DateTime? targetDate,
   }) async {
     final decoded = _decodeObject(response.text);
+    _validateContextReceipt(decoded['context_receipt'], context);
     final tiers = decoded['tiers'];
     if (tiers is! List) {
       throw const LabPlanFormatException('The tiers array is missing.');
@@ -305,5 +312,36 @@ $_schemaInstructions
       }
     }
     throw const LabPlanFormatException('Response is not a valid JSON object.');
+  }
+
+  void _validateContextReceipt(
+    Object? rawReceipt,
+    HealthContextEnvelope context,
+  ) {
+    if (rawReceipt is! Map) {
+      throw const LabPlanFormatException('The context receipt is missing.');
+    }
+    if (rawReceipt['sha256']?.toString() != context.sha256) {
+      throw const LabPlanFormatException('The context receipt hash is wrong.');
+    }
+    if ((rawReceipt['record_count'] as num?)?.toInt() != context.recordCount) {
+      throw const LabPlanFormatException(
+        'The context receipt record count is wrong.',
+      );
+    }
+    final reviewed = rawReceipt['reviewed_sections'];
+    if (reviewed is! List) {
+      throw const LabPlanFormatException(
+        'The context receipt has no reviewed sections.',
+      );
+    }
+    final reviewedNames = reviewed.map((value) => value.toString()).toSet();
+    final requiredNames = context.sectionHashes.keys.toSet();
+    if (!reviewedNames.containsAll(requiredNames)) {
+      final missing = requiredNames.difference(reviewedNames).toList()..sort();
+      throw LabPlanFormatException(
+        'The model did not confirm review of: ${missing.join(', ')}.',
+      );
+    }
   }
 }
