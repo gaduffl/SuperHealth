@@ -34,9 +34,22 @@ class _BiomarkerDetail extends StatelessWidget {
             .where((item) => item.biomarkerId == biomarker.id)
             .toList()
           ..sort((a, b) => a.takenAt.compareTo(b.takenAt));
-    final daily = _dailyAverages(values);
+    final comparable = values
+        .where((item) => item.canonicalValue != null)
+        .toList(growable: false);
+    final daily = _dailyAverages(comparable);
     final latest = values.isEmpty ? null : values.last;
     final previous = values.length < 2 ? null : values[values.length - 2];
+    ProfileBiomarkerTarget? target;
+    for (final candidate in controller.profileTargets) {
+      if (candidate.biomarkerId == biomarker.id) target = candidate;
+    }
+    final ranges = controller.biomarkerRanges
+        .where((item) => item.biomarkerId == biomarker.id)
+        .toList(growable: false);
+    final unresolved = values
+        .where((item) => item.canonicalValue == null)
+        .length;
     return SafeArea(
       top: false,
       child: ListView(
@@ -69,17 +82,67 @@ class _BiomarkerDetail extends StatelessWidget {
                 icon: const Icon(Icons.add),
                 label: const Text('Result'),
               ),
+              PopupMenuButton<String>(
+                tooltip: 'Biomarker actions',
+                onSelected: (value) async {
+                  if (value == 'edit') {
+                    await showAddBiomarkerDialog(
+                      context,
+                      controller,
+                      existing: biomarker,
+                    );
+                  } else if (value == 'target') {
+                    await showProfileTargetDialog(
+                      context,
+                      controller,
+                      biomarker,
+                      existing: target,
+                    );
+                  } else if (value == 'delete_target' && target != null) {
+                    await controller.deleteProfileTarget(target!);
+                  } else if (value == 'delete') {
+                    await controller.deleteBiomarker(biomarker);
+                    if (context.mounted) Navigator.pop(context);
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'edit', child: Text('Edit test')),
+                  PopupMenuItem(
+                    value: 'target',
+                    child: Text(target == null ? 'Set target' : 'Edit target'),
+                  ),
+                  if (target != null)
+                    const PopupMenuItem(
+                      value: 'delete_target',
+                      child: Text('Remove personal target'),
+                    ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Text('Delete test'),
+                  ),
+                ],
+              ),
             ],
           ),
+          if (unresolved > 0)
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
+                leading: const Icon(Icons.warning_amber_outlined),
+                title: Text('$unresolved result(s) cannot be unit-normalized'),
+                subtitle: const Text(
+                  'They remain in the history but are excluded from trend and change calculations to avoid invalid comparisons.',
+                ),
+              ),
+            ),
           const SizedBox(height: 18),
           Row(
             children: [
               Expanded(
                 child: _Stat(
                   label: 'Latest',
-                  value: latest == null
-                      ? '—'
-                      : '${latest.value} ${latest.unit}',
+                  value: latest == null ? '—' : _displayValue(latest),
                   detail: latest == null
                       ? 'No result'
                       : DateFormat.yMMMd().format(latest.takenAt),
@@ -91,18 +154,27 @@ class _BiomarkerDetail extends StatelessWidget {
                   label: 'Change',
                   value: latest == null || previous == null
                       ? '—'
-                      : _signed(latest.value - previous.value),
-                  detail: previous == null ? 'Need 2 results' : 'vs previous',
+                      : latest.canonicalValue == null ||
+                            previous.canonicalValue == null
+                      ? 'Not comparable'
+                      : _signed(
+                          latest.canonicalValue! - previous.canonicalValue!,
+                        ),
+                  detail: previous == null
+                      ? 'Need 2 results'
+                      : latest.canonicalUnit ?? biomarker.defaultUnit,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: _Stat(
-                  label: 'Lab range',
-                  value: latest?.labRefLow == null && latest?.labRefHigh == null
+                  label: target == null ? 'Lab range' : 'Personal target',
+                  value: target != null
+                      ? '${target.low ?? '…'}–${target.high ?? '…'}'
+                      : latest?.labRefLow == null && latest?.labRefHigh == null
                       ? '—'
                       : '${latest?.labRefLow ?? '…'}–${latest?.labRefHigh ?? '…'}',
-                  detail: latest?.unit ?? biomarker.defaultUnit,
+                  detail: target?.unit ?? latest?.unit ?? biomarker.defaultUnit,
                 ),
               ),
             ],
@@ -111,7 +183,7 @@ class _BiomarkerDetail extends StatelessWidget {
           Card(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 18, 12, 10),
-              child: values.length < 2
+              child: comparable.length < 2
                   ? const SizedBox(
                       height: 180,
                       child: Center(
@@ -143,6 +215,54 @@ class _BiomarkerDetail extends StatelessWidget {
                     ),
             ),
           ),
+          if (target != null || ranges.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 18, 4, 6),
+              child: Text(
+                'Ranges & targets',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            if (target != null)
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(
+                    'Personal · ${target.low ?? '…'}–${target.high ?? '…'} ${target.unit}',
+                  ),
+                  subtitle: Text(
+                    [
+                      target.source,
+                      if (target.notes.isNotEmpty) target.notes,
+                    ].join(' · '),
+                  ),
+                  onTap: () => showProfileTargetDialog(
+                    context,
+                    controller,
+                    biomarker,
+                    existing: target,
+                  ),
+                ),
+              ),
+            for (final range in ranges)
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.menu_book_outlined),
+                  title: Text(
+                    '${range.rangeType} · ${range.low ?? '…'}–${range.high ?? '…'} ${range.unit}',
+                  ),
+                  subtitle: Text(
+                    [
+                      if (range.evidenceLabel?.isNotEmpty == true)
+                        range.evidenceLabel!,
+                      if (range.optimalLow != null || range.optimalHigh != null)
+                        'Optimal ${range.optimalLow ?? '…'}–${range.optimalHigh ?? '…'}',
+                      if (range.notes.isNotEmpty) range.notes,
+                    ].join(' · '),
+                  ),
+                ),
+              ),
+          ],
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 18, 4, 6),
             child: Text(
@@ -159,7 +279,7 @@ class _BiomarkerDetail extends StatelessWidget {
                 children: [
                   for (final value in values.reversed)
                     ListTile(
-                      title: Text('${value.value} ${value.unit}'),
+                      title: Text(_displayValue(value)),
                       subtitle: Text(
                         [
                           DateFormat('dd.MM.yyyy').format(value.takenAt),
@@ -168,10 +288,37 @@ class _BiomarkerDetail extends StatelessWidget {
                             'Lab ref ${value.labRefLow ?? '…'}–${value.labRefHigh ?? '…'}',
                           if (value.extractionConfidence != null)
                             'Parse ${(value.extractionConfidence! * 100).round()}%',
+                          if (value.conversionStatus == 'unsupported')
+                            'Unit conversion unavailable',
                           if (value.notes.isNotEmpty) value.notes,
                         ].join(' · '),
                       ),
-                      trailing: _RangeStatus(measurement: value),
+                      trailing: PopupMenuButton<String>(
+                        tooltip: 'Result actions',
+                        onSelected: (action) async {
+                          if (action == 'edit') {
+                            await showAddMeasurementDialog(
+                              context,
+                              controller,
+                              biomarker,
+                              existing: value,
+                            );
+                          } else if (action == 'delete') {
+                            await controller.deleteMeasurement(value);
+                          }
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(value: 'edit', child: Text('Edit')),
+                          PopupMenuItem(value: 'delete', child: Text('Delete')),
+                        ],
+                        child: _RangeStatus(measurement: value, target: target),
+                      ),
+                      onTap: () => showAddMeasurementDialog(
+                        context,
+                        controller,
+                        biomarker,
+                        existing: value,
+                      ),
                     ),
                 ],
               ),
@@ -193,7 +340,7 @@ class _BiomarkerDetail extends StatelessWidget {
         value.takenAt.month,
         value.takenAt.day,
       );
-      grouped.putIfAbsent(day, () => []).add(value.value);
+      grouped.putIfAbsent(day, () => []).add(value.canonicalValue!);
     }
     return grouped.entries
         .map(
@@ -208,6 +355,16 @@ class _BiomarkerDetail extends StatelessWidget {
 
   String _signed(double value) =>
       '${value >= 0 ? '+' : ''}${value.toStringAsFixed(2)}';
+
+  String _displayValue(Measurement value) {
+    final raw = '${value.value} ${value.unit}';
+    if (value.conversionStatus != 'converted' ||
+        value.canonicalValue == null ||
+        value.canonicalUnit == null) {
+      return raw;
+    }
+    return '$raw · ${value.canonicalValue!.toStringAsPrecision(5)} ${value.canonicalUnit}';
+  }
 }
 
 class _Stat extends StatelessWidget {
@@ -245,18 +402,23 @@ class _Stat extends StatelessWidget {
 }
 
 class _RangeStatus extends StatelessWidget {
-  const _RangeStatus({required this.measurement});
+  const _RangeStatus({required this.measurement, this.target});
 
   final Measurement measurement;
+  final ProfileBiomarkerTarget? target;
 
   @override
   Widget build(BuildContext context) {
-    final low = measurement.labRefLow;
-    final high = measurement.labRefHigh;
+    final useTarget =
+        target != null &&
+        measurement.canonicalValue != null &&
+        measurement.canonicalUnit == target!.unit;
+    final low = useTarget ? target!.low : measurement.labRefLow;
+    final high = useTarget ? target!.high : measurement.labRefHigh;
     if (low == null && high == null) return const SizedBox.shrink();
+    final value = useTarget ? measurement.canonicalValue! : measurement.value;
     final inside =
-        (low == null || measurement.value >= low) &&
-        (high == null || measurement.value <= high);
+        (low == null || value >= low) && (high == null || value <= high);
     return Icon(
       inside ? Icons.check_circle_outline : Icons.error_outline,
       color: inside ? Colors.green : Theme.of(context).colorScheme.error,
