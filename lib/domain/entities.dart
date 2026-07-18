@@ -86,7 +86,6 @@ class Profile {
 class Supplement {
   const Supplement({
     required this.id,
-    required this.profileId,
     required this.name,
     required this.createdAt,
     required this.updatedAt,
@@ -100,12 +99,13 @@ class Supplement {
     this.notes = '',
     this.active = true,
     this.lowStockAlerts = true,
+    this.lowStockThresholdUnits,
+    this.stockUnit = 'unit',
     this.sourceId,
     this.deleted = false,
   });
 
   final String id;
-  final String profileId;
   final String name;
   final String brand;
   final String form;
@@ -117,6 +117,8 @@ class Supplement {
   final String notes;
   final bool active;
   final bool lowStockAlerts;
+  final double? lowStockThresholdUnits;
+  final String stockUnit;
   final String? sourceId;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -124,7 +126,6 @@ class Supplement {
 
   Map<String, Object?> toMap() => {
     'id': id,
-    'profile_id': profileId,
     'name': name,
     'brand': brand,
     'form': form,
@@ -136,6 +137,8 @@ class Supplement {
     'notes': notes,
     'active': active ? 1 : 0,
     'low_stock_alerts': lowStockAlerts ? 1 : 0,
+    'low_stock_threshold_units': lowStockThresholdUnits,
+    'stock_unit': stockUnit,
     'source_id': sourceId,
     'created_at': _iso(createdAt),
     'updated_at': _iso(updatedAt),
@@ -146,7 +149,6 @@ class Supplement {
     final decoded = jsonDecode(map['ingredients_json']?.toString() ?? '[]');
     return Supplement(
       id: '${map['id']}',
-      profileId: '${map['profile_id']}',
       name: '${map['name']}',
       brand: map['brand']?.toString() ?? '',
       form: map['form']?.toString() ?? '',
@@ -163,12 +165,72 @@ class Supplement {
       notes: map['notes']?.toString() ?? '',
       active: _boolFromDb(map['active']),
       lowStockAlerts: _boolFromDb(map['low_stock_alerts']),
+      lowStockThresholdUnits: (map['low_stock_threshold_units'] as num?)
+          ?.toDouble(),
+      stockUnit: map['stock_unit']?.toString() ?? 'unit',
       sourceId: map['source_id']?.toString(),
       createdAt: _date(map['created_at']),
       updatedAt: _date(map['updated_at']),
       deleted: _boolFromDb(map['deleted']),
     );
   }
+}
+
+class InventoryMovement {
+  const InventoryMovement({
+    required this.id,
+    required this.supplementId,
+    required this.quantityUnits,
+    required this.occurredAt,
+    required this.reason,
+    required this.createdAt,
+    required this.updatedAt,
+    this.profileId,
+    this.intakeId,
+    this.notes = '',
+    this.deleted = false,
+  });
+
+  final String id;
+  final String supplementId;
+  final String? profileId;
+  final String? intakeId;
+  final double quantityUnits;
+  final DateTime occurredAt;
+  final String reason;
+  final String notes;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'supplement_id': supplementId,
+    'profile_id': profileId,
+    'intake_id': intakeId,
+    'quantity_units': quantityUnits,
+    'occurred_at': _iso(occurredAt),
+    'reason': reason,
+    'notes': notes,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  factory InventoryMovement.fromMap(Map<String, Object?> map) =>
+      InventoryMovement(
+        id: '${map['id']}',
+        supplementId: '${map['supplement_id']}',
+        profileId: map['profile_id']?.toString(),
+        intakeId: map['intake_id']?.toString(),
+        quantityUnits: (map['quantity_units'] as num).toDouble(),
+        occurredAt: _date(map['occurred_at']),
+        reason: '${map['reason']}',
+        notes: map['notes']?.toString() ?? '',
+        createdAt: _date(map['created_at']),
+        updatedAt: _date(map['updated_at']),
+        deleted: _boolFromDb(map['deleted']),
+      );
 }
 
 class SupplementSchedule {
@@ -186,6 +248,7 @@ class SupplementSchedule {
     this.startDate,
     this.endDate,
     this.active = true,
+    this.reminderEnabled = false,
     this.deleted = false,
   });
 
@@ -200,6 +263,7 @@ class SupplementSchedule {
   final DateTime? startDate;
   final DateTime? endDate;
   final bool active;
+  final bool reminderEnabled;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
@@ -216,6 +280,7 @@ class SupplementSchedule {
     'start_date': startDate?.toIso8601String().split('T').first,
     'end_date': endDate?.toIso8601String().split('T').first,
     'active': active ? 1 : 0,
+    'reminder_enabled': reminderEnabled ? 1 : 0,
     'created_at': _iso(createdAt),
     'updated_at': _iso(updatedAt),
     'deleted': deleted ? 1 : 0,
@@ -238,6 +303,67 @@ class SupplementSchedule {
             ? null
             : DateTime.tryParse('${map['end_date']}'),
         active: _boolFromDb(map['active']),
+        reminderEnabled: _boolFromDb(map['reminder_enabled']),
+        createdAt: _date(map['created_at']),
+        updatedAt: _date(map['updated_at']),
+        deleted: _boolFromDb(map['deleted']),
+      );
+}
+
+class HealthEventDefinition {
+  const HealthEventDefinition({
+    required this.id,
+    required this.profileId,
+    required this.kind,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+    this.defaultUnit,
+    this.useScore = false,
+    this.colorValue,
+    this.archived = false,
+    this.deleted = false,
+  });
+
+  final String id;
+  final String profileId;
+  final EventKind kind;
+  final String name;
+  final String? defaultUnit;
+  final bool useScore;
+  final int? colorValue;
+  final bool archived;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'profile_id': profileId,
+    'kind': kind.name,
+    'name': name,
+    'default_unit': defaultUnit,
+    'use_score': useScore ? 1 : 0,
+    'color_value': colorValue,
+    'archived': archived ? 1 : 0,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  factory HealthEventDefinition.fromMap(Map<String, Object?> map) =>
+      HealthEventDefinition(
+        id: '${map['id']}',
+        profileId: '${map['profile_id']}',
+        kind: EventKind.values.firstWhere(
+          (value) => value.name == map['kind'],
+          orElse: () => EventKind.tag,
+        ),
+        name: '${map['name']}',
+        defaultUnit: map['default_unit']?.toString(),
+        useScore: _boolFromDb(map['use_score']),
+        colorValue: (map['color_value'] as num?)?.toInt(),
+        archived: _boolFromDb(map['archived']),
         createdAt: _date(map['created_at']),
         updatedAt: _date(map['updated_at']),
         deleted: _boolFromDb(map['deleted']),
@@ -326,6 +452,7 @@ class HealthEvent {
     required this.createdAt,
     required this.updatedAt,
     this.score,
+    this.definitionId,
     this.numericValue,
     this.unit,
     this.durationMinutes,
@@ -337,6 +464,7 @@ class HealthEvent {
 
   final String id;
   final String profileId;
+  final String? definitionId;
   final EventKind kind;
   final String name;
   final DateTime observedAt;
@@ -354,6 +482,7 @@ class HealthEvent {
   Map<String, Object?> toMap() => {
     'id': id,
     'profile_id': profileId,
+    'definition_id': definitionId,
     'kind': kind.name,
     'name': name,
     'observed_at': _iso(observedAt),
@@ -372,6 +501,7 @@ class HealthEvent {
   factory HealthEvent.fromMap(Map<String, Object?> map) => HealthEvent(
     id: '${map['id']}',
     profileId: '${map['profile_id']}',
+    definitionId: map['definition_id']?.toString(),
     kind: EventKind.values.firstWhere(
       (value) => value.name == map['kind'],
       orElse: () => EventKind.tag,
@@ -461,6 +591,152 @@ class Biomarker {
   );
 }
 
+class BiomarkerReferenceRange {
+  const BiomarkerReferenceRange({
+    required this.id,
+    required this.biomarkerId,
+    required this.rangeType,
+    required this.unit,
+    required this.createdAt,
+    required this.updatedAt,
+    this.sex,
+    this.ageMin,
+    this.ageMax,
+    this.low,
+    this.high,
+    this.optimalLow,
+    this.optimalHigh,
+    this.evidenceLabel,
+    this.evidenceUrl,
+    this.notes = '',
+    this.deleted = false,
+  });
+
+  final String id;
+  final String biomarkerId;
+  final String rangeType;
+  final String? sex;
+  final int? ageMin;
+  final int? ageMax;
+  final double? low;
+  final double? high;
+  final double? optimalLow;
+  final double? optimalHigh;
+  final String unit;
+  final String? evidenceLabel;
+  final String? evidenceUrl;
+  final String notes;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'biomarker_id': biomarkerId,
+    'range_type': rangeType,
+    'sex': sex,
+    'age_min': ageMin,
+    'age_max': ageMax,
+    'low': low,
+    'high': high,
+    'optimal_low': optimalLow,
+    'optimal_high': optimalHigh,
+    'unit': unit,
+    'evidence_label': evidenceLabel,
+    'evidence_url': evidenceUrl,
+    'notes': notes,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  factory BiomarkerReferenceRange.fromMap(Map<String, Object?> map) =>
+      BiomarkerReferenceRange(
+        id: '${map['id']}',
+        biomarkerId: '${map['biomarker_id']}',
+        rangeType: '${map['range_type']}',
+        sex: map['sex']?.toString(),
+        ageMin: (map['age_min'] as num?)?.toInt(),
+        ageMax: (map['age_max'] as num?)?.toInt(),
+        low: (map['low'] as num?)?.toDouble(),
+        high: (map['high'] as num?)?.toDouble(),
+        optimalLow: (map['optimal_low'] as num?)?.toDouble(),
+        optimalHigh: (map['optimal_high'] as num?)?.toDouble(),
+        unit: '${map['unit']}',
+        evidenceLabel: map['evidence_label']?.toString(),
+        evidenceUrl: map['evidence_url']?.toString(),
+        notes: map['notes']?.toString() ?? '',
+        createdAt: _date(map['created_at']),
+        updatedAt: _date(map['updated_at']),
+        deleted: _boolFromDb(map['deleted']),
+      );
+}
+
+class ProfileBiomarkerTarget {
+  const ProfileBiomarkerTarget({
+    required this.id,
+    required this.profileId,
+    required this.biomarkerId,
+    required this.unit,
+    required this.createdAt,
+    required this.updatedAt,
+    this.low,
+    this.high,
+    this.borderlineLow,
+    this.borderlineHigh,
+    this.source = 'personal',
+    this.notes = '',
+    this.deleted = false,
+  });
+
+  final String id;
+  final String profileId;
+  final String biomarkerId;
+  final double? low;
+  final double? high;
+  final double? borderlineLow;
+  final double? borderlineHigh;
+  final String unit;
+  final String source;
+  final String notes;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'profile_id': profileId,
+    'biomarker_id': biomarkerId,
+    'low': low,
+    'high': high,
+    'borderline_low': borderlineLow,
+    'borderline_high': borderlineHigh,
+    'unit': unit,
+    'source': source,
+    'notes': notes,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  factory ProfileBiomarkerTarget.fromMap(Map<String, Object?> map) =>
+      ProfileBiomarkerTarget(
+        id: '${map['id']}',
+        profileId: '${map['profile_id']}',
+        biomarkerId: '${map['biomarker_id']}',
+        low: (map['low'] as num?)?.toDouble(),
+        high: (map['high'] as num?)?.toDouble(),
+        borderlineLow: (map['borderline_low'] as num?)?.toDouble(),
+        borderlineHigh: (map['borderline_high'] as num?)?.toDouble(),
+        unit: '${map['unit']}',
+        source: map['source']?.toString() ?? 'personal',
+        notes: map['notes']?.toString() ?? '',
+        createdAt: _date(map['created_at']),
+        updatedAt: _date(map['updated_at']),
+        deleted: _boolFromDb(map['deleted']),
+      );
+}
+
 class Measurement {
   const Measurement({
     required this.id,
@@ -472,6 +748,9 @@ class Measurement {
     required this.createdAt,
     required this.updatedAt,
     this.documentId,
+    this.canonicalValue,
+    this.canonicalUnit,
+    this.conversionStatus = 'not_required',
     this.labRefLow,
     this.labRefHigh,
     this.page,
@@ -489,6 +768,9 @@ class Measurement {
   final DateTime takenAt;
   final double value;
   final String unit;
+  final double? canonicalValue;
+  final String? canonicalUnit;
+  final String conversionStatus;
   final double? labRefLow;
   final double? labRefHigh;
   final int? page;
@@ -508,6 +790,9 @@ class Measurement {
     'taken_at': _iso(takenAt),
     'value': value,
     'unit_reported': unit,
+    'canonical_value': canonicalValue,
+    'canonical_unit': canonicalUnit,
+    'conversion_status': conversionStatus,
     'lab_ref_low': labRefLow,
     'lab_ref_high': labRefHigh,
     'page': page,
@@ -528,6 +813,9 @@ class Measurement {
     takenAt: _date(map['taken_at']),
     value: (map['value'] as num).toDouble(),
     unit: '${map['unit_reported']}',
+    canonicalValue: (map['canonical_value'] as num?)?.toDouble(),
+    canonicalUnit: map['canonical_unit']?.toString(),
+    conversionStatus: map['conversion_status']?.toString() ?? 'not_required',
     labRefLow: (map['lab_ref_low'] as num?)?.toDouble(),
     labRefHigh: (map['lab_ref_high'] as num?)?.toDouble(),
     page: (map['page'] as num?)?.toInt(),
@@ -714,6 +1002,115 @@ class NamedHealthRecord {
       );
 }
 
+class BiomarkerList {
+  const BiomarkerList({
+    required this.id,
+    required this.profileId,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+    this.description = '',
+    this.items = const [],
+    this.deleted = false,
+  });
+
+  final String id;
+  final String profileId;
+  final String name;
+  final String description;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final List<BiomarkerListItem> items;
+  final bool deleted;
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'profile_id': profileId,
+    'name': name,
+    'description': description,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  factory BiomarkerList.fromMap(
+    Map<String, Object?> map,
+    List<BiomarkerListItem> items,
+  ) => BiomarkerList(
+    id: '${map['id']}',
+    profileId: '${map['profile_id']}',
+    name: '${map['name']}',
+    description: map['description']?.toString() ?? '',
+    createdAt: _date(map['created_at']),
+    updatedAt: _date(map['updated_at']),
+    items: items,
+    deleted: _boolFromDb(map['deleted']),
+  );
+}
+
+class BiomarkerListItem {
+  const BiomarkerListItem({
+    required this.id,
+    required this.listId,
+    required this.biomarkerId,
+    required this.createdAt,
+    required this.updatedAt,
+    this.dueIntervalDays,
+    this.notes = '',
+    this.deleted = false,
+  });
+
+  final String id;
+  final String listId;
+  final String biomarkerId;
+  final int? dueIntervalDays;
+  final String notes;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'list_id': listId,
+    'biomarker_id': biomarkerId,
+    'due_interval_days': dueIntervalDays,
+    'notes': notes,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  factory BiomarkerListItem.fromMap(Map<String, Object?> map) =>
+      BiomarkerListItem(
+        id: '${map['id']}',
+        listId: '${map['list_id']}',
+        biomarkerId: '${map['biomarker_id']}',
+        dueIntervalDays: (map['due_interval_days'] as num?)?.toInt(),
+        notes: map['notes']?.toString() ?? '',
+        createdAt: _date(map['created_at']),
+        updatedAt: _date(map['updated_at']),
+        deleted: _boolFromDb(map['deleted']),
+      );
+}
+
+class DueBiomarker {
+  const DueBiomarker({
+    required this.biomarker,
+    required this.listName,
+    required this.dueDate,
+    required this.intervalDays,
+    this.lastMeasuredAt,
+  });
+
+  final Biomarker biomarker;
+  final String listName;
+  final DateTime? lastMeasuredAt;
+  final DateTime dueDate;
+  final int intervalDays;
+
+  int get daysOverdue => DateTime.now().difference(dueDate).inDays;
+}
+
 class LabPlanItem {
   const LabPlanItem({
     required this.id,
@@ -726,6 +1123,10 @@ class LabPlanItem {
     required this.evidenceClass,
     this.priceEur,
     this.preparation = '',
+    this.checked = false,
+    this.createdAt,
+    this.updatedAt,
+    this.deleted = false,
   });
 
   final String id;
@@ -738,6 +1139,10 @@ class LabPlanItem {
   final EvidenceClass evidenceClass;
   final double? priceEur;
   final String preparation;
+  final bool checked;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final bool deleted;
 
   Map<String, Object?> toMap() => {
     'id': id,
@@ -750,6 +1155,12 @@ class LabPlanItem {
     'evidence_class': evidenceClass.name,
     'price_eur': priceEur,
     'preparation': preparation,
+    'checked': checked ? 1 : 0,
+    'created_at': _iso(createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)),
+    'updated_at': _iso(
+      updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+    ),
+    'deleted': deleted ? 1 : 0,
   };
 
   factory LabPlanItem.fromMap(Map<String, Object?> map) => LabPlanItem(
@@ -763,6 +1174,10 @@ class LabPlanItem {
     evidenceClass: EvidenceClass.values.byName('${map['evidence_class']}'),
     priceEur: (map['price_eur'] as num?)?.toDouble(),
     preparation: map['preparation']?.toString() ?? '',
+    checked: _boolFromDb(map['checked']),
+    createdAt: map['created_at'] == null ? null : _date(map['created_at']),
+    updatedAt: map['updated_at'] == null ? null : _date(map['updated_at']),
+    deleted: _boolFromDb(map['deleted']),
   );
 }
 
@@ -780,6 +1195,7 @@ class LabPlan {
     this.provider,
     this.model,
     this.status = 'draft',
+    this.deleted = false,
   });
 
   final String id;
@@ -793,6 +1209,7 @@ class LabPlan {
   final String? provider;
   final String? model;
   final String status;
+  final bool deleted;
   final List<LabPlanItem> items;
 
   List<LabPlanItem> itemsThrough(LabTier tier) => items
@@ -817,6 +1234,7 @@ class LabPlan {
     'provider': provider,
     'model': model,
     'status': status,
+    'deleted': deleted ? 1 : 0,
   };
 
   factory LabPlan.fromMap(Map<String, Object?> map, List<LabPlanItem> items) =>
@@ -834,6 +1252,7 @@ class LabPlan {
         provider: map['provider']?.toString(),
         model: map['model']?.toString(),
         status: map['status']?.toString() ?? 'draft',
+        deleted: _boolFromDb(map['deleted']),
         items: items,
       );
 }
@@ -847,6 +1266,8 @@ class AdvisorMessage {
     required this.content,
     required this.createdAt,
     this.citations = const [],
+    this.updatedAt,
+    this.deleted = false,
   });
 
   final String id;
@@ -856,6 +1277,8 @@ class AdvisorMessage {
   final String content;
   final List<String> citations;
   final DateTime createdAt;
+  final DateTime? updatedAt;
+  final bool deleted;
 
   Map<String, Object?> toMap() => {
     'id': id,
@@ -865,6 +1288,8 @@ class AdvisorMessage {
     'content': content,
     'citations_json': jsonEncode(citations),
     'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt ?? createdAt),
+    'deleted': deleted ? 1 : 0,
   };
 
   factory AdvisorMessage.fromMap(Map<String, Object?> map) => AdvisorMessage(
@@ -875,5 +1300,7 @@ class AdvisorMessage {
     content: '${map['content']}',
     citations: _strings(map['citations_json']),
     createdAt: _date(map['created_at']),
+    updatedAt: map['updated_at'] == null ? null : _date(map['updated_at']),
+    deleted: _boolFromDb(map['deleted']),
   );
 }
