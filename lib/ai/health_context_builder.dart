@@ -5,9 +5,8 @@ import 'package:crypto/crypto.dart';
 import '../data/health_repository.dart';
 import 'ai_models.dart';
 
-typedef HealthSnapshotLoader = Future<Map<String, Object?>> Function(
-  String profileId,
-);
+typedef HealthSnapshotLoader =
+    Future<Map<String, Object?>> Function(String profileId);
 
 class HealthContextEnvelope {
   const HealthContextEnvelope({
@@ -31,7 +30,7 @@ class HealthContextEnvelope {
   final Map<String, String> sectionHashes;
 
   String get receiptInstruction =>
-      'Context receipt: sha256=$sha256, records=$recordCount. ' 
+      'Context receipt: sha256=$sha256, records=$recordCount. '
       'Treat the attention index as navigation only and verify claims against '
       'the complete raw ledger.';
 }
@@ -164,7 +163,9 @@ class HealthContextBuilder {
     }
     final manifest = source['manifest'];
     if (manifest is! Map || manifest['complete'] != true) {
-      throw StateError('Repository did not declare a complete health snapshot.');
+      throw StateError(
+        'Repository did not declare a complete health snapshot.',
+      );
     }
     if (source['data'] is! Map) {
       throw StateError('Repository returned no health data map.');
@@ -253,7 +254,10 @@ class HealthContextBuilder {
     };
   }
 
-  void _validateDeclaredCounts(Object? rawManifest, Map<String, Object?> sections) {
+  void _validateDeclaredCounts(
+    Object? rawManifest,
+    Map<String, Object?> sections,
+  ) {
     if (rawManifest is! Map || rawManifest['counts'] is! Map) return;
     final counts = rawManifest['counts']! as Map;
     for (final entry in counts.entries) {
@@ -303,27 +307,42 @@ class HealthContextBuilder {
     final result = <Map<String, Object?>>[];
     for (final entry in grouped.entries) {
       final rows = entry.value
-        ..sort((a, b) => _dateOf(a, 'taken_at').compareTo(_dateOf(b, 'taken_at')));
+        ..sort(
+          (a, b) => _dateOf(a, 'taken_at').compareTo(_dateOf(b, 'taken_at')),
+        );
       final latest = rows.last;
-      final units = rows
-          .map((row) => row['unit_reported']?.toString())
-          .whereType<String>()
-          .toSet()
-          .toList()
-        ..sort();
+      final previous = rows.length > 1 ? rows[rows.length - 2] : null;
+      final units =
+          rows
+              .map((row) => row['unit_reported']?.toString())
+              .whereType<String>()
+              .toSet()
+              .toList()
+            ..sort();
       result.add({
         'biomarker_id': entry.key,
         'name': catalog[entry.key] ?? entry.key,
         'measurement_count': rows.length,
         'first_taken_at': rows.first['taken_at'],
         'latest_taken_at': latest['taken_at'],
-        'latest_value': latest['value'],
-        'latest_unit': latest['unit_reported'],
-        'previous_value': rows.length > 1 ? rows[rows.length - 2]['value'] : null,
-        'previous_unit': rows.length > 1
-            ? rows[rows.length - 2]['unit_reported']
-            : null,
-        'units_seen': units,
+        'latest_value': latest['canonical_value'] ?? latest['value'],
+        'latest_unit': latest['canonical_unit'] ?? latest['unit_reported'],
+        'latest_reported_value': latest['value'],
+        'latest_reported_unit': latest['unit_reported'],
+        'previous_value': previous?['canonical_value'] ?? previous?['value'],
+        'previous_unit':
+            previous?['canonical_unit'] ?? previous?['unit_reported'],
+        'previous_reported_value': previous?['value'],
+        'previous_reported_unit': previous?['unit_reported'],
+        'reported_units_seen': units,
+        'canonical_units_seen':
+            rows
+                .map((row) => row['canonical_unit']?.toString())
+                .whereType<String>()
+                .toSet()
+                .toList()
+              ..sort(),
+        'comparison_ready': rows.every((row) => row['canonical_value'] != null),
         'latest_record_ref': 'measurements:${latest['id']}',
       });
     }
@@ -345,7 +364,9 @@ class HealthContextBuilder {
     final result = <Map<String, Object?>>[];
     for (final entry in grouped.entries) {
       final rows = entry.value
-        ..sort((a, b) => _dateOf(a, 'taken_at').compareTo(_dateOf(b, 'taken_at')));
+        ..sort(
+          (a, b) => _dateOf(a, 'taken_at').compareTo(_dateOf(b, 'taken_at')),
+        );
       final totals = <String, double>{};
       var skipped = 0;
       for (final row in rows) {
@@ -354,7 +375,8 @@ class HealthContextBuilder {
           continue;
         }
         final unit = row['unit']?.toString() ?? 'unspecified';
-        totals[unit] = (totals[unit] ?? 0) + ((row['dose'] as num?)?.toDouble() ?? 0);
+        totals[unit] =
+            (totals[unit] ?? 0) + ((row['dose'] as num?)?.toDouble() ?? 0);
       }
       result.add({
         'supplement_id': entry.key,
@@ -379,7 +401,10 @@ class HealthContextBuilder {
     final result = <Map<String, Object?>>[];
     for (final entry in grouped.entries) {
       final rows = entry.value
-        ..sort((a, b) => _dateOf(a, 'observed_at').compareTo(_dateOf(b, 'observed_at')));
+        ..sort(
+          (a, b) =>
+              _dateOf(a, 'observed_at').compareTo(_dateOf(b, 'observed_at')),
+        );
       final scores = rows.map((row) => row['score']).whereType<num>().toList();
       final values = rows
           .map((row) => row['numeric_value'])
@@ -391,16 +416,20 @@ class HealthContextBuilder {
         'first_observed_at': rows.first['observed_at'],
         'latest_observed_at': rows.last['observed_at'],
         if (scores.isNotEmpty)
-          'mean_score': scores.fold<double>(0, (sum, value) => sum + value) / scores.length,
+          'mean_score':
+              scores.fold<double>(0, (sum, value) => sum + value.toDouble()) /
+              scores.length,
         if (values.isNotEmpty)
           'mean_numeric_value':
-              values.fold<double>(0, (sum, value) => sum + value) / values.length,
-        'units_seen': rows
-            .map((row) => row['unit']?.toString())
-            .whereType<String>()
-            .toSet()
-            .toList()
-          ..sort(),
+              values.fold<double>(0, (sum, value) => sum + value.toDouble()) /
+              values.length,
+        'units_seen':
+            rows
+                .map((row) => row['unit']?.toString())
+                .whereType<String>()
+                .toSet()
+                .toList()
+              ..sort(),
       });
     }
     result.sort((a, b) => '${a['series']}'.compareTo('${b['series']}'));
@@ -425,7 +454,8 @@ class HealthContextBuilder {
       for (final row in _mapRows(entry.value)) {
         for (final dateKey in _dateKeys) {
           final value = row[dateKey];
-          if (value == null || DateTime.tryParse(value.toString()) == null) continue;
+          if (value == null || DateTime.tryParse(value.toString()) == null)
+            continue;
           result.add({
             'at': value,
             'section': entry.key,
@@ -443,20 +473,38 @@ class HealthContextBuilder {
   List<Map<String, Object?>> _dataQualityFlags(Map<String, Object?> data) {
     final flags = <Map<String, Object?>>[];
     final unitsByBiomarker = <String, Set<String>>{};
+    final canonicalUnitsByBiomarker = <String, Set<String>>{};
+    final unresolvedByBiomarker = <String, int>{};
     for (final row in _mapRows(data['measurements'])) {
       final id = row['biomarker_id']?.toString() ?? 'unknown';
       final unit = row['unit_reported']?.toString().trim();
       if (unit != null && unit.isNotEmpty) {
         unitsByBiomarker.putIfAbsent(id, () => {}).add(unit);
       }
+      final canonicalUnit = row['canonical_unit']?.toString().trim();
+      if (canonicalUnit != null &&
+          canonicalUnit.isNotEmpty &&
+          row['canonical_value'] != null) {
+        canonicalUnitsByBiomarker.putIfAbsent(id, () => {}).add(canonicalUnit);
+      } else {
+        unresolvedByBiomarker[id] = (unresolvedByBiomarker[id] ?? 0) + 1;
+      }
     }
     for (final entry in unitsByBiomarker.entries) {
       if (entry.value.length > 1) {
+        final canonicalUnits = canonicalUnitsByBiomarker[entry.key] ?? const {};
+        final unresolved = unresolvedByBiomarker[entry.key] ?? 0;
         flags.add({
-          'type': 'mixed_biomarker_units',
+          'type': canonicalUnits.length == 1 && unresolved == 0
+              ? 'mixed_reported_units_normalized'
+              : 'mixed_biomarker_units_unresolved',
           'biomarker_id': entry.key,
-          'units': entry.value.toList()..sort(),
-          'instruction': 'Do not compare numeric values until units are normalized.',
+          'reported_units': entry.value.toList()..sort(),
+          'canonical_units': canonicalUnits.toList()..sort(),
+          'unresolved_measurements': unresolved,
+          'instruction': canonicalUnits.length == 1 && unresolved == 0
+              ? 'Compare canonical values and retain reported values as evidence.'
+              : 'Do not compare unresolved numeric values across units.',
         });
       }
     }
