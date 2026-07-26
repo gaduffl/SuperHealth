@@ -185,7 +185,18 @@ class LegacyImportService {
         );
       }
     }
+    final bundledBiomarkers = <String, String>{};
     for (final biomarker in bundle.biomarkers) {
+      final firstDisplayName = bundledBiomarkers[biomarker.canonicalName];
+      if (firstDisplayName != null) {
+        bundle.duplicates.add(
+          'Biomarker “${biomarker.displayName}” will merge with '
+          '“$firstDisplayName” because both use the canonical name '
+          '“${biomarker.canonicalName}”.',
+        );
+      } else {
+        bundledBiomarkers[biomarker.canonicalName] = biomarker.displayName;
+      }
       if (existingBiomarkers.contains(biomarker.canonicalName)) {
         bundle.duplicates.add(
           'Biomarker “${biomarker.displayName}” will reuse the existing catalog entry.',
@@ -1888,7 +1899,10 @@ class _LegacyBundle {
     'schedules': schedules.length,
     'intakes': intakes.length,
     'symptoms_and_tags': events.length,
-    'biomarkers': biomarkers.length,
+    'biomarkers': biomarkers
+        .map((item) => item.canonicalName)
+        .toSet()
+        .length,
     'measurements': measurementNodes.length,
     'documents': documentNodes.length,
     'ranges': rangeNodes.length,
