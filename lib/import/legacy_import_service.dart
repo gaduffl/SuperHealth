@@ -1148,10 +1148,10 @@ class LegacyImportService {
         });
       }
 
-      final existingProfiles = await txn.query(
+      final existingProfiles = (await txn.query(
         'profiles',
         where: 'deleted = 0',
-      );
+      )).map((row) => Map<String, Object?>.from(row)).toList();
       final profileIds = <String, String>{};
       for (final profile in bundle.profiles.values) {
         if (profile.directProfileId != null) {
