@@ -163,6 +163,77 @@ void main() {
   });
 
   test(
+    'Biomarkers import aliases duplicate canonical names within one bundle',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Me');
+      final service = LegacyImportService(database, repository);
+
+      Uint8List jsonBytes(Object value) =>
+          Uint8List.fromList(utf8.encode(jsonEncode(value)));
+
+      final preview = await service.preview([
+        ImportSourceFile(
+          name: 'biomarkers.json',
+          bytes: jsonBytes([
+            {
+              'id': 'vitamin-d-first',
+              'canonical_name': '1 25 dihydroxy vitamin d',
+              'display_name': '1,25-Dihydroxy Vitamin D',
+              'unit_primary': 'pg/mL',
+            },
+            {
+              'id': 'vitamin-d-punctuation-variant',
+              'canonical_name': '1,25-dihydroxy vitamin d',
+              'display_name': '1,25-Dihydroxy Vitamin D',
+              'unit_primary': 'pg/mL',
+            },
+          ]),
+        ),
+        ImportSourceFile(
+          name: 'measurements.json',
+          bytes: jsonBytes([
+            {
+              'id': 'measurement-first',
+              'biomarker_id': 'vitamin-d-first',
+              'value': 42,
+              'unit': 'pg/mL',
+            },
+            {
+              'id': 'measurement-variant',
+              'biomarker_id': 'vitamin-d-punctuation-variant',
+              'value': 43,
+              'unit': 'pg/mL',
+            },
+          ]),
+        ),
+      ], fallbackProfile: profile);
+
+      await service.commit(preview);
+
+      final biomarkers = await repository.biomarkers();
+      expect(biomarkers, hasLength(1));
+      expect(biomarkers.single.canonicalName, '1_25_dihydroxy_vitamin_d');
+      final db = await database.database;
+      final measurements = await db.query(
+        'measurements',
+        orderBy: 'value ASC',
+      );
+      expect(measurements, hasLength(2));
+      expect(
+        measurements.map((row) => row['biomarker_id']).toSet(),
+        {biomarkers.single.id},
+      );
+      await database.close();
+    },
+  );
+
+  test(
     'Biomarkers profile metadata imports numeric legacy height into a new profile',
     () async {
       sqfliteFfiInit();
