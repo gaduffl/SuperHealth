@@ -156,7 +156,7 @@ void main() {
     expect(catalogRange['evidence_label'], 'Imported personal catalog');
     final personalTarget = (await db.query('profile_biomarker_targets')).single;
     expect(personalTarget['high'], 70.0);
-    expect(personalTarget['optimal_high'], 85.0);
+    expect(personalTarget['borderline_high'], 85.0);
     expect(personalTarget['unit'], 'mg/dL');
     expect(personalTarget['notes'], contains('old-profile'));
     await database.close();
