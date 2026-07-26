@@ -275,6 +275,7 @@ class _BiomarkerListsSheet extends StatelessWidget {
         ),
       ),
     );
+    if (!context.mounted) return;
     try {
       if (save == true && biomarkerId != null) {
         final parsed = interval.text.trim().isEmpty
