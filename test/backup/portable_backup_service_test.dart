@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/backup/portable_backup_service.dart';
 import 'package:super_health/data/app_database.dart';
