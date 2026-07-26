@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import 'ai/advisor_service.dart';
@@ -9,12 +10,14 @@ import 'ai/health_context_builder.dart';
 import 'ai/lab_planner_service.dart';
 import 'ai/provider_clients.dart';
 import 'analysis/correlation_service.dart';
+import 'backup/portable_backup_service.dart';
 import 'app/app_controller.dart';
 import 'app/super_health_app.dart';
 import 'data/app_database.dart';
 import 'data/health_repository.dart';
 import 'export/lab_plan_export_service.dart';
 import 'import/legacy_import_service.dart';
+import 'reminders/reminder_service.dart';
 import 'sync/one_drive_service.dart';
 import 'sync/snapshot_service.dart';
 import 'workspace/safe_workspace_service.dart';
@@ -41,6 +44,10 @@ void main() {
     keyStore: keyStore,
     oneDriveService: oneDriveService,
   );
+  final portableBackupService = PortableBackupService(
+    database,
+    documentsDirectory: getApplicationDocumentsDirectory,
+  );
   final controller = AppController(
     database: database,
     repository: repository,
@@ -66,6 +73,9 @@ void main() {
     workspaceService: workspaceService,
     exportService: LabPlanExportService(),
     clientFactory: clientFactory,
+    reminderService: ReminderService(),
+    portableBackupService: portableBackupService,
+    documentsDirectory: getApplicationDocumentsDirectory,
   );
 
   runApp(
