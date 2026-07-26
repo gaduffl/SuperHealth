@@ -21,7 +21,7 @@ void main() {
   tearDown(() => database.close());
 
   test(
-    'complete health context is profile-isolated and declares exclusions',
+    'context shares household catalog but isolates personal health history',
     () async {
       final alpha = await repository.createProfile(displayName: 'Alpha');
       final beta = await repository.createProfile(displayName: 'Beta');
@@ -29,17 +29,17 @@ void main() {
       await repository.saveSupplement(
         Supplement(
           id: repository.newId(),
-          profileId: alpha.id,
-          name: 'Alpha only',
+          name: 'Household magnesium',
           createdAt: now,
           updatedAt: now,
         ),
       );
-      await repository.saveSupplement(
-        Supplement(
+      await repository.saveNamedRecord(
+        NamedHealthRecord(
           id: repository.newId(),
           profileId: beta.id,
-          name: 'Beta secret',
+          name: 'Beta private condition',
+          kind: 'condition',
           createdAt: now,
           updatedAt: now,
         ),
@@ -47,8 +47,8 @@ void main() {
 
       final snapshot = await repository.completeProfileSnapshot(alpha.id);
       final encoded = HealthRepository.stableJson(snapshot);
-      expect(encoded, contains('Alpha only'));
-      expect(encoded, isNot(contains('Beta secret')));
+      expect(encoded, contains('Household magnesium'));
+      expect(encoded, isNot(contains('Beta private condition')));
       expect(encoded, contains('api_keys'));
       expect(encoded, contains('other_profiles'));
       expect((snapshot['manifest']! as Map)['complete'], isTrue);

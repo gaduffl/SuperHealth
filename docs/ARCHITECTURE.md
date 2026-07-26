@@ -4,7 +4,7 @@ SuperHealth uses a local-first Flutter architecture with explicit trust boundari
 
 ## Data boundary
 
-`AppDatabase` owns the versioned SQLite schema. `HealthRepository` is the only normal application interface to health records. Profiles, supplements, intakes, events, documents, measurements, health context, and plans are stored as profile-scoped rows. The biomarker catalog and reference ranges are shared catalog data.
+`AppDatabase` owns the versioned SQLite schema. `HealthRepository` is the only normal application interface to health records. Profiles, schedules, intakes, events, documents, measurements, health context, and plans are profile-scoped. Supplement products and inventory are shared household data; the biomarker catalog and reference ranges are shared catalog data.
 
 The advisor and parser never receive `AppDatabase`, a SQLite connection, or `HealthRepository` write methods:
 
@@ -25,10 +25,14 @@ PDF parsing ports the useful extraction contract from the former Biomarkers back
 
 ## Synchronization
 
-OneDrive uses a dedicated SuperHealth Microsoft app registration and a single `superhealth_snapshot.json`. Private mode requests `Files.ReadWrite.AppFolder`. Shared-family mode requests delegated `Files.ReadWrite`, enumerates folder metadata for explicit selection, and resolves every snapshot, document, and advisor-workspace path beneath a fixed `SuperHealth` child of the selected folder. Synchronization downloads, validates, merges, records divergent changes, uploads with an ETag, and advances a per-row sync shadow. Stored tokens are bound to both the configured client ID and selected storage mode so an upgrade cannot reuse credentials issued to another app identity or scope. API keys, tokens, import audit tables, and local device paths are excluded.
+OneDrive uses a dedicated SuperHealth Microsoft app registration and a single `superhealth_snapshot.json`. Private mode requests `Files.ReadWrite.AppFolder`. Shared-family mode requests delegated `Files.ReadWrite`, enumerates folder metadata for explicit selection, and resolves every snapshot, document, and advisor-workspace path beneath a fixed `SuperHealth` child of the selected folder. Synchronization validates exact table schemas, scalar types, dates, numeric bounds, enums, identifiers, references, and cross-row ownership before staging any remote change. It then merges, records divergent changes, uploads with an ETag, and advances a per-row sync shadow. Stored tokens are bound to both the configured client ID and selected storage mode so an upgrade cannot reuse credentials issued to another app identity or scope. API keys, tokens, import audit tables, and local device paths are excluded.
+
+A portable restore arms a durable sync gate before it mutates local data. Ordinary synchronization remains blocked until the user either resumes normal conflict-aware merging or explicitly publishes the restored snapshot as the authoritative remote copy. Authoritative publishing uses conditional ETags and marks rows synchronized only after the snapshot and documents succeed.
 
 AppFolder isolation prevents direct reads from the former apps’ folders. Legacy exports are selected explicitly through Android’s file picker, read without modification, and passed through the previewed import pipeline. Import hashes prevent accidental repeats, deterministic identifiers make retries safe, and an audit table supports rollback.
 
 ## Lab plans
 
 The model may select only biomarkers present in the catalog. Local validation rejects unknown IDs, duplicate markers, invalid evidence labels, missing rationales, or missing tiers. Prices are always replaced with catalog prices. A biomarker is stored once at the tier where it is first added; `itemsThrough()` constructs the cumulative checklists and totals deterministically.
+
+Every candidate plan carries a receipt for the complete immutable health-context package, including its overall hash, file hash, record count, section names, and section hashes. A second stateless provider call to the same configured model receives the same lossless context plus only the parsed candidate data. It must return its own matching receipt and approve without blocking issues. Malformed, incomplete, mismatched, or rejected verification fails closed. Approved plans persist the model/provider identity, context hash, verification summary, warnings, sources, and timestamp, and preserve that audit record through checklist updates and exports.

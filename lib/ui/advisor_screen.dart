@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app/app_controller.dart';
+import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import '../workspace/safe_workspace_service.dart';
 import 'common.dart';
@@ -30,16 +31,16 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final strings = AppLocalizations.of(context);
     final settings = controller.advisorSettings;
     if (settings == null) {
-      return const PageBody(
+      return PageBody(
         child: Padding(
           padding: EdgeInsets.all(16),
           child: EmptyState(
             icon: Icons.psychology_alt_outlined,
-            title: 'Configure the advisor',
-            message:
-                'Add a provider API key and choose an advisor model in Settings.',
+            title: strings.configureAdvisor,
+            message: strings.configureAdvisorDescription,
           ),
         ),
       );
@@ -68,22 +69,25 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '${settings.provider.name} · ${settings.model}'
-                      '${settings.reasoningLevel == null ? '' : ' · ${settings.reasoningLevel} reasoning'}',
+                      strings.providerReasoning(
+                        settings.provider.name,
+                        settings.model,
+                        settings.reasoningLevel,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelLarge,
                     ),
                   ),
                   if (settings.webSearch)
-                    const Tooltip(
-                      message: 'Web search enabled',
+                    Tooltip(
+                      message: strings.webSearchEnabled,
                       child: Icon(Icons.public, size: 18),
                     ),
                   if (settings.codeExecution) ...[
                     const SizedBox(width: 8),
-                    const Tooltip(
-                      message: 'Provider sandbox code enabled',
+                    Tooltip(
+                      message: strings.codeExecutionEnabled,
                       child: Icon(Icons.terminal, size: 18),
                     ),
                   ],
@@ -98,12 +102,11 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
                 dense: true,
                 leading: const Icon(Icons.rule_folder_outlined),
                 title: Text(
-                  '${controller.workspaceProposals.length} file change'
-                  '${controller.workspaceProposals.length == 1 ? '' : 's'} awaiting approval',
+                  strings.pendingFileProposals(
+                    controller.workspaceProposals.length,
+                  ),
                 ),
-                subtitle: const Text(
-                  'Nothing is written until you review and confirm it.',
-                ),
+                subtitle: Text(strings.proposalSafetyCopy),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _reviewFileProposals,
               ),
@@ -138,18 +141,20 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
                         maxLines: 5,
                         textCapitalization: TextCapitalization.sentences,
                         decoration: InputDecoration(
-                          hintText: 'Ask about your health data…',
+                          hintText: strings.askHealthData,
                           helperText: controller.lastContextBytes == null
-                              ? 'The complete active profile is sent with each request.'
-                              : 'Last context: ${(controller.lastContextBytes! / 1024).toStringAsFixed(1)} KB '
-                                    '(~${controller.lastContextTokens} tokens)',
+                              ? strings.completeProfileSent
+                              : strings.lastContext(
+                                  controller.lastContextBytes!,
+                                  controller.lastContextTokens,
+                                ),
                         ),
                         onSubmitted: (_) => _send(),
                       ),
                     ),
                     const SizedBox(width: 8),
                     IconButton.filled(
-                      tooltip: 'Send',
+                      tooltip: strings.send,
                       onPressed: controller.busy ? null : _send,
                       icon: const Icon(Icons.arrow_upward),
                     ),
@@ -194,19 +199,21 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
             children: [
               Text(
-                'Advisor file proposals',
+                AppLocalizations.of(context).advisorFileProposals,
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 4),
-              const Text(
-                'Review the exact operation, path, and content. These files are separate from the health database.',
+              Text(
+                AppLocalizations.of(context).advisorFileProposalsDescription,
               ),
               const SizedBox(height: 12),
               if (controller.workspaceProposals.isEmpty)
-                const EmptyState(
+                EmptyState(
                   icon: Icons.task_alt,
-                  title: 'No pending file changes',
-                  message: 'All proposals have been applied or rejected.',
+                  title: AppLocalizations.of(context).noPendingFileChanges,
+                  message: AppLocalizations.of(
+                    context,
+                  ).noPendingFileChangesDescription,
                 )
               else
                 for (final proposal in controller.workspaceProposals)
@@ -265,7 +272,9 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
                               TextButton(
                                 onPressed: () => controller
                                     .rejectWorkspaceProposal(proposal.id),
-                                child: const Text('Reject'),
+                                child: Text(
+                                  AppLocalizations.of(context).reject,
+                                ),
                               ),
                               const SizedBox(width: 8),
                               FilledButton(
@@ -275,7 +284,9 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
                                         sheetContext,
                                         proposal,
                                       ),
-                                child: const Text('Review & apply'),
+                                child: Text(
+                                  AppLocalizations.of(context).reviewAndApply,
+                                ),
                               ),
                             ],
                           ),
@@ -297,13 +308,17 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
     final approved = await showDialog<bool>(
       context: sheetContext,
       builder: (dialogContext) => AlertDialog(
-        title: Text('${proposal.operation.name} file?'),
+        title: Text(
+          AppLocalizations.of(
+            dialogContext,
+          ).confirmFileOperation(proposal.operation.name),
+        ),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Exact path'),
+              Text(AppLocalizations.of(dialogContext).exactPath),
               SelectableText(
                 proposal.relativePath,
                 style: const TextStyle(fontWeight: FontWeight.bold),
@@ -312,7 +327,7 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
               Text(proposal.summary),
               if (proposal.bytes != null) ...[
                 const SizedBox(height: 12),
-                const Text('Complete new content'),
+                Text(AppLocalizations.of(dialogContext).completeNewContent),
                 Container(
                   constraints: const BoxConstraints(maxHeight: 320),
                   padding: const EdgeInsets.all(10),
@@ -336,11 +351,15 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(AppLocalizations.of(dialogContext).cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text('Confirm ${proposal.operation.name}'),
+            child: Text(
+              AppLocalizations.of(
+                dialogContext,
+              ).confirmOperation(proposal.operation.name),
+            ),
           ),
         ],
       ),
@@ -352,7 +371,11 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
         );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${proposal.relativePath} updated.')),
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context).updatedFile(proposal.relativePath),
+              ),
+            ),
           );
         }
       } on Object catch (error) {
@@ -368,43 +391,47 @@ class _AdvisorWelcome extends StatelessWidget {
   final ValueChanged<String> onPrompt;
 
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(20),
-    children: [
-      const SizedBox(height: 28),
-      Icon(
-        Icons.psychology_alt_outlined,
-        size: 56,
-        color: Theme.of(context).colorScheme.primary,
-      ),
-      const SizedBox(height: 14),
-      Text(
-        'Your health research partner',
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.headlineSmall,
-      ),
-      const SizedBox(height: 8),
-      Text(
-        'The advisor can reason across your complete active-profile history. '
-        'It labels evidence and uncertainty, but does not replace medical care.',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-      ),
-      const SizedBox(height: 24),
-      for (final prompt in const [
-        'Review my current supplements for possible duplications, interactions, and monitoring needs.',
-        'What patterns in my recent symptoms and tags are worth investigating?',
-        'Summarize the most important gaps in my current biomarker history.',
-      ])
-        Card(
-          child: ListTile(
-            title: Text(prompt),
-            trailing: const Icon(Icons.north_west),
-            onTap: () => onPrompt(prompt),
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const SizedBox(height: 28),
+        Icon(
+          Icons.psychology_alt_outlined,
+          size: 56,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(height: 14),
+        Text(
+          strings.advisorWelcomeTitle,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          strings.advisorWelcomeDescription,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
-    ],
-  );
+        const SizedBox(height: 24),
+        for (final prompt in [
+          strings.welcomePromptSupplements,
+          strings.welcomePromptPatterns,
+          strings.welcomePromptBiomarkers,
+        ])
+          Card(
+            child: ListTile(
+              title: Text(prompt),
+              trailing: const Icon(Icons.north_west),
+              onTap: () => onPrompt(prompt),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 class _MessageBubble extends StatelessWidget {
@@ -442,13 +469,15 @@ class _MessageBubble extends StatelessWidget {
                 runSpacing: 4,
                 children: [
                   for (var index = 0; index < message.citations.length; index++)
-                    ActionChip(
-                      visualDensity: VisualDensity.compact,
-                      avatar: const Icon(Icons.open_in_new, size: 14),
-                      label: Text('Source ${index + 1}'),
-                      onPressed: () =>
-                          launchUrl(Uri.parse(message.citations[index])),
-                    ),
+                    if (_safeWebUri(message.citations[index]) case final uri?)
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        avatar: const Icon(Icons.open_in_new, size: 14),
+                        label: Text(
+                          AppLocalizations.of(context).sourceNumber(index + 1),
+                        ),
+                        onPressed: () => launchUrl(uri),
+                      ),
                 ],
               ),
             ],
@@ -457,4 +486,12 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+}
+
+Uri? _safeWebUri(String value) {
+  final uri = Uri.tryParse(value);
+  if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
+    return null;
+  }
+  return uri;
 }

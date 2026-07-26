@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
@@ -14,13 +15,20 @@ import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
 import '../ai/provider_clients.dart';
 import '../analysis/correlation_service.dart';
+import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
 import '../export/lab_plan_export_service.dart';
 import '../import/legacy_import_service.dart';
+import '../reminders/reminder_service.dart';
+import '../reminders/reminder_planner.dart';
 import '../sync/one_drive_service.dart';
+import '../sync/restore_sync_gate.dart';
+import '../sync/snapshot_service.dart';
 import '../workspace/safe_workspace_service.dart';
+import 'appearance_settings.dart';
+import 'initial_setup_progress.dart';
 
 class AppController extends ChangeNotifier {
   AppController({
@@ -38,6 +46,12 @@ class AppController extends ChangeNotifier {
     required LabPlanExportService exportService,
     required AiProviderClientFactory clientFactory,
     ProviderCapabilityRegistry? capabilityRegistry,
+    ReminderService? reminderService,
+    PortableBackupService? portableBackupService,
+    DocumentsDirectory? documentsDirectory,
+    AppearanceSettingsStore? appearanceSettingsStore,
+    InitialSetupProgressStore? initialSetupProgressStore,
+    RestoreSyncGateStore? restoreSyncGateStore,
   }) : _database = database,
        repository = repository,
        keyStore = keyStore,
@@ -51,7 +65,15 @@ class AppController extends ChangeNotifier {
        workspaceService = workspaceService,
        exportService = exportService,
        _clientFactory = clientFactory,
-       capabilityRegistry = capabilityRegistry ?? ProviderCapabilityRegistry();
+       capabilityRegistry = capabilityRegistry ?? ProviderCapabilityRegistry(),
+       _reminderService = reminderService ?? ReminderService(),
+       _portableBackupService = portableBackupService,
+       _documentsDirectory = documentsDirectory,
+       _appearanceSettingsStore =
+           appearanceSettingsStore ?? AppearanceSettingsStore(),
+       _initialSetupProgressStore =
+           initialSetupProgressStore ?? InitialSetupProgressStore(),
+       _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore();
 
   final AppDatabase _database;
   final HealthRepository repository;
@@ -67,20 +89,39 @@ class AppController extends ChangeNotifier {
   final LabPlanExportService exportService;
   final AiProviderClientFactory _clientFactory;
   final ProviderCapabilityRegistry capabilityRegistry;
+  final ReminderService _reminderService;
+  final PortableBackupService? _portableBackupService;
+  final DocumentsDirectory? _documentsDirectory;
+  final AppearanceSettingsStore _appearanceSettingsStore;
+  final InitialSetupProgressStore _initialSetupProgressStore;
+  final RestoreSyncGateStore _restoreSyncGateStore;
 
   bool initialized = false;
   bool busy = false;
+  bool appearanceSaving = false;
+  AppearanceSettings appearanceSettings = AppearanceSettings.defaults;
+  InitialSetupProgress initialSetupProgress =
+      const InitialSetupProgress.empty();
+  bool restoreSyncDecisionPending = false;
   String? initializationError;
   Profile? activeProfile;
   List<Profile> profiles = const [];
   List<Supplement> supplements = const [];
   List<SupplementSchedule> schedules = const [];
+  List<SupplementSchedule> householdSchedules = const [];
   List<SupplementIntake> intakes = const [];
+  List<InventoryMovement> inventoryMovements = const [];
+  Map<String, double> stockLevels = const {};
+  List<HealthEventDefinition> eventDefinitions = const [];
   List<HealthEvent> events = const [];
   List<Biomarker> biomarkers = const [];
+  List<BiomarkerReferenceRange> biomarkerRanges = const [];
+  List<ProfileBiomarkerTarget> profileTargets = const [];
   List<Measurement> measurements = const [];
   List<HealthDocument> documents = const [];
   List<NamedHealthRecord> namedRecords = const [];
+  List<BiomarkerList> biomarkerLists = const [];
+  List<DueBiomarker> dueBiomarkers = const [];
   List<LabPlan> labPlans = const [];
   List<AdvisorMessage> advisorMessages = const [];
   List<CorrelationResult> correlations = const [];
@@ -92,17 +133,41 @@ class AppController extends ChangeNotifier {
   AiTaskSettings? parsingSettings;
   final Map<AiProvider, bool> hasApiKey = {};
   final Map<AiProvider, List<AiModelInfo>> availableModels = {};
+  ReminderPermissionStatus reminderPermissionStatus =
+      ReminderPermissionStatus.unknown;
+  String? reminderStatusMessage;
+  int scheduledReminderCount = 0;
+  int omittedReminderOccurrenceCount = 0;
+  DateTime? reminderCoverageThrough;
+  ReminderCoverageReason? reminderCoverageReason;
+  int lastLowStockAlertCount = 0;
+
+  AppThemeMode get themeMode => appearanceSettings.themeMode;
+  AppColorPalette get colorPalette => appearanceSettings.palette;
+  AppColorMode get colorMode => appearanceSettings.colorMode;
+  bool get highContrast => appearanceSettings.highContrast;
+  AppLanguage get language => appearanceSettings.language;
 
   List<WorkspaceProposal> get workspaceProposals => workspaceService.pending
       .where((item) => item.profileId == activeProfile?.id)
       .toList(growable: false);
 
   Future<void> initialize() async {
+    // Appearance is loaded before opening the initialized-app gate. Its values
+    // are intentionally device-wide, and corrupt preference values fall back
+    // harmlessly rather than blocking access to the health record.
+    try {
+      appearanceSettings = await _appearanceSettingsStore.load();
+    } on Object {
+      appearanceSettings = AppearanceSettings.defaults;
+    }
     try {
       advisorSettings = await _aiSettingsStore.load(AiTask.advisor);
       parsingSettings = await _aiSettingsStore.load(AiTask.parsing);
       await refreshKeyStatus();
+      restoreSyncDecisionPending = await _restoreSyncGateStore.isPending();
       await refreshProfiles();
+      await _reconcileReminders();
     } on Object catch (error) {
       initializationError = error.toString();
     } finally {
@@ -111,11 +176,194 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> setThemeMode(AppThemeMode value) =>
+      _saveAppearance(appearanceSettings.copyWith(themeMode: value));
+
+  Future<void> setColorPalette(AppColorPalette value) =>
+      _saveAppearance(appearanceSettings.copyWith(palette: value));
+
+  Future<void> setColorMode(AppColorMode value) =>
+      _saveAppearance(appearanceSettings.copyWith(colorMode: value));
+
+  Future<void> setHighContrast(bool value) =>
+      _saveAppearance(appearanceSettings.copyWith(highContrast: value));
+
+  Future<void> setLanguage(AppLanguage value) =>
+      _saveAppearance(appearanceSettings.copyWith(language: value));
+
+  Future<void> _saveAppearance(AppearanceSettings next) async {
+    if (appearanceSaving || next == appearanceSettings) return;
+    final previous = appearanceSettings;
+    appearanceSettings = next;
+    appearanceSaving = true;
+    notifyListeners();
+    try {
+      if (!await _appearanceSettingsStore.save(next)) {
+        throw StateError('Could not save appearance settings on this device.');
+      }
+    } on Object {
+      appearanceSettings = previous;
+      rethrow;
+    } finally {
+      appearanceSaving = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> refreshKeyStatus() async {
     for (final provider in AiProvider.values) {
       hasApiKey[provider] = await keyStore.hasKey(provider);
     }
+    await refreshInitialSetupProgress();
+  }
+
+  /// Refreshes device-local setup progress from persisted action facts and
+  /// current profile, OneDrive, and advisor configuration state.
+  ///
+  /// UI flows that directly connect or select OneDrive storage can call this
+  /// after their action succeeds. Refreshing alone never records completion.
+  Future<void> refreshInitialSetupProgress({bool notify = true}) async {
+    final facts = await _initialSetupProgressStore.loadFacts();
+    var oneDriveReady = false;
+    try {
+      final signedIn = await oneDriveService.isSignedIn();
+      if (signedIn) {
+        final mode = await oneDriveService.currentStorageMode();
+        oneDriveReady =
+            mode == OneDriveStorageMode.appFolder ||
+            (mode == OneDriveStorageMode.sharedFolder &&
+                await oneDriveService.selectedFolder() != null);
+      }
+    } on Object {
+      // Setup progress must not turn a transient cloud status read into an app
+      // initialization failure. The next explicit refresh can recover it.
+      oneDriveReady = false;
+    }
+    final advisor = advisorSettings;
+    initialSetupProgress = InitialSetupProgress(
+      profileExists: profiles.isNotEmpty,
+      legacyJsonImported: facts.legacyJsonImported,
+      legacyJsonSkipped: facts.legacyJsonSkipped,
+      legacyPdfsAttached: facts.legacyPdfsAttached,
+      legacyPdfsSkipped: facts.legacyPdfsSkipped,
+      dataRestored: facts.dataRestored,
+      oneDriveReady: oneDriveReady,
+      firstSuccessfulSync: facts.firstSuccessfulSync,
+      cloudSkipped: facts.cloudSkipped,
+      advisorReady: advisor != null && hasApiKey[advisor.provider] == true,
+      aiSkipped: facts.aiSkipped,
+    );
+    if (notify) notifyListeners();
+  }
+
+  Future<void> markLegacyJsonImportSkipped() async {
+    await _initialSetupProgressStore.recordLegacyJsonSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  Future<void> markLegacyPdfsImportSkipped() async {
+    await _initialSetupProgressStore.recordLegacyPdfsSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  Future<void> markCloudSetupSkipped() async {
+    await _initialSetupProgressStore.recordCloudSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  Future<void> markAiSetupSkipped() async {
+    await _initialSetupProgressStore.recordAiSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  /// Requests Android 13+ notification permission from an explicit settings
+  /// action. This is never requested at startup.
+  Future<ReminderPermissionStatus> requestReminderPermission() async {
+    try {
+      reminderPermissionStatus = await _reminderService.requestPermission();
+      reminderStatusMessage = switch (reminderPermissionStatus) {
+        ReminderPermissionStatus.granted => null,
+        ReminderPermissionStatus.denied =>
+          'Notification permission is not granted.',
+        ReminderPermissionStatus.unsupported =>
+          'Dose reminders are currently available on Android only.',
+        ReminderPermissionStatus.unknown => 'Notification status is unknown.',
+      };
+      if (reminderPermissionStatus == ReminderPermissionStatus.granted) {
+        await _reconcileReminders();
+      }
+    } on Object catch (error) {
+      reminderPermissionStatus = ReminderPermissionStatus.unknown;
+      reminderStatusMessage = 'Could not request notifications: $error';
+    }
     notifyListeners();
+    return reminderPermissionStatus;
+  }
+
+  /// Rebuilds the OS notification plan without requesting permission.
+  Future<void> refreshReminderStatus() =>
+      _withBusy(() async => _reconcileReminders());
+
+  /// Writes a self-contained portable backup to app storage for sharing.
+  /// API keys, Microsoft credentials and remote IDs are never included.
+  Future<File> exportPortableBackup() {
+    return _withBusy(() async {
+      final service = _portableBackupService;
+      final directoryProvider = _documentsDirectory;
+      if (service == null || directoryProvider == null) {
+        throw StateError('Portable backup is not available in this build.');
+      }
+      final source = await service.createJson();
+      final base = await directoryProvider();
+      final directory = Directory(
+        '${base.path}${Platform.pathSeparator}exports',
+      );
+      await directory.create(recursive: true);
+      final timestamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+        RegExp(r'[^0-9]'),
+        '',
+      );
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}'
+        'superhealth-backup-$timestamp-${repository.newId()}.json',
+      );
+      await file.writeAsString(source, flush: true);
+      return file;
+    });
+  }
+
+  /// Replaces synchronized health data only after the UI has collected its
+  /// explicit destructive confirmations. Device secrets remain untouched.
+  Future<void> restorePortableBackup(String source) {
+    return _withBusy(() async {
+      final service = _portableBackupService;
+      if (service == null) {
+        throw StateError('Portable backup is not available in this build.');
+      }
+      // Arm the durable safety gate before changing the database. If device
+      // preferences cannot persist it, do not risk producing restored data
+      // that could automatically synchronize on the next app launch.
+      await _restoreSyncGateStore.requireDecision();
+      restoreSyncDecisionPending = true;
+      try {
+        await service.restoreJson(source, confirmedReplaceCurrentData: true);
+      } on Object catch (error, stackTrace) {
+        // The restore service validates before replacing rows. If it fails,
+        // return to ordinary sync behavior when possible. If local settings
+        // cannot clear the gate, keep it visibly and durably fail-closed while
+        // preserving the original restore error for the caller.
+        try {
+          await _restoreSyncGateStore.clearDecision();
+          restoreSyncDecisionPending = false;
+        } on Object {
+          restoreSyncDecisionPending = true;
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      await _initialSetupProgressStore.recordDataRestored();
+      await refreshProfiles();
+      await _reconcileReminders();
+    });
   }
 
   Future<void> refreshProfiles() async {
@@ -132,6 +380,7 @@ class AppController extends ChangeNotifier {
       await preferences.setString('active_profile_id', activeProfile!.id);
       await refreshActiveData();
     }
+    await refreshInitialSetupProgress(notify: false);
     notifyListeners();
   }
 
@@ -139,6 +388,7 @@ class AppController extends ChangeNotifier {
     required String name,
     DateTime? dateOfBirth,
     String? sex,
+    double? heightCm,
     double? weightKg,
     String notes = '',
   }) async {
@@ -146,12 +396,42 @@ class AppController extends ChangeNotifier {
       displayName: name,
       dateOfBirth: dateOfBirth,
       sex: sex,
+      heightCm: heightCm,
       weightKg: weightKg,
       notes: notes,
     );
     await refreshProfiles();
     await selectProfile(profile.id);
+    await _reconcileReminders();
     return profile;
+  }
+
+  Future<void> updateProfile(Profile profile) async {
+    await repository.saveProfile(
+      Profile(
+        id: profile.id,
+        displayName: profile.displayName.trim(),
+        dateOfBirth: profile.dateOfBirth,
+        sex: profile.sex,
+        heightCm: profile.heightCm,
+        weightKg: profile.weightKg,
+        notes: profile.notes.trim(),
+        createdAt: profile.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: profile.deleted,
+      ),
+    );
+    await refreshProfiles();
+    await _reconcileReminders();
+  }
+
+  Future<void> deleteProfile(Profile profile) async {
+    if (profiles.length <= 1) {
+      throw StateError('Create another profile before deleting this one.');
+    }
+    await repository.softDelete('profiles', profile.id);
+    await refreshProfiles();
+    await _reconcileReminders();
   }
 
   Future<void> selectProfile(String profileId) async {
@@ -163,6 +443,7 @@ class AppController extends ChangeNotifier {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString('active_profile_id', profileId);
     await refreshActiveData();
+    await _reconcileReminders();
     notifyListeners();
   }
 
@@ -173,36 +454,60 @@ class AppController extends ChangeNotifier {
       repository.supplements(profile.id),
       repository.schedules(profile.id),
       repository.intakes(profile.id),
+      repository.inventoryMovements(),
+      repository.stockLevels(),
+      repository.eventDefinitions(profile.id),
       repository.events(profile.id),
       repository.biomarkers(),
+      repository.biomarkerRanges(),
+      repository.profileTargets(profile.id),
       repository.measurements(profile.id),
       repository.documents(profile.id),
       repository.namedRecords(profile.id),
+      repository.biomarkerLists(profile.id),
+      repository.dueBiomarkers(profile.id),
       repository.labPlans(profile.id),
       repository.messages(profile.id, 'primary'),
+      repository.householdSchedules(),
     ]);
     supplements = values[0] as List<Supplement>;
     schedules = values[1] as List<SupplementSchedule>;
     intakes = values[2] as List<SupplementIntake>;
-    events = values[3] as List<HealthEvent>;
-    biomarkers = values[4] as List<Biomarker>;
-    measurements = values[5] as List<Measurement>;
-    documents = values[6] as List<HealthDocument>;
-    namedRecords = values[7] as List<NamedHealthRecord>;
-    labPlans = values[8] as List<LabPlan>;
-    advisorMessages = values[9] as List<AdvisorMessage>;
+    inventoryMovements = values[3] as List<InventoryMovement>;
+    stockLevels = values[4] as Map<String, double>;
+    eventDefinitions = values[5] as List<HealthEventDefinition>;
+    events = values[6] as List<HealthEvent>;
+    biomarkers = values[7] as List<Biomarker>;
+    biomarkerRanges = values[8] as List<BiomarkerReferenceRange>;
+    profileTargets = values[9] as List<ProfileBiomarkerTarget>;
+    measurements = values[10] as List<Measurement>;
+    documents = values[11] as List<HealthDocument>;
+    namedRecords = values[12] as List<NamedHealthRecord>;
+    biomarkerLists = values[13] as List<BiomarkerList>;
+    dueBiomarkers = values[14] as List<DueBiomarker>;
+    labPlans = values[15] as List<LabPlan>;
+    advisorMessages = values[16] as List<AdvisorMessage>;
+    householdSchedules = values[17] as List<SupplementSchedule>;
     notifyListeners();
   }
 
   Future<void> _clearActiveData() async {
     supplements = const [];
     schedules = const [];
+    householdSchedules = const [];
     intakes = const [];
+    inventoryMovements = const [];
+    stockLevels = const {};
+    eventDefinitions = const [];
     events = const [];
     biomarkers = await repository.biomarkers();
+    biomarkerRanges = await repository.biomarkerRanges();
+    profileTargets = const [];
     measurements = const [];
     documents = const [];
     namedRecords = const [];
+    biomarkerLists = const [];
+    dueBiomarkers = const [];
     labPlans = const [];
     advisorMessages = const [];
     correlations = const [];
@@ -215,23 +520,110 @@ class AppController extends ChangeNotifier {
     String form = '',
     double? priceEur,
     List<Map<String, Object?>> ingredients = const [],
+    int? unitsPerContainer,
+    double? initialContainers,
+    String stockUnit = 'unit',
+    double? lowStockThresholdUnits,
+    String bioavailability = '',
+    String notes = '',
   }) async {
-    final profileId = _profileId;
     final now = DateTime.now();
+    final supplement = Supplement(
+      id: repository.newId(),
+      name: name.trim(),
+      brand: brand.trim(),
+      form: form.trim(),
+      priceEur: priceEur,
+      ingredients: ingredients,
+      unitsPerContainer: unitsPerContainer,
+      containerCount: initialContainers,
+      bioavailability: bioavailability.trim(),
+      notes: notes.trim(),
+      lowStockThresholdUnits: lowStockThresholdUnits,
+      stockUnit: stockUnit.trim().isEmpty ? 'unit' : stockUnit.trim(),
+      createdAt: now,
+      updatedAt: now,
+    );
+    await repository.saveSupplement(supplement);
+    final initialUnits = unitsPerContainer == null || initialContainers == null
+        ? 0.0
+        : unitsPerContainer * initialContainers;
+    if (initialUnits != 0) {
+      await repository.saveInventoryMovement(
+        InventoryMovement(
+          id: repository.newId(),
+          supplementId: supplement.id,
+          quantityUnits: initialUnits,
+          occurredAt: now,
+          reason: 'initial',
+          notes: 'Initial stock',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
+    await refreshActiveData();
+    await _reconcileReminders();
+  }
+
+  Future<void> updateSupplement(Supplement supplement) async {
     await repository.saveSupplement(
       Supplement(
+        id: supplement.id,
+        name: supplement.name.trim(),
+        brand: supplement.brand.trim(),
+        form: supplement.form.trim(),
+        ingredients: supplement.ingredients,
+        unitsPerContainer: supplement.unitsPerContainer,
+        containerCount: supplement.containerCount,
+        priceEur: supplement.priceEur,
+        bioavailability: supplement.bioavailability.trim(),
+        notes: supplement.notes.trim(),
+        active: supplement.active,
+        lowStockAlerts: supplement.lowStockAlerts,
+        lowStockThresholdUnits: supplement.lowStockThresholdUnits,
+        stockUnit: supplement.stockUnit.trim().isEmpty
+            ? 'unit'
+            : supplement.stockUnit.trim(),
+        sourceId: supplement.sourceId,
+        createdAt: supplement.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: supplement.deleted,
+      ),
+    );
+    await refreshActiveData();
+    await _reconcileReminders();
+  }
+
+  Future<void> adjustStock({
+    required Supplement supplement,
+    required double quantityUnits,
+    required String reason,
+    String notes = '',
+    DateTime? occurredAt,
+  }) async {
+    if (quantityUnits == 0) return;
+    final now = DateTime.now();
+    await repository.saveInventoryMovement(
+      InventoryMovement(
         id: repository.newId(),
-        profileId: profileId,
-        name: name.trim(),
-        brand: brand.trim(),
-        form: form.trim(),
-        priceEur: priceEur,
-        ingredients: ingredients,
+        supplementId: supplement.id,
+        quantityUnits: quantityUnits,
+        occurredAt: occurredAt ?? now,
+        reason: reason,
+        notes: notes.trim(),
         createdAt: now,
         updatedAt: now,
       ),
     );
     await refreshActiveData();
+    await _reconcileReminders();
+  }
+
+  Future<void> deleteSupplement(Supplement supplement) async {
+    await repository.deleteSupplementWithSchedules(supplement.id);
+    await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> addSchedule({
@@ -248,6 +640,10 @@ class AppController extends ChangeNotifier {
       'saturday',
       'sunday',
     ],
+    String instructions = '',
+    DateTime? startDate,
+    DateTime? endDate,
+    bool reminderEnabled = false,
   }) async {
     final now = DateTime.now();
     await repository.saveSchedule(
@@ -259,11 +655,46 @@ class AppController extends ChangeNotifier {
         unit: unit.trim(),
         timeOfDay: timeOfDay.trim(),
         weekdays: weekdays,
+        instructions: instructions.trim(),
+        startDate: startDate,
+        endDate: endDate,
+        reminderEnabled: reminderEnabled,
         createdAt: now,
         updatedAt: now,
       ),
     );
     await refreshActiveData();
+    await _reconcileReminders();
+  }
+
+  Future<void> updateSchedule(SupplementSchedule schedule) async {
+    await repository.saveSchedule(
+      SupplementSchedule(
+        id: schedule.id,
+        profileId: schedule.profileId,
+        supplementId: schedule.supplementId,
+        dose: schedule.dose,
+        unit: schedule.unit.trim(),
+        timeOfDay: schedule.timeOfDay.trim(),
+        weekdays: schedule.weekdays,
+        instructions: schedule.instructions.trim(),
+        startDate: schedule.startDate,
+        endDate: schedule.endDate,
+        active: schedule.active,
+        reminderEnabled: schedule.reminderEnabled,
+        createdAt: schedule.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: schedule.deleted,
+      ),
+    );
+    await refreshActiveData();
+    await _reconcileReminders();
+  }
+
+  Future<void> deleteSchedule(SupplementSchedule schedule) async {
+    await repository.softDelete('supplement_schedules', schedule.id);
+    await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> logIntake({
@@ -272,18 +703,129 @@ class AppController extends ChangeNotifier {
     required String unit,
     DateTime? takenAt,
     String notes = '',
+    SupplementSchedule? schedule,
+    bool skipped = false,
   }) async {
     final now = DateTime.now();
+    final intake = SupplementIntake(
+      id: repository.newId(),
+      profileId: _profileId,
+      supplementId: supplement.id,
+      scheduleId: schedule?.id,
+      takenAt: takenAt ?? now,
+      dose: dose,
+      unit: unit.trim(),
+      skipped: skipped,
+      notes: notes.trim(),
+      ingredientSnapshot: supplement.ingredients,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await repository.saveIntake(
+      intake,
+      inventoryUnits: skipped
+          ? null
+          : _stockUnitsForDose(supplement, dose, unit),
+    );
+    await refreshActiveData();
+    await _reconcileStockAlerts();
+  }
+
+  Future<void> updateIntake(SupplementIntake intake) async {
+    final supplement = supplements
+        .where((item) => item.id == intake.supplementId)
+        .firstOrNull;
     await repository.saveIntake(
       SupplementIntake(
+        id: intake.id,
+        profileId: intake.profileId,
+        supplementId: intake.supplementId,
+        scheduleId: intake.scheduleId,
+        takenAt: intake.takenAt,
+        dose: intake.dose,
+        unit: intake.unit.trim(),
+        skipped: intake.skipped,
+        notes: intake.notes.trim(),
+        ingredientSnapshot: intake.ingredientSnapshot,
+        createdAt: intake.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: intake.deleted,
+      ),
+      inventoryUnits: supplement == null || intake.skipped || intake.deleted
+          ? null
+          : _stockUnitsForDose(supplement, intake.dose, intake.unit),
+    );
+    await refreshActiveData();
+    await _reconcileStockAlerts();
+  }
+
+  Future<void> deleteIntake(SupplementIntake intake) async {
+    await updateIntake(
+      SupplementIntake(
+        id: intake.id,
+        profileId: intake.profileId,
+        supplementId: intake.supplementId,
+        scheduleId: intake.scheduleId,
+        takenAt: intake.takenAt,
+        dose: intake.dose,
+        unit: intake.unit,
+        skipped: intake.skipped,
+        notes: intake.notes,
+        ingredientSnapshot: intake.ingredientSnapshot,
+        createdAt: intake.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: true,
+      ),
+    );
+  }
+
+  Future<void> addEvent({
+    required EventKind kind,
+    required String name,
+    HealthEventDefinition? definition,
+    int? score,
+    double? value,
+    String? unit,
+    DateTime? observedAt,
+    int? durationMinutes,
+    int? colorValue,
+    String notes = '',
+  }) async {
+    final now = DateTime.now();
+    var resolvedDefinition = definition;
+    resolvedDefinition ??= eventDefinitions.firstWhereOrNull(
+      (item) =>
+          item.kind == kind &&
+          item.name.trim().toLowerCase() == name.trim().toLowerCase(),
+    );
+    if (resolvedDefinition == null) {
+      resolvedDefinition = HealthEventDefinition(
         id: repository.newId(),
         profileId: _profileId,
-        supplementId: supplement.id,
-        takenAt: takenAt ?? now,
-        dose: dose,
-        unit: unit.trim(),
+        kind: kind,
+        name: name.trim(),
+        defaultUnit: unit?.trim().isEmpty == true ? null : unit?.trim(),
+        useScore: score != null,
+        colorValue: colorValue,
+        createdAt: now,
+        updatedAt: now,
+      );
+      await repository.saveEventDefinition(resolvedDefinition);
+    }
+    await repository.saveEvent(
+      HealthEvent(
+        id: repository.newId(),
+        profileId: _profileId,
+        definitionId: resolvedDefinition.id,
+        kind: kind,
+        name: resolvedDefinition.name,
+        observedAt: observedAt ?? now,
+        score: score,
+        numericValue: value,
+        unit: unit?.trim(),
+        durationMinutes: durationMinutes,
+        colorValue: colorValue ?? resolvedDefinition.colorValue,
         notes: notes.trim(),
-        ingredientSnapshot: supplement.ingredients,
         createdAt: now,
         updatedAt: now,
       ),
@@ -291,29 +833,49 @@ class AppController extends ChangeNotifier {
     await refreshActiveData();
   }
 
-  Future<void> addEvent({
-    required EventKind kind,
-    required String name,
-    int? score,
-    double? value,
-    String? unit,
-    DateTime? observedAt,
-    String notes = '',
-  }) async {
-    final now = DateTime.now();
+  Future<void> updateEvent(HealthEvent event) async {
     await repository.saveEvent(
       HealthEvent(
-        id: repository.newId(),
-        profileId: _profileId,
-        kind: kind,
-        name: name.trim(),
-        observedAt: observedAt ?? now,
-        score: score,
-        numericValue: value,
-        unit: unit?.trim(),
-        notes: notes.trim(),
-        createdAt: now,
-        updatedAt: now,
+        id: event.id,
+        profileId: event.profileId,
+        definitionId: event.definitionId,
+        kind: event.kind,
+        name: event.name.trim(),
+        observedAt: event.observedAt,
+        score: event.score,
+        numericValue: event.numericValue,
+        unit: event.unit?.trim(),
+        durationMinutes: event.durationMinutes,
+        notes: event.notes.trim(),
+        colorValue: event.colorValue,
+        archived: event.archived,
+        createdAt: event.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: event.deleted,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> deleteEvent(HealthEvent event) async {
+    await repository.softDelete('health_events', event.id);
+    await refreshActiveData();
+  }
+
+  Future<void> saveEventDefinition(HealthEventDefinition definition) async {
+    await repository.saveEventDefinition(
+      HealthEventDefinition(
+        id: definition.id,
+        profileId: definition.profileId,
+        kind: definition.kind,
+        name: definition.name.trim(),
+        defaultUnit: definition.defaultUnit?.trim(),
+        useScore: definition.useScore,
+        colorValue: definition.colorValue,
+        archived: definition.archived,
+        createdAt: definition.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: definition.deleted,
       ),
     );
     await refreshActiveData();
@@ -325,6 +887,8 @@ class AppController extends ChangeNotifier {
     String unit = '',
     double? priceEur,
     String? labName,
+    String description = '',
+    List<String> synonyms = const [],
   }) async {
     final now = DateTime.now();
     await repository.saveBiomarker(
@@ -337,10 +901,77 @@ class AppController extends ChangeNotifier {
         priceEur: priceEur,
         labName: labName?.trim(),
         priceCheckedAt: priceEur == null ? null : now,
+        description: description.trim(),
+        synonyms: synonyms,
         createdAt: now,
         updatedAt: now,
       ),
     );
+    await refreshActiveData();
+  }
+
+  Future<void> updateBiomarker(Biomarker biomarker) async {
+    await repository.saveBiomarker(
+      Biomarker(
+        id: biomarker.id,
+        canonicalName: HealthRepository.normalizeName(biomarker.displayName),
+        displayName: biomarker.displayName.trim(),
+        category: biomarker.category.trim(),
+        defaultUnit: biomarker.defaultUnit.trim(),
+        priceEur: biomarker.priceEur,
+        labName: biomarker.labName?.trim(),
+        priceCheckedAt: biomarker.priceCheckedAt,
+        description: biomarker.description.trim(),
+        synonyms: biomarker.synonyms,
+        isTemporary: biomarker.isTemporary,
+        createdAt: biomarker.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: biomarker.deleted,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> deleteBiomarker(Biomarker biomarker) async {
+    if (measurements.any((item) => item.biomarkerId == biomarker.id)) {
+      throw StateError(
+        'This biomarker has measurements. Reassign or delete those results first.',
+      );
+    }
+    await repository.softDelete('biomarkers', biomarker.id);
+    await refreshActiveData();
+  }
+
+  Future<void> saveBiomarkerRange(BiomarkerReferenceRange range) async {
+    await repository.saveBiomarkerRange(range);
+    await refreshActiveData();
+  }
+
+  Future<void> saveProfileTarget(ProfileBiomarkerTarget target) async {
+    final existing = profileTargets.firstWhereOrNull(
+      (item) => item.biomarkerId == target.biomarkerId,
+    );
+    await repository.saveProfileTarget(
+      ProfileBiomarkerTarget(
+        id: existing?.id ?? target.id,
+        profileId: _profileId,
+        biomarkerId: target.biomarkerId,
+        low: target.low,
+        high: target.high,
+        borderlineLow: target.borderlineLow,
+        borderlineHigh: target.borderlineHigh,
+        unit: target.unit.trim(),
+        source: target.source.trim(),
+        notes: target.notes.trim(),
+        createdAt: existing?.createdAt ?? target.createdAt,
+        updatedAt: DateTime.now(),
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> deleteProfileTarget(ProfileBiomarkerTarget target) async {
+    await repository.softDelete('profile_biomarker_targets', target.id);
     await refreshActiveData();
   }
 
@@ -372,6 +1003,36 @@ class AppController extends ChangeNotifier {
     await refreshActiveData();
   }
 
+  Future<void> updateMeasurement(Measurement measurement) async {
+    await repository.saveMeasurement(
+      Measurement(
+        id: measurement.id,
+        profileId: measurement.profileId,
+        biomarkerId: measurement.biomarkerId,
+        documentId: measurement.documentId,
+        takenAt: measurement.takenAt,
+        value: measurement.value,
+        unit: measurement.unit.trim(),
+        labRefLow: measurement.labRefLow,
+        labRefHigh: measurement.labRefHigh,
+        page: measurement.page,
+        rowText: measurement.rowText,
+        extractionConfidence: measurement.extractionConfidence,
+        flags: measurement.flags,
+        notes: measurement.notes.trim(),
+        createdAt: measurement.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: measurement.deleted,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> deleteMeasurement(Measurement measurement) async {
+    await repository.softDelete('measurements', measurement.id);
+    await refreshActiveData();
+  }
+
   Future<void> addNamedRecord({
     required String kind,
     required String name,
@@ -380,6 +1041,9 @@ class AppController extends ChangeNotifier {
     String? unit,
     String? schedule,
     int? priority,
+    DateTime? startDate,
+    DateTime? endDate,
+    DateTime? targetDate,
     String notes = '',
   }) async {
     final now = DateTime.now();
@@ -394,11 +1058,114 @@ class AppController extends ChangeNotifier {
         unit: unit?.trim(),
         schedule: schedule?.trim(),
         priority: priority,
+        startDate: startDate,
+        endDate: endDate,
+        targetDate: targetDate,
         notes: notes.trim(),
         createdAt: now,
         updatedAt: now,
       ),
     );
+    await refreshActiveData();
+  }
+
+  Future<void> updateNamedRecord(NamedHealthRecord record) async {
+    await repository.saveNamedRecord(
+      NamedHealthRecord(
+        id: record.id,
+        profileId: record.profileId,
+        name: record.name.trim(),
+        kind: record.kind,
+        status: record.status,
+        dose: record.dose,
+        unit: record.unit?.trim(),
+        schedule: record.schedule?.trim(),
+        startDate: record.startDate,
+        endDate: record.endDate,
+        priority: record.priority,
+        targetDate: record.targetDate,
+        notes: record.notes.trim(),
+        createdAt: record.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: record.deleted,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> deleteNamedRecord(NamedHealthRecord record) async {
+    await repository.softDelete('named_health_records', record.id);
+    await refreshActiveData();
+  }
+
+  Future<BiomarkerList> createBiomarkerList({
+    required String name,
+    String description = '',
+  }) async {
+    final now = DateTime.now();
+    final list = BiomarkerList(
+      id: repository.newId(),
+      profileId: _profileId,
+      name: name.trim(),
+      description: description.trim(),
+      createdAt: now,
+      updatedAt: now,
+    );
+    await repository.saveBiomarkerList(list);
+    await refreshActiveData();
+    return list;
+  }
+
+  Future<void> updateBiomarkerList(BiomarkerList list) async {
+    await repository.saveBiomarkerList(
+      BiomarkerList(
+        id: list.id,
+        profileId: list.profileId,
+        name: list.name.trim(),
+        description: list.description.trim(),
+        createdAt: list.createdAt,
+        updatedAt: DateTime.now(),
+        items: list.items,
+        deleted: list.deleted,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> setBiomarkerListItem({
+    required BiomarkerList list,
+    required Biomarker biomarker,
+    int? dueIntervalDays,
+    String notes = '',
+  }) async {
+    final existing = list.items.firstWhereOrNull(
+      (item) => item.biomarkerId == biomarker.id,
+    );
+    final now = DateTime.now();
+    await repository.saveBiomarkerListItem(
+      BiomarkerListItem(
+        id: existing?.id ?? repository.newId(),
+        listId: list.id,
+        biomarkerId: biomarker.id,
+        dueIntervalDays: dueIntervalDays,
+        notes: notes.trim(),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> removeBiomarkerListItem(BiomarkerListItem item) async {
+    await repository.softDelete('biomarker_list_items', item.id);
+    await refreshActiveData();
+  }
+
+  Future<void> deleteBiomarkerList(BiomarkerList list) async {
+    await repository.softDelete('biomarker_lists', list.id);
+    for (final item in list.items) {
+      await repository.softDelete('biomarker_list_items', item.id);
+    }
     await refreshActiveData();
   }
 
@@ -447,7 +1214,7 @@ class AppController extends ChangeNotifier {
     } else {
       parsingSettings = settings;
     }
-    notifyListeners();
+    await refreshInitialSetupProgress();
   }
 
   Future<void> askAdvisor(String question) async {
@@ -507,8 +1274,70 @@ class AppController extends ChangeNotifier {
   Future<void> saveDraftLabPlan() async {
     final draft = draftLabPlan;
     if (draft == null) throw StateError('There is no draft plan to save.');
+    if (!draft.canSave) {
+      throw StateError(
+        'This lab-plan draft was not approved by the independent verification.',
+      );
+    }
     await repository.saveLabPlan(draft.plan);
     draftLabPlan = null;
+    await refreshActiveData();
+  }
+
+  Future<void> setLabPlanItemChecked(
+    LabPlan plan,
+    LabPlanItem item,
+    bool checked,
+  ) async {
+    final now = DateTime.now();
+    final updatedItems = [
+      for (final current in plan.items)
+        current.id == item.id
+            ? LabPlanItem(
+                id: current.id,
+                planId: current.planId,
+                biomarkerId: current.biomarkerId,
+                biomarkerName: current.biomarkerName,
+                tier: current.tier,
+                priority: current.priority,
+                rationale: current.rationale,
+                evidenceClass: current.evidenceClass,
+                priceEur: current.priceEur,
+                preparation: current.preparation,
+                checked: checked,
+                createdAt: current.createdAt,
+                updatedAt: now,
+              )
+            : current,
+    ];
+    await repository.saveLabPlan(
+      LabPlan(
+        id: plan.id,
+        profileId: plan.profileId,
+        title: plan.title,
+        createdAt: plan.createdAt,
+        updatedAt: now,
+        plannedFor: plan.plannedFor,
+        currency: plan.currency,
+        contextHash: plan.contextHash,
+        provider: plan.provider,
+        model: plan.model,
+        status: plan.status,
+        verificationSummary: plan.verificationSummary,
+        verificationWarnings: plan.verificationWarnings,
+        verificationCitations: plan.verificationCitations,
+        verifiedAt: plan.verifiedAt,
+        items: updatedItems,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> deleteLabPlan(LabPlan plan) async {
+    await repository.softDelete('lab_plans', plan.id);
+    for (final item in plan.items) {
+      await repository.softDelete('lab_plan_items', item.id);
+    }
     await refreshActiveData();
   }
 
@@ -552,6 +1381,38 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  Future<void> updateDocument(HealthDocument document) async {
+    await repository.saveDocument(
+      HealthDocument(
+        id: document.id,
+        profileId: document.profileId,
+        fileName: document.fileName,
+        mimeType: document.mimeType,
+        sha256: document.sha256,
+        localPath: document.localPath,
+        oneDriveItemId: document.oneDriveItemId,
+        documentDate: document.documentDate,
+        parsedAt: document.parsedAt,
+        parserProvider: document.parserProvider,
+        parserModel: document.parserModel,
+        labName: document.labName?.trim(),
+        reportComment: document.reportComment.trim(),
+        parseStatus: document.parseStatus,
+        warnings: document.warnings,
+        errors: document.errors,
+        createdAt: document.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: document.deleted,
+      ),
+    );
+    await refreshActiveData();
+  }
+
+  Future<void> deleteDocument(HealthDocument document) async {
+    await repository.deleteDocumentWithMeasurements(document.id);
+    await refreshActiveData();
+  }
+
   Future<LegacyImportPreview> previewImport(
     List<ImportSourceFile> files,
   ) async {
@@ -563,7 +1424,9 @@ class AppController extends ChangeNotifier {
   Future<LegacyImportResult> commitImport(LegacyImportPreview preview) async {
     return _withBusy(() async {
       final result = await importService.commit(preview);
+      await _initialSetupProgressStore.recordLegacyJsonImported();
       await refreshProfiles();
+      await _reconcileReminders();
       return result;
     });
   }
@@ -577,16 +1440,97 @@ class AppController extends ChangeNotifier {
   ) {
     return _withBusy(() async {
       final result = await importService.commitPdfs(preview);
+      await _initialSetupProgressStore.recordLegacyPdfsAttached();
       await refreshActiveData();
+      await refreshInitialSetupProgress();
       return result;
     });
   }
 
   Future<OneDriveSyncResult> synchronizeOneDrive() async {
     return _withBusy(() async {
-      final result = await oneDriveService.synchronize();
-      await refreshProfiles();
+      if (await _restoreSyncGateStore.isPending()) {
+        restoreSyncDecisionPending = true;
+        throw RestoreSyncDecisionRequiredError();
+      }
+      return _synchronizeOneDriveNormally();
+    });
+  }
+
+  /// Explicitly resumes the standard conflict-aware sync after a restore.
+  ///
+  /// The guard is opened only while beginning that sync. Any exception closes
+  /// it again, so a transient cloud failure cannot turn into an implicit later
+  /// publish or merge.
+  Future<OneDriveSyncResult> resumeRestoredDataAndMerge() {
+    return _withBusy(() async {
+      if (!await _restoreSyncGateStore.isPending()) {
+        throw StateError('There is no restored-data sync decision pending.');
+      }
+      await _restoreSyncGateStore.clearDecision();
+      restoreSyncDecisionPending = false;
+      try {
+        return await _synchronizeOneDriveNormally();
+      } on Object {
+        await _restoreSyncGateStore.requireDecision();
+        restoreSyncDecisionPending = true;
+        rethrow;
+      }
+    });
+  }
+
+  /// Explicitly publishes the restored local record without merging the remote
+  /// snapshot. The OneDrive service uses ETag preconditions and uploads PDFs
+  /// only after the snapshot has been conditionally accepted.
+  Future<OneDriveSyncResult> publishRestoredDataToOneDrive() {
+    return _withBusy(() async {
+      if (!await _restoreSyncGateStore.isPending()) {
+        throw StateError('There is no restored-data sync decision pending.');
+      }
+      restoreSyncDecisionPending = true;
+      final result = await oneDriveService.publishRestoredDataAuthoritatively();
+      await _restoreSyncGateStore.clearDecision();
+      restoreSyncDecisionPending = false;
+      await _afterSuccessfulOneDriveSync(result);
       return result;
+    });
+  }
+
+  Future<OneDriveSyncResult> _synchronizeOneDriveNormally() async {
+    final result = await oneDriveService.synchronize();
+    await _afterSuccessfulOneDriveSync(result);
+    return result;
+  }
+
+  Future<void> _afterSuccessfulOneDriveSync(OneDriveSyncResult result) async {
+    if (result.conflicts == 0) {
+      await _initialSetupProgressStore.recordFirstSuccessfulSync();
+    }
+    await refreshProfiles();
+    if (result.conflicts == 0 &&
+        result.remoteFound &&
+        result.appliedRows > 0 &&
+        profiles.isNotEmpty) {
+      await _initialSetupProgressStore.recordDataRestored();
+      await refreshInitialSetupProgress();
+    }
+    await _reconcileReminders();
+  }
+
+  Future<List<SnapshotConflict>> unresolvedSyncConflicts() =>
+      oneDriveService.unresolvedSyncConflicts();
+
+  Future<void> resolveSyncConflict({
+    required int conflictId,
+    required SyncConflictResolution resolution,
+  }) {
+    return _withBusy(() async {
+      await oneDriveService.resolveSyncConflict(
+        conflictId: conflictId,
+        resolution: resolution,
+      );
+      await refreshProfiles();
+      await _reconcileReminders();
     });
   }
 
@@ -594,6 +1538,74 @@ class AppController extends ChangeNotifier {
     final profile = activeProfile;
     if (profile == null) throw StateError('Create or select a profile first.');
     return profile.id;
+  }
+
+  Future<void> _reconcileReminders() async {
+    try {
+      reminderPermissionStatus = await _reminderService.initialize();
+      final plan = await _reminderService.reconcile(
+        profiles: profiles,
+        supplements: supplements,
+        schedules: householdSchedules,
+      );
+      scheduledReminderCount = plan.reminders.length;
+      omittedReminderOccurrenceCount = plan.omittedOccurrenceCount;
+      reminderCoverageThrough = plan.coverageThrough;
+      reminderCoverageReason = plan.coverageReason;
+      lastLowStockAlertCount = await _reminderService.reconcileLowStockAlerts(
+        supplements: supplements,
+        stockLevels: stockLevels,
+      );
+      reminderStatusMessage = switch (reminderPermissionStatus) {
+        ReminderPermissionStatus.granted => null,
+        ReminderPermissionStatus.denied =>
+          'Notification permission is not granted.',
+        ReminderPermissionStatus.unsupported =>
+          'Dose reminders are currently available on Android only.',
+        ReminderPermissionStatus.unknown => 'Notification status is unknown.',
+      };
+    } on Object catch (error) {
+      reminderPermissionStatus = ReminderPermissionStatus.unknown;
+      reminderStatusMessage = 'Could not synchronize dose reminders: $error';
+    }
+  }
+
+  Future<void> _reconcileStockAlerts() async {
+    try {
+      lastLowStockAlertCount = await _reminderService.reconcileLowStockAlerts(
+        supplements: supplements,
+        stockLevels: stockLevels,
+      );
+    } on Object catch (error) {
+      reminderStatusMessage = 'Could not synchronize low-stock alerts: $error';
+    }
+  }
+
+  double? _stockUnitsForDose(
+    Supplement supplement,
+    double dose,
+    String intakeUnit,
+  ) {
+    String normalized(String value) {
+      var result = value.trim().toLowerCase();
+      if (result.endsWith('s') && result.length > 1) {
+        result = result.substring(0, result.length - 1);
+      }
+      const discrete = {
+        'unit',
+        'capsule',
+        'tablet',
+        'softgel',
+        'scoop',
+        'drop',
+        'packet',
+      };
+      return discrete.contains(result) ? 'unit' : result;
+    }
+
+    final stockUnit = normalized(supplement.stockUnit);
+    final doseUnit = normalized(intakeUnit);
+    return stockUnit == doseUnit ? dose : null;
   }
 
   Future<T> _withBusy<T>(Future<T> Function() action) async {

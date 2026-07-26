@@ -4,8 +4,56 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
 import '../app/app_controller.dart';
+import '../app/app_localizations.dart';
+import '../biomarkers/biomarker_status_service.dart';
+import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
+import 'common.dart';
 import 'dialogs.dart';
+import 'reference_range_tools.dart';
+
+String _detailText(BuildContext context, String english, String german) =>
+    AppLocalizations.of(context).pick(english, german);
+
+String _detailStatusLabel(BuildContext context, BiomarkerStatus status) {
+  final german = switch (status.label) {
+    'Never measured' => 'Noch nie gemessen',
+    'Unavailable' => 'Nicht verfügbar',
+    'Below personal target' => 'Unter persönlichem Zielbereich',
+    'Above personal target' => 'Über persönlichem Zielbereich',
+    'In personal target' => 'Im persönlichen Zielbereich',
+    'In stored optimal band' => 'Im gespeicherten Optimalbereich',
+    'Below stored reference' => 'Unter gespeichertem Referenzbereich',
+    'Above stored reference' => 'Über gespeichertem Referenzbereich',
+    'Within stored reference' => 'Im gespeicherten Referenzbereich',
+    'Below stored optimal band' => 'Unter gespeichertem Optimalbereich',
+    'Above stored optimal band' => 'Über gespeichertem Optimalbereich',
+    'Below lab range' => 'Unter Laborbereich',
+    'Above lab range' => 'Über Laborbereich',
+    'Within lab range' => 'Im Laborbereich',
+    _ => status.label,
+  };
+  return _detailText(context, status.label, german);
+}
+
+String _detailStatusDetail(BuildContext context, BiomarkerStatus status) {
+  final german = status.detail
+      .replaceAll('No recorded result', 'Kein Ergebnis gespeichert')
+      .replaceAll(
+        'The reported value or unit cannot be evaluated safely',
+        'Der angegebene Wert oder die Einheit kann nicht sicher ausgewertet werden',
+      )
+      .replaceAll(
+        'No usable personal target, stored reference, or lab range',
+        'Kein verwendbarer persönlicher Ziel-, Referenz- oder Laborbereich',
+      )
+      .replaceAll('Personal target:', 'Persönlicher Zielbereich:')
+      .replaceAll('Borderline:', 'Grenzbereich:')
+      .replaceAll('Stored reference:', 'Gespeicherte Referenz:')
+      .replaceAll('Stored optimal:', 'Gespeicherter Optimalbereich:')
+      .replaceAll('Lab-reported range:', 'Vom Labor angegebener Bereich:');
+  return _detailText(context, status.detail, german);
+}
 
 Future<void> showBiomarkerDetail(
   BuildContext context,
@@ -29,14 +77,114 @@ class _BiomarkerDetail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final profile = controller.activeProfile!;
+    final statusService = BiomarkerStatusService();
+    final unitConversions = UnitConversionService();
     final values =
         controller.measurements
             .where((item) => item.biomarkerId == biomarker.id)
             .toList()
           ..sort((a, b) => a.takenAt.compareTo(b.takenAt));
-    final daily = _dailyAverages(values);
+    Measurement? trendAnchor;
+    for (final value in values.reversed) {
+      if (value.canonicalValue?.isFinite == true &&
+          value.canonicalUnit?.trim().isNotEmpty == true) {
+        trendAnchor = value;
+        break;
+      }
+    }
+    final trendUnit = switch (trendAnchor) {
+      final anchor? => unitConversions.normalizeUnit(
+        anchor.canonicalUnit ?? '',
+      ),
+      null => null,
+    };
+    final comparable = trendUnit == null
+        ? <Measurement>[]
+        : values
+              .where((item) {
+                final canonicalUnit = item.canonicalUnit?.trim();
+                return item.canonicalValue?.isFinite == true &&
+                    canonicalUnit != null &&
+                    canonicalUnit.isNotEmpty &&
+                    unitConversions.normalizeUnit(canonicalUnit) == trendUnit;
+              })
+              .toList(growable: false);
+    final daily = _dailyAverages(comparable);
     final latest = values.isEmpty ? null : values.last;
-    final previous = values.length < 2 ? null : values[values.length - 2];
+    final trendLatest = comparable.isEmpty ? null : comparable.last;
+    final previousTrend = comparable.length < 2
+        ? null
+        : comparable[comparable.length - 2];
+    final excludedFromTrend = values.length - comparable.length;
+    final matchingTargets =
+        controller.profileTargets
+            .where(
+              (candidate) =>
+                  !candidate.deleted &&
+                  candidate.profileId == profile.id &&
+                  candidate.biomarkerId == biomarker.id,
+            )
+            .toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final target = matchingTargets.isEmpty ? null : matchingTargets.first;
+    final ranges = controller.biomarkerRanges
+        .where((item) => item.biomarkerId == biomarker.id)
+        .toList(growable: false);
+    final latestStatus = statusService.evaluate(
+      biomarker: biomarker,
+      measurement: latest,
+      profile: profile,
+      targets: controller.profileTargets,
+      referenceRanges: controller.biomarkerRanges,
+      now: now,
+    );
+    final trendBand = trendUnit == null
+        ? null
+        : statusService.convertUsedBand(
+            status: latestStatus,
+            biomarker: biomarker,
+            toUnit: trendUnit,
+          );
+    final hasComparisonBounds =
+        latestStatus.usedLow != null || latestStatus.usedHigh != null;
+    final comparisonLabel = switch (latestStatus.source) {
+      BiomarkerStatusSource.personalTarget => _detailText(
+        context,
+        'Personal target',
+        'Persönliches Ziel',
+      ),
+      BiomarkerStatusSource.storedReferenceRange =>
+        latestStatus.kind == BiomarkerStatusKind.inStoredOptimal
+            ? _detailText(
+                context,
+                'Stored optimal',
+                'Gespeicherter Optimalbereich',
+              )
+            : _detailText(context, 'Stored range', 'Gespeicherter Bereich'),
+      BiomarkerStatusSource.labReportedRange => _detailText(
+        context,
+        'Lab range',
+        'Laborbereich',
+      ),
+      BiomarkerStatusSource.none => _detailText(
+        context,
+        'Comparison range unavailable',
+        'Vergleichsbereich nicht verfügbar',
+      ),
+    };
+    final comparisonValue = hasComparisonBounds
+        ? '${latestStatus.usedLow ?? '…'}–${latestStatus.usedHigh ?? '…'}'
+        : '—';
+    final comparisonDetail =
+        hasComparisonBounds && latestStatus.unit?.trim().isNotEmpty == true
+        ? latestStatus.unit!
+        : _detailText(
+            context,
+            'No usable comparison bounds',
+            'Keine verwendbaren Vergleichsgrenzen',
+          );
     return SafeArea(
       top: false,
       child: ListView(
@@ -57,7 +205,12 @@ class _BiomarkerDetail extends StatelessWidget {
                         if (biomarker.category.isNotEmpty) biomarker.category,
                         if (biomarker.defaultUnit.isNotEmpty)
                           biomarker.defaultUnit,
-                        if (biomarker.isTemporary) 'Temporary mapping',
+                        if (biomarker.isTemporary)
+                          _detailText(
+                            context,
+                            'Temporary mapping',
+                            'Temporäre Zuordnung',
+                          ),
                       ].join(' · '),
                     ),
                   ],
@@ -67,111 +220,486 @@ class _BiomarkerDetail extends StatelessWidget {
                 onPressed: () =>
                     showAddMeasurementDialog(context, controller, biomarker),
                 icon: const Icon(Icons.add),
-                label: const Text('Result'),
+                label: Text(_detailText(context, 'Result', 'Ergebnis')),
+              ),
+              PopupMenuButton<String>(
+                tooltip: _detailText(
+                  context,
+                  'Biomarker actions',
+                  'Biomarkeraktionen',
+                ),
+                onSelected: (value) async {
+                  if (value == 'edit') {
+                    await showAddBiomarkerDialog(
+                      context,
+                      controller,
+                      existing: biomarker,
+                    );
+                  } else if (value == 'target') {
+                    await showProfileTargetDialog(
+                      context,
+                      controller,
+                      biomarker,
+                      existing: target,
+                    );
+                  } else if (value == 'delete_target') {
+                    final targetToDelete = target;
+                    if (targetToDelete != null) {
+                      await controller.deleteProfileTarget(targetToDelete);
+                    }
+                  } else if (value == 'delete') {
+                    await controller.deleteBiomarker(biomarker);
+                    if (context.mounted) Navigator.pop(context);
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'edit',
+                    child: Text(
+                      _detailText(context, 'Edit test', 'Test bearbeiten'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'target',
+                    child: Text(
+                      target == null
+                          ? _detailText(context, 'Set target', 'Ziel festlegen')
+                          : _detailText(
+                              context,
+                              'Edit target',
+                              'Ziel bearbeiten',
+                            ),
+                    ),
+                  ),
+                  if (target != null)
+                    PopupMenuItem(
+                      value: 'delete_target',
+                      child: Text(
+                        _detailText(
+                          context,
+                          'Remove personal target',
+                          'Persönliches Ziel entfernen',
+                        ),
+                      ),
+                    ),
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Text(
+                      _detailText(context, 'Delete test', 'Test löschen'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
+          if (excludedFromTrend > 0)
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
+                leading: const Icon(Icons.warning_amber_outlined),
+                title: Text(
+                  trendUnit == null
+                      ? _detailText(
+                          context,
+                          '$excludedFromTrend result(s) excluded from trends',
+                          '$excludedFromTrend Ergebnis(se) aus Trends ausgeschlossen',
+                        )
+                      : _detailText(
+                          context,
+                          '$excludedFromTrend result(s) excluded from the $trendUnit trend',
+                          '$excludedFromTrend Ergebnis(se) aus dem $trendUnit-Trend ausgeschlossen',
+                        ),
+                ),
+                subtitle: Text(
+                  trendUnit == null
+                      ? _detailText(
+                          context,
+                          'No result has both a finite canonical value and a usable canonical unit.',
+                          'Kein Ergebnis besitzt sowohl einen endlichen kanonischen Wert als auch eine verwendbare kanonische Einheit.',
+                        )
+                      : _detailText(
+                          context,
+                          'Trend and change use only finite canonical values in $trendUnit. Results without one, or in another canonical unit, remain in history.',
+                          'Trend und Änderung verwenden nur endliche kanonische Werte in $trendUnit. Andere Ergebnisse bleiben im Verlauf erhalten.',
+                        ),
+                ),
+              ),
+            ),
           const SizedBox(height: 18),
           Row(
             children: [
               Expanded(
                 child: _Stat(
-                  label: 'Latest',
-                  value: latest == null
-                      ? '—'
-                      : '${latest.value} ${latest.unit}',
+                  label: _detailText(context, 'Latest', 'Neuester Wert'),
+                  value: latest == null ? '—' : _displayValue(latest),
                   detail: latest == null
-                      ? 'No result'
-                      : DateFormat.yMMMd().format(latest.takenAt),
+                      ? _detailText(context, 'No result', 'Kein Ergebnis')
+                      : AppLocalizations.of(
+                          context,
+                        ).formatHistoryDate(latest.takenAt),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: _Stat(
-                  label: 'Change',
-                  value: latest == null || previous == null
+                  label: _detailText(context, 'Change', 'Änderung'),
+                  value: trendLatest == null
+                      ? _detailText(
+                          context,
+                          'Not comparable',
+                          'Nicht vergleichbar',
+                        )
+                      : previousTrend == null
                       ? '—'
-                      : _signed(latest.value - previous.value),
-                  detail: previous == null ? 'Need 2 results' : 'vs previous',
+                      : _signed(
+                          trendLatest.canonicalValue! -
+                              previousTrend.canonicalValue!,
+                        ),
+                  detail: trendUnit == null
+                      ? _detailText(
+                          context,
+                          'No usable canonical unit',
+                          'Keine verwendbare kanonische Einheit',
+                        )
+                      : previousTrend == null
+                      ? _detailText(
+                          context,
+                          'Need 2 results · $trendUnit',
+                          '2 Ergebnisse nötig · $trendUnit',
+                        )
+                      : trendUnit,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: _Stat(
-                  label: 'Lab range',
-                  value: latest?.labRefLow == null && latest?.labRefHigh == null
-                      ? '—'
-                      : '${latest?.labRefLow ?? '…'}–${latest?.labRefHigh ?? '…'}',
-                  detail: latest?.unit ?? biomarker.defaultUnit,
+                  label: comparisonLabel,
+                  value: comparisonValue,
+                  detail: comparisonDetail,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 18),
           Card(
+            child: Semantics(
+              label:
+                  '${_detailText(context, 'Latest status', 'Neuester Status')}: '
+                  '${_detailStatusLabel(context, latestStatus)}. '
+                  '${_detailStatusDetail(context, latestStatus)}',
+              child: ListTile(
+                leading: Icon(_statusIcon(latestStatus)),
+                title: Text(_detailStatusLabel(context, latestStatus)),
+                subtitle: Text(_detailStatusDetail(context, latestStatus)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Card(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 18, 12, 10),
-              child: values.length < 2
-                  ? const SizedBox(
+              child: daily.length < 2
+                  ? SizedBox(
                       height: 180,
                       child: Center(
                         child: Text(
-                          'Add at least two results to show a trend.',
+                          trendUnit == null
+                              ? _detailText(
+                                  context,
+                                  'No finite canonical results are available for a trend.',
+                                  'Für einen Trend sind keine endlichen kanonischen Ergebnisse verfügbar.',
+                                )
+                              : comparable.length > 1
+                              ? _detailText(
+                                  context,
+                                  'Comparable results in $trendUnit fall on one calendar day. Add a result on another day to show a trend.',
+                                  'Vergleichbare Ergebnisse in $trendUnit liegen am selben Kalendertag. Füge an einem anderen Tag ein Ergebnis hinzu.',
+                                )
+                              : _detailText(
+                                  context,
+                                  'Add at least two comparable results in $trendUnit to show a trend.',
+                                  'Füge mindestens zwei vergleichbare Ergebnisse in $trendUnit hinzu.',
+                                ),
+                          textAlign: TextAlign.center,
                         ),
                       ),
                     )
-                  : SizedBox(
-                      height: 220,
-                      child: CustomPaint(
-                        painter: _TrendPainter(
-                          values: daily,
-                          lineColor: Theme.of(context).colorScheme.primary,
-                          gridColor: Theme.of(
-                            context,
-                          ).colorScheme.outlineVariant,
-                          textColor: Theme.of(
-                            context,
-                          ).colorScheme.onSurfaceVariant,
-                          refLow: latest?.labRefLow,
-                          refHigh: latest?.labRefHigh,
-                          bandColor: Theme.of(
-                            context,
-                          ).colorScheme.secondaryContainer,
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4, bottom: 8),
+                          child: Text(
+                            _detailText(
+                              context,
+                              'Trend unit: $trendUnit',
+                              'Trendeinheit: $trendUnit',
+                            ),
+                            style: Theme.of(context).textTheme.labelMedium,
+                          ),
                         ),
-                        size: Size.infinite,
-                      ),
+                        SizedBox(
+                          height: 220,
+                          child: CustomPaint(
+                            painter: _TrendPainter(
+                              values: daily,
+                              lineColor: Theme.of(context).colorScheme.primary,
+                              gridColor: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
+                              textColor: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                              refLow: trendBand?.low,
+                              refHigh: trendBand?.high,
+                              bandColor: Theme.of(
+                                context,
+                              ).colorScheme.secondaryContainer,
+                            ),
+                            size: Size.infinite,
+                          ),
+                        ),
+                      ],
                     ),
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 18, 4, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _detailText(
+                      context,
+                      'Ranges & targets',
+                      'Bereiche und Ziele',
+                    ),
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: _detailText(
+                    context,
+                    'Import or export ranges',
+                    'Bereiche importieren oder exportieren',
+                  ),
+                  onPressed: () => showReferenceRangeExchange(
+                    context,
+                    controller,
+                    biomarker,
+                  ),
+                  icon: const Icon(Icons.import_export_outlined),
+                ),
+                IconButton(
+                  tooltip: _detailText(
+                    context,
+                    'Add reference range',
+                    'Referenzbereich hinzufügen',
+                  ),
+                  onPressed: () =>
+                      showReferenceRangeEditor(context, controller, biomarker),
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+            ),
+          ),
+          if (target != null)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.person_outline),
+                title: Text(
+                  '${_detailText(context, 'Personal', 'Persönlich')} · '
+                  '${target.low ?? '…'}–${target.high ?? '…'} ${target.unit}',
+                ),
+                subtitle: Text(
+                  [
+                    target.source,
+                    if (target.notes.isNotEmpty) target.notes,
+                  ].join(' · '),
+                ),
+                onTap: () => showProfileTargetDialog(
+                  context,
+                  controller,
+                  biomarker,
+                  existing: target,
+                ),
+              ),
+            ),
+          for (final range in ranges)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.menu_book_outlined),
+                title: Text(
+                  '${range.rangeType} · ${range.low ?? '…'}–${range.high ?? '…'} ${range.unit}',
+                ),
+                subtitle: Text(
+                  [
+                    if (range.evidenceLabel?.isNotEmpty == true)
+                      range.evidenceLabel!,
+                    if (range.optimalLow != null || range.optimalHigh != null)
+                      '${_detailText(context, 'Optimal', 'Optimal')} '
+                          '${range.optimalLow ?? '…'}–${range.optimalHigh ?? '…'}',
+                    if (range.notes.isNotEmpty) range.notes,
+                  ].join(' · '),
+                ),
+                trailing: PopupMenuButton<String>(
+                  tooltip: _detailText(
+                    context,
+                    'Reference range actions',
+                    'Aktionen für Referenzbereich',
+                  ),
+                  onSelected: (action) async {
+                    if (action == 'edit') {
+                      await showReferenceRangeEditor(
+                        context,
+                        controller,
+                        biomarker,
+                        existing: range,
+                      );
+                    } else if (action == 'delete') {
+                      final confirmed = await showConfirmAction(
+                        context,
+                        title: _detailText(
+                          context,
+                          'Delete this reference range?',
+                          'Diesen Referenzbereich löschen?',
+                        ),
+                        message: _detailText(
+                          context,
+                          'The range is kept as a sync tombstone.',
+                          'Der Bereich bleibt als Synchronisierungs-Löschmarker erhalten.',
+                        ),
+                        confirmLabel: _detailText(context, 'Delete', 'Löschen'),
+                        destructive: true,
+                      );
+                      if (confirmed) {
+                        await controller.repository.softDelete(
+                          'biomarker_ranges',
+                          range.id,
+                        );
+                        await controller.refreshActiveData();
+                      }
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Text(_detailText(context, 'Edit', 'Bearbeiten')),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text(_detailText(context, 'Delete', 'Löschen')),
+                    ),
+                  ],
+                ),
+                onTap: () => showReferenceRangeEditor(
+                  context,
+                  controller,
+                  biomarker,
+                  existing: range,
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 18, 4, 6),
             child: Text(
-              'History',
+              _detailText(context, 'History', 'Verlauf'),
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
           if (values.isEmpty)
-            const Card(child: ListTile(title: Text('No recorded results')))
+            Card(
+              child: ListTile(
+                title: Text(
+                  _detailText(
+                    context,
+                    'No recorded results',
+                    'Keine gespeicherten Ergebnisse',
+                  ),
+                ),
+              ),
+            )
           else
             Card(
               clipBehavior: Clip.antiAlias,
               child: Column(
                 children: [
                   for (final value in values.reversed)
-                    ListTile(
-                      title: Text('${value.value} ${value.unit}'),
-                      subtitle: Text(
-                        [
-                          DateFormat('dd.MM.yyyy').format(value.takenAt),
-                          if (value.labRefLow != null ||
-                              value.labRefHigh != null)
-                            'Lab ref ${value.labRefLow ?? '…'}–${value.labRefHigh ?? '…'}',
-                          if (value.extractionConfidence != null)
-                            'Parse ${(value.extractionConfidence! * 100).round()}%',
-                          if (value.notes.isNotEmpty) value.notes,
-                        ].join(' · '),
-                      ),
-                      trailing: _RangeStatus(measurement: value),
+                    Builder(
+                      builder: (context) {
+                        final status = statusService.evaluate(
+                          biomarker: biomarker,
+                          measurement: value,
+                          profile: profile,
+                          targets: controller.profileTargets,
+                          referenceRanges: controller.biomarkerRanges,
+                          now: now,
+                        );
+                        return ListTile(
+                          title: Text(_displayValue(value)),
+                          subtitle: Text(
+                            [
+                              DateFormat('dd.MM.yyyy').format(value.takenAt),
+                              if (value.labRefLow != null ||
+                                  value.labRefHigh != null)
+                                '${_detailText(context, 'Lab ref', 'Laborreferenz')} '
+                                    '${value.labRefLow ?? '…'}–${value.labRefHigh ?? '…'}',
+                              if (value.extractionConfidence != null)
+                                '${_detailText(context, 'Parse', 'Extraktion')} '
+                                    '${(value.extractionConfidence! * 100).round()}%',
+                              if (value.conversionStatus == 'unsupported')
+                                _detailText(
+                                  context,
+                                  'Unit conversion unavailable',
+                                  'Einheitenumrechnung nicht verfügbar',
+                                ),
+                              _detailStatusLabel(context, status),
+                              if (value.notes.isNotEmpty) value.notes,
+                            ].join(' · '),
+                          ),
+                          trailing: PopupMenuButton<String>(
+                            tooltip: _detailText(
+                              context,
+                              'Result actions',
+                              'Ergebnisaktionen',
+                            ),
+                            onSelected: (action) async {
+                              if (action == 'edit') {
+                                await showAddMeasurementDialog(
+                                  context,
+                                  controller,
+                                  biomarker,
+                                  existing: value,
+                                );
+                              } else if (action == 'delete') {
+                                await controller.deleteMeasurement(value);
+                              }
+                            },
+                            itemBuilder: (context) => [
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Text(
+                                  _detailText(context, 'Edit', 'Bearbeiten'),
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text(
+                                  _detailText(context, 'Delete', 'Löschen'),
+                                ),
+                              ),
+                            ],
+                            child: _StatusIndicator(status: status),
+                          ),
+                          onTap: () => showAddMeasurementDialog(
+                            context,
+                            controller,
+                            biomarker,
+                            existing: value,
+                          ),
+                        );
+                      },
                     ),
                 ],
               ),
@@ -193,7 +721,7 @@ class _BiomarkerDetail extends StatelessWidget {
         value.takenAt.month,
         value.takenAt.day,
       );
-      grouped.putIfAbsent(day, () => []).add(value.value);
+      grouped.putIfAbsent(day, () => []).add(value.canonicalValue!);
     }
     return grouped.entries
         .map(
@@ -208,6 +736,16 @@ class _BiomarkerDetail extends StatelessWidget {
 
   String _signed(double value) =>
       '${value >= 0 ? '+' : ''}${value.toStringAsFixed(2)}';
+
+  String _displayValue(Measurement value) {
+    final raw = '${value.value} ${value.unit}';
+    if (value.conversionStatus != 'converted' ||
+        value.canonicalValue == null ||
+        value.canonicalUnit == null) {
+      return raw;
+    }
+    return '$raw · ${value.canonicalValue!.toStringAsPrecision(5)} ${value.canonicalUnit}';
+  }
 }
 
 class _Stat extends StatelessWidget {
@@ -244,25 +782,30 @@ class _Stat extends StatelessWidget {
   );
 }
 
-class _RangeStatus extends StatelessWidget {
-  const _RangeStatus({required this.measurement});
+class _StatusIndicator extends StatelessWidget {
+  const _StatusIndicator({required this.status});
 
-  final Measurement measurement;
+  final BiomarkerStatus status;
 
   @override
-  Widget build(BuildContext context) {
-    final low = measurement.labRefLow;
-    final high = measurement.labRefHigh;
-    if (low == null && high == null) return const SizedBox.shrink();
-    final inside =
-        (low == null || measurement.value >= low) &&
-        (high == null || measurement.value <= high);
-    return Icon(
-      inside ? Icons.check_circle_outline : Icons.error_outline,
-      color: inside ? Colors.green : Theme.of(context).colorScheme.error,
-    );
-  }
+  Widget build(BuildContext context) => Semantics(
+    label:
+        'Status: ${_detailStatusLabel(context, status)}. '
+        '${_detailStatusDetail(context, status)}',
+    child: Icon(_statusIcon(status), size: 18),
+  );
 }
+
+IconData _statusIcon(BiomarkerStatus status) => switch (status.kind) {
+  BiomarkerStatusKind.below => Icons.arrow_downward_outlined,
+  BiomarkerStatusKind.above => Icons.arrow_upward_outlined,
+  BiomarkerStatusKind.inPersonalTarget ||
+  BiomarkerStatusKind.inStoredOptimal => Icons.track_changes_outlined,
+  BiomarkerStatusKind.withinStoredReference ||
+  BiomarkerStatusKind.withinLabRange => Icons.check_circle_outline,
+  BiomarkerStatusKind.neverMeasured => Icons.remove_circle_outline,
+  BiomarkerStatusKind.unavailable => Icons.help_outline,
+};
 
 class _DailyValue {
   const _DailyValue(this.date, this.value);

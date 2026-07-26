@@ -54,6 +54,13 @@ class LabPlanExportService {
       'schema': 'superhealth.lab_plan_export',
       'schema_version': 1,
       'plan': plan.toMap(),
+      'verification': {
+        'status': plan.status,
+        'summary': plan.verificationSummary,
+        'warnings': plan.verificationWarnings,
+        'citations': plan.verificationCitations,
+        'verified_at': plan.verifiedAt?.toUtc().toIso8601String(),
+      },
       'tiers_are_cumulative': true,
       'tiers': tiers,
     };
@@ -91,6 +98,11 @@ class LabPlanExportService {
       ['Cumulative tier', 'Known total EUR', 'Missing prices'],
       for (final tier in LabTier.values)
         [tier.name, plan.knownTotal(tier), plan.missingPriceCount(tier)],
+      [],
+      ['Verification status', plan.status],
+      ['Independent review', plan.verificationSummary],
+      ['Review warnings', plan.verificationWarnings.join(' | ')],
+      ['Sources', plan.verificationCitations.join(' | ')],
     ];
     return ExportedFile(
       fileName: '${_baseName(plan)}.csv',
@@ -138,6 +150,43 @@ class LabPlanExportService {
               style: const pw.TextStyle(fontSize: 9),
             ),
           ),
+          if (plan.status == 'verified') ...[
+            pw.SizedBox(height: 10),
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(8),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.green50,
+                border: pw.Border.all(color: PdfColors.green300),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    'Independent AI verification',
+                    style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.Text(
+                    plan.verificationSummary,
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                  for (final warning in plan.verificationWarnings)
+                    pw.Text(
+                      'Warning: $warning',
+                      style: const pw.TextStyle(fontSize: 8),
+                    ),
+                  for (final citation in plan.verificationCitations)
+                    pw.Text(
+                      citation,
+                      style: const pw.TextStyle(
+                        fontSize: 7,
+                        color: PdfColors.blue700,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
           pw.SizedBox(height: 18),
           for (final tier in LabTier.values) ...[
             _tierHeader(plan, tier),

@@ -23,6 +23,7 @@ class ParsedMeasurementCandidate {
     required this.value,
     required this.unit,
     required this.confidence,
+    this.hasExtractionConfidence = true,
     this.biomarkerId,
     this.refLow,
     this.refHigh,
@@ -40,22 +41,38 @@ class ParsedMeasurementCandidate {
   final int? page;
   final String? rowText;
   final double confidence;
+  final bool hasExtractionConfidence;
   final String notes;
 
   ParsedMeasurementCandidate copyWith({
     String? biomarkerId,
     bool clearMapping = false,
+    String? reportedName,
+    double? value,
+    String? unit,
+    double? refLow,
+    bool clearRefLow = false,
+    double? refHigh,
+    bool clearRefHigh = false,
+    int? page,
+    bool clearPage = false,
+    String? rowText,
+    double? confidence,
+    bool? hasExtractionConfidence,
+    String? notes,
   }) => ParsedMeasurementCandidate(
     biomarkerId: clearMapping ? null : biomarkerId ?? this.biomarkerId,
-    reportedName: reportedName,
-    value: value,
-    unit: unit,
-    refLow: refLow,
-    refHigh: refHigh,
-    page: page,
-    rowText: rowText,
-    confidence: confidence,
-    notes: notes,
+    reportedName: reportedName ?? this.reportedName,
+    value: value ?? this.value,
+    unit: unit ?? this.unit,
+    refLow: clearRefLow ? null : refLow ?? this.refLow,
+    refHigh: clearRefHigh ? null : refHigh ?? this.refHigh,
+    page: clearPage ? null : page ?? this.page,
+    rowText: rowText ?? this.rowText,
+    confidence: confidence ?? this.confidence,
+    hasExtractionConfidence:
+        hasExtractionConfidence ?? this.hasExtractionConfidence,
+    notes: notes ?? this.notes,
   );
 }
 
@@ -246,9 +263,23 @@ class DocumentParsingService {
     };
     final newBiomarkers = <Biomarker>[];
     final now = DateTime.now();
+    final earliestReportDate = DateTime(1900);
+    final latestReportDate = DateTime(now.year, now.month, now.day);
+    final normalizedReportDate = DateTime(
+      reportDate.year,
+      reportDate.month,
+      reportDate.day,
+    );
+    if (normalizedReportDate.isBefore(earliestReportDate) ||
+        normalizedReportDate.isAfter(latestReportDate)) {
+      throw ArgumentError(
+        'The report date must be between 1900-01-01 and today.',
+      );
+    }
     final documentId = _repository.newId();
     final measurements = <Measurement>[];
     for (final candidate in reviewedMeasurements) {
+      _validateReviewedCandidate(candidate, byId);
       Biomarker? biomarker = byId[candidate.biomarkerId];
       if (biomarker == null) {
         var canonical = HealthRepository.normalizeName(candidate.reportedName);
@@ -277,16 +308,19 @@ class DocumentParsingService {
           profileId: report.profileId,
           biomarkerId: biomarker.id,
           documentId: documentId,
-          takenAt: reportDate,
+          takenAt: normalizedReportDate,
           value: candidate.value,
           unit: candidate.unit,
           labRefLow: candidate.refLow,
           labRefHigh: candidate.refHigh,
           page: candidate.page,
           rowText: candidate.rowText,
-          extractionConfidence: candidate.confidence,
+          extractionConfidence: candidate.hasExtractionConfidence
+              ? candidate.confidence
+              : null,
           notes: candidate.notes,
-          flags: candidate.confidence < 0.85
+          flags:
+              candidate.hasExtractionConfidence && candidate.confidence < 0.85
               ? const ['low_confidence']
               : const [],
           createdAt: now,
@@ -325,7 +359,7 @@ class DocumentParsingService {
       sha256: report.sha256,
       localPath: localFile.path,
       oneDriveItemId: oneDriveItemId,
-      documentDate: reportDate,
+      documentDate: normalizedReportDate,
       parsedAt: now,
       parserProvider: report.provider.name,
       parserModel: report.model,
@@ -347,6 +381,57 @@ class DocumentParsingService {
       rethrow;
     }
     return DocumentSaveResult(document: document, cloudWarning: cloudWarning);
+  }
+
+  void _validateReviewedCandidate(
+    ParsedMeasurementCandidate candidate,
+    Map<String, Biomarker> biomarkersById,
+  ) {
+    if (candidate.reportedName.trim().isEmpty) {
+      throw ArgumentError('Every measurement needs a reported name.');
+    }
+    if (candidate.unit.trim().isEmpty) {
+      throw ArgumentError(
+        '${candidate.reportedName}: the reported unit is required.',
+      );
+    }
+    if (!candidate.value.isFinite) {
+      throw ArgumentError(
+        '${candidate.reportedName}: the value must be a finite number.',
+      );
+    }
+    if (candidate.refLow?.isFinite == false ||
+        candidate.refHigh?.isFinite == false) {
+      throw ArgumentError(
+        '${candidate.reportedName}: reference bounds must be finite numbers.',
+      );
+    }
+    if (candidate.refLow != null &&
+        candidate.refHigh != null &&
+        candidate.refLow! > candidate.refHigh!) {
+      throw ArgumentError(
+        '${candidate.reportedName}: the lower reference bound exceeds the upper bound.',
+      );
+    }
+    if (candidate.page != null && candidate.page! < 1) {
+      throw ArgumentError(
+        '${candidate.reportedName}: the PDF page must be at least 1.',
+      );
+    }
+    if (candidate.hasExtractionConfidence &&
+        (!candidate.confidence.isFinite ||
+            candidate.confidence < 0 ||
+            candidate.confidence > 1)) {
+      throw ArgumentError(
+        '${candidate.reportedName}: extraction confidence must be between 0 and 1.',
+      );
+    }
+    final biomarkerId = candidate.biomarkerId;
+    if (biomarkerId != null && !biomarkersById.containsKey(biomarkerId)) {
+      throw ArgumentError(
+        '${candidate.reportedName}: the selected biomarker no longer exists.',
+      );
+    }
   }
 
   Future<String> _parseOpenAi(
@@ -611,20 +696,43 @@ class DocumentParsingService {
           byId[requestedId] ??
           byCanonical[HealthRepository.normalizeName(requestedId ?? '')] ??
           byCanonical[HealthRepository.normalizeName(reportedName)];
-      final confidence = (_number(row['confidence']) ?? 0)
-          .clamp(0, 1)
-          .toDouble();
+      final parsedConfidence = _number(row['confidence']);
+      final hasExtractionConfidence =
+          parsedConfidence != null &&
+          parsedConfidence >= 0 &&
+          parsedConfidence <= 1;
+      if (row.containsKey('confidence') && !hasExtractionConfidence) {
+        warnings.add(
+          'Ignored an invalid extraction confidence for $reportedName.',
+        );
+      }
+      final confidence = hasExtractionConfidence ? parsedConfidence : 0.0;
+      var refLow = _optionalNumber(row, 'ref_low', reportedName, warnings);
+      var refHigh = _optionalNumber(row, 'ref_high', reportedName, warnings);
+      if (refLow != null && refHigh != null && refLow > refHigh) {
+        refLow = null;
+        refHigh = null;
+        warnings.add(
+          'Ignored unordered lab reference bounds for $reportedName.',
+        );
+      }
+      var page = _optionalNumber(row, 'page', reportedName, warnings)?.toInt();
+      if (page != null && page < 1) {
+        page = null;
+        warnings.add('Ignored a measurement page below 1 for $reportedName.');
+      }
       candidates.add(
         ParsedMeasurementCandidate(
           biomarkerId: mapped?.id,
           reportedName: reportedName,
           value: parsedValue,
           unit: unit,
-          refLow: _number(row['ref_low']),
-          refHigh: _number(row['ref_high']),
-          page: _number(row['page'])?.toInt(),
+          refLow: refLow,
+          refHigh: refHigh,
+          page: page,
           rowText: row['row_text']?.toString(),
           confidence: confidence,
+          hasExtractionConfidence: hasExtractionConfidence,
           notes: row['notes']?.toString() ?? '',
         ),
       );
@@ -671,9 +779,26 @@ class DocumentParsingService {
       : <String>[];
 
   double? _number(Object? value) {
-    if (value is num) return value.toDouble();
-    if (value == null) return null;
-    return double.tryParse(value.toString().trim().replaceAll(',', '.'));
+    final parsed = value is num
+        ? value.toDouble()
+        : value == null
+        ? null
+        : double.tryParse(value.toString().trim().replaceAll(',', '.'));
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
+
+  double? _optionalNumber(
+    Map<String, Object?> row,
+    String key,
+    String reportedName,
+    List<String> warnings,
+  ) {
+    if (!row.containsKey(key)) return null;
+    final value = _number(row[key]);
+    if (value == null && row[key] != null) {
+      warnings.add('Ignored an invalid $key for $reportedName.');
+    }
+    return value;
   }
 
   bool _looksLikePdf(Uint8List bytes) =>

@@ -50,3 +50,4 @@ the version tag and upload the APK.
 
 The connected ChatGPT GitHub integration cannot create Actions secrets, so this
 one security-sensitive setup must be run by the repository owner.
+
