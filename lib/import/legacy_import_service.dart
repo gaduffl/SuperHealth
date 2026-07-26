@@ -232,6 +232,28 @@ class LegacyImportService {
         bundle.sourceKinds.add('Supplement Manager');
         _parseSupplementPayload(bundle, root);
       }
+      if (baseName.contains('biomarker')) {
+        final profilesNode = root['profiles'];
+        final profileRows =
+            profilesNode is Map &&
+                (profilesNode.containsKey('display_name') ||
+                    profilesNode.containsKey('displayName') ||
+                    profilesNode.containsKey('name'))
+            ? [profilesNode]
+            : _maps(profilesNode);
+        for (final item in profileRows) {
+          _parseProfile(bundle, Map<String, dynamic>.from(item));
+        }
+        if (root['profile'] is Map) {
+          _parseProfile(
+            bundle,
+            Map<String, dynamic>.from(root['profile'] as Map),
+          );
+        }
+        if (profileRows.isNotEmpty || root['profile'] is Map) {
+          bundle.sourceKinds.add('Biomarkers');
+        }
+      }
       if (root['rows'] is List) {
         _parseNamedList(bundle, baseName, root['rows'] as List);
       }
@@ -337,18 +359,38 @@ class LegacyImportService {
     DateTime? dateOfBirth = DateTime.tryParse(
       (row['date_of_birth'] ?? row['dob'] ?? '').toString(),
     );
-    if (dateOfBirth == null && row['birthYear'] is num) {
-      dateOfBirth = DateTime((row['birthYear'] as num).toInt());
+    final birthYear = _integer(row['birthYear']);
+    if (dateOfBirth == null && birthYear != null) {
+      dateOfBirth = DateTime(birthYear);
     }
     final weight = row['weight_kg'] ?? row['weight'];
+    final height = row['height_cm'] ?? row['heightCm'] ?? row['height'];
+    final existing = bundle.profiles[key];
+    final importedHeight = _sensibleOptional(
+      bundle,
+      height,
+      field: 'profile height',
+      minimum: 30,
+      maximum: 300,
+    );
+    final importedWeight = _sensibleOptional(
+      bundle,
+      weight,
+      field: 'profile weight',
+      minimum: 1,
+      maximum: 1000,
+    );
     bundle.profiles[key] = _LegacyProfile(
       key: key,
       legacyId: legacyId,
       displayName: displayName,
-      dateOfBirth: dateOfBirth,
-      sex: (row['sex'] ?? row['gender'])?.toString(),
-      weightKg: weight is num ? weight.toDouble() : null,
-      notes: row['notes']?.toString() ?? '',
+      dateOfBirth: dateOfBirth ?? existing?.dateOfBirth,
+      sex: (row['sex'] ?? row['gender'])?.toString() ?? existing?.sex,
+      heightCm: importedHeight ?? existing?.heightCm,
+      weightKg: importedWeight ?? existing?.weightKg,
+      notes: (row['notes']?.toString().trim().isNotEmpty ?? false)
+          ? row['notes'].toString()
+          : existing?.notes ?? '',
     );
   }
 
@@ -368,6 +410,13 @@ class LegacyImportService {
     final canonical = HealthRepository.normalizeName(
       (row['canonical_name'] ?? row['canonicalName'] ?? displayName).toString(),
     );
+    final rawPrice = row['price_eur'] ?? row['price'];
+    final price = _nonNegativeOptional(
+      bundle,
+      rawPrice,
+      field: 'biomarker price',
+      record: displayName,
+    );
     bundle.biomarkers.add(
       _LegacyBiomarker(
         legacyId: row['id']?.toString() ?? canonical,
@@ -378,7 +427,7 @@ class LegacyImportService {
             (row['default_unit'] ?? row['unit_primary'] ?? row['unit'])
                 ?.toString() ??
             '',
-        priceEur: _double(row['price_eur'] ?? row['price']),
+        priceEur: price,
         description: (row['description'] ?? row['notes'])?.toString() ?? '',
         synonyms: _combinedStringList([
           row['synonyms'],
@@ -401,8 +450,78 @@ class LegacyImportService {
     return const [];
   }
 
-  static double? _double(Object? value) =>
-      value is num ? value.toDouble() : double.tryParse('$value');
+  static double? _double(Object? value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : value == null
+        ? null
+        : double.tryParse('$value');
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
+
+  static int? _integer(Object? value) {
+    final parsed = _double(value);
+    if (parsed == null || parsed != parsed.truncateToDouble()) return null;
+    return parsed.toInt();
+  }
+
+  static bool _isNonFiniteNumber(Object? value) {
+    if (value is num) return !value.isFinite;
+    if (value is! String) return false;
+    final parsed = double.tryParse(value.trim());
+    return parsed != null && !parsed.isFinite;
+  }
+
+  static void _warnNonFinite(
+    _LegacyBundle bundle,
+    String field, {
+    String? record,
+  }) {
+    bundle.warnings.add(
+      'Ignored non-finite $field${record == null ? '' : ' for $record'}.',
+    );
+  }
+
+  static double? _nonNegativeOptional(
+    _LegacyBundle bundle,
+    Object? raw, {
+    required String field,
+    String? record,
+  }) {
+    if (raw == null) return null;
+    final value = _double(raw);
+    if (value == null) {
+      _warnNonFinite(bundle, field, record: record);
+      return null;
+    }
+    if (value < 0) {
+      bundle.warnings.add(
+        'Ignored negative $field${record == null ? '' : ' for $record'}.',
+      );
+      return null;
+    }
+    return value;
+  }
+
+  static double? _sensibleOptional(
+    _LegacyBundle bundle,
+    Object? raw, {
+    required String field,
+    required double minimum,
+    required double maximum,
+  }) {
+    if (raw == null) return null;
+    final value = _double(raw);
+    if (value == null) {
+      _warnNonFinite(bundle, field);
+      return null;
+    }
+    if (value < minimum || value > maximum) {
+      bundle.warnings.add('Ignored $field outside $minimum..$maximum.');
+      return null;
+    }
+    return value;
+  }
 
   static List<String> _stringList(Object? value) {
     if (value is String) {
@@ -481,6 +600,25 @@ class LegacyImportService {
       final row = Map<String, dynamic>.from(raw);
       final name = row['name']?.toString().trim();
       if (name == null || name.isEmpty) continue;
+      final rawUnits = row['units_per_container'];
+      var unitsPerContainer = _integer(rawUnits);
+      if (rawUnits != null &&
+          (unitsPerContainer == null || unitsPerContainer < 0)) {
+        bundle.warnings.add('Ignored invalid units per container for $name.');
+        unitsPerContainer = null;
+      }
+      final containerCount = _nonNegativeOptional(
+        bundle,
+        row['num_containers'] ?? row['container_count'],
+        field: 'container count',
+        record: name,
+      );
+      final price = _nonNegativeOptional(
+        bundle,
+        row['price'],
+        field: 'supplement price',
+        record: name,
+      );
       for (final profileKey in bundle.supplementProfileKeys) {
         final token = '$profileKey|${_normalized(name)}';
         supplementByToken[token] = _LegacySupplement(
@@ -489,14 +627,14 @@ class LegacyImportService {
           name: name,
           brand: row['brand']?.toString() ?? '',
           form: row['form']?.toString() ?? '',
-          ingredients: _maps(
-            row['ingredients'],
-          ).map((item) => Map<String, Object?>.from(item)).toList(),
-          unitsPerContainer: (row['units_per_container'] as num?)?.toInt(),
-          containerCount: _double(
-            row['num_containers'] ?? row['container_count'],
+          ingredients: _normalizeIngredients(
+            bundle,
+            _maps(row['ingredients']),
+            record: name,
           ),
-          priceEur: _double(row['price']),
+          unitsPerContainer: unitsPerContainer,
+          containerCount: containerCount,
+          priceEur: price,
           bioavailability: row['bioavailability']?.toString() ?? '',
           lowStockAlerts: row['low_stock_alerts_enabled'] as bool? ?? true,
         );
@@ -515,8 +653,14 @@ class LegacyImportService {
           if (dayEntry.value is! Map) continue;
           final dayMap = dayEntry.value as Map;
           for (final period in const ['AM', 'PM']) {
-            final dose = _double(dayMap[period]) ?? 0;
-            if (dose <= 0) continue;
+            final rawDose = dayMap[period];
+            final dose = _double(rawDose);
+            if (rawDose != null && (dose == null || dose <= 0)) {
+              bundle.warnings.add(
+                'Skipped invalid scheduled dose for $productName.',
+              );
+            }
+            if (dose == null || dose <= 0) continue;
             final key = '$profileKey|${_normalized(productName)}|$period|$dose';
             final grouped = groupedSchedules.putIfAbsent(
               key,
@@ -550,17 +694,27 @@ class LegacyImportService {
         );
         continue;
       }
+      final rawDose = row['amount'];
+      final dose = _double(rawDose);
+      if (rawDose != null && (dose == null || dose <= 0)) {
+        bundle.warnings.add('Skipped invalid intake dose for $productName.');
+        continue;
+      }
       bundle.intakes.add(
         _LegacyIntake(
           token: '${row['id'] ?? index}|$profileKey|$productName',
           profileKey: profileKey,
           productName: productName,
           takenAt: timestamp,
-          dose: _double(row['amount']) ?? 1,
+          // Supplement Manager omitted amount for old history rows; retain its
+          // former compatibility default only when the field is absent.
+          dose: dose ?? 1,
           unit: row['unit']?.toString() ?? 'unit',
-          ingredients: _maps(
-            row['ingredientsSnapshot'],
-          ).map((item) => Map<String, Object?>.from(item)).toList(),
+          ingredients: _normalizeIngredients(
+            bundle,
+            _maps(row['ingredientsSnapshot']),
+            record: productName,
+          ),
         ),
       );
     }
@@ -590,9 +744,7 @@ class LegacyImportService {
         final tagId = '${scoreEntry.key}';
         final tag = tags[tagId];
         final name = tag?['name']?.toString() ?? tagId;
-        final score =
-            (scoreEntry.value as num?)?.toInt() ??
-            int.tryParse('${scoreEntry.value}');
+        final score = _integer(scoreEntry.value);
         if (score == null) continue;
         bundle.events.add(
           _LegacyEvent(
@@ -605,13 +757,301 @@ class LegacyImportService {
             observedAt: observedAt,
             score: score.clamp(0, 5),
             notes: row['note']?.toString() ?? '',
-            colorValue: tag?['color'] is num
-                ? (tag!['color'] as num).toInt()
-                : null,
+            colorValue: _integer(tag?['color']),
           ),
         );
       }
     }
+    _sanitizeClinicalNodes(bundle);
+  }
+
+  List<Map<String, Object?>> _normalizeIngredients(
+    _LegacyBundle bundle,
+    Iterable<Map<dynamic, dynamic>> ingredients, {
+    required String record,
+  }) {
+    final normalized = <Map<String, Object?>>[];
+    for (final raw in ingredients) {
+      final ingredient = Map<String, Object?>.from(raw);
+      if (ingredient.containsKey('amount')) {
+        final amount = _ingredientAmount(ingredient['amount']);
+        if (amount == null || amount <= 0) {
+          ingredient.remove('amount');
+          final warning = 'Ignored invalid ingredient amount for $record.';
+          if (!bundle.warnings.contains(warning)) {
+            bundle.warnings.add(warning);
+          }
+        } else {
+          ingredient['amount'] = amount;
+        }
+      }
+      normalized.add(ingredient);
+    }
+    return normalized;
+  }
+
+  static double? _ingredientAmount(Object? value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : value == null
+        ? null
+        : double.tryParse(value.toString().trim().replaceAll(',', '.'));
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
+
+  void _sanitizeClinicalNodes(_LegacyBundle bundle) {
+    final sanitizedMeasurements = <Map<dynamic, dynamic>>[];
+    for (final raw in bundle.measurementNodes) {
+      final row = Map<dynamic, dynamic>.from(raw);
+      final value = _double(row['value']);
+      if (value == null) {
+        if (_isNonFiniteNumber(row['value'])) {
+          _warnNonFinite(bundle, 'measurement value');
+        }
+        continue;
+      }
+      row['value'] = value;
+      _sanitizeOptionalNumber(
+        bundle,
+        row,
+        'lab_ref_low',
+        'lab reference low bound',
+      );
+      _sanitizeOptionalNumber(
+        bundle,
+        row,
+        'lab_ref_high',
+        'lab reference high bound',
+      );
+      _sanitizeOptionalInteger(bundle, row, 'page', 'measurement page');
+      _sanitizeOptionalNumber(
+        bundle,
+        row,
+        'extraction_confidence',
+        'extraction confidence',
+      );
+      final page = _integer(row['page']);
+      if (page != null && page < 1) {
+        bundle.warnings.add('Ignored measurement page below 1.');
+        row['page'] = null;
+      }
+      final confidence = _double(row['extraction_confidence']);
+      if (confidence != null && (confidence < 0 || confidence > 1)) {
+        bundle.warnings.add('Ignored extraction confidence outside 0..1.');
+        row['extraction_confidence'] = null;
+      }
+      _omitUnorderedPair(
+        bundle,
+        row,
+        lowField: 'lab_ref_low',
+        highField: 'lab_ref_high',
+        label: 'lab reference bounds',
+      );
+      sanitizedMeasurements.add(row);
+    }
+    bundle.measurementNodes
+      ..clear()
+      ..addAll(sanitizedMeasurements);
+
+    _sanitizeRanges(bundle, bundle.rangeNodes, 'range');
+    _sanitizeRanges(bundle, bundle.userOverrideNodes, 'target override');
+    _sanitizeDueIntervals(bundle);
+  }
+
+  void _sanitizeRanges(
+    _LegacyBundle bundle,
+    List<Map<dynamic, dynamic>> rows,
+    String label,
+  ) {
+    final unitsByLegacyId = {
+      for (final biomarker in bundle.biomarkers)
+        biomarker.legacyId: biomarker.unit,
+    };
+    final accepted = <Map<dynamic, dynamic>>[];
+    for (final row in rows) {
+      for (final field in const [
+        'low',
+        'min',
+        'high',
+        'max',
+        'optimal_low',
+        'optimal_high',
+        'borderline_low',
+        'borderline_high',
+      ]) {
+        _sanitizeOptionalNumber(bundle, row, field, '$label $field');
+      }
+      _sanitizeOptionalInteger(bundle, row, 'age_min', '$label age minimum');
+      _sanitizeOptionalInteger(bundle, row, 'age_max', '$label age maximum');
+      for (final field in const ['age_min', 'age_max']) {
+        final age = _integer(row[field]);
+        if (age != null && (age < 0 || age > 150)) {
+          bundle.warnings.add('Ignored $label $field outside 0..150.');
+          row[field] = null;
+        }
+      }
+      _omitUnorderedPair(
+        bundle,
+        row,
+        lowField: 'age_min',
+        highField: 'age_max',
+        label: '$label age bounds',
+      );
+      _omitUnorderedAliasPair(
+        bundle,
+        row,
+        lowFields: const ['low', 'min'],
+        highFields: const ['high', 'max'],
+        label: '$label low/high bounds',
+      );
+      _omitUnorderedAliasPair(
+        bundle,
+        row,
+        lowFields: const ['optimal_low', 'borderline_low'],
+        highFields: const ['optimal_high', 'borderline_high'],
+        label: '$label optimal bounds',
+      );
+      _sanitizeEvidenceUrl(bundle, row, label);
+      final hasBound = const [
+        'low',
+        'min',
+        'high',
+        'max',
+        'optimal_low',
+        'optimal_high',
+        'borderline_low',
+        'borderline_high',
+      ].any((field) => _double(row[field]) != null);
+      if (!hasBound) {
+        bundle.warnings.add('Skipped $label without valid bounds.');
+        continue;
+      }
+      final unit =
+          (row['unit'] ??
+                  unitsByLegacyId[row['biomarker_id']?.toString()] ??
+                  '')
+              .toString()
+              .trim();
+      if (unit.isEmpty) {
+        bundle.warnings.add('Skipped $label without a unit.');
+        continue;
+      }
+      row['unit'] = unit;
+      final suppliedType = row['range_type'] ?? row['kind'] ?? row['type'];
+      final rangeType = suppliedType == null
+          ? 'lab_reference'
+          : suppliedType.toString().trim();
+      if (rangeType.isEmpty) {
+        bundle.warnings.add('Skipped $label without a range type.');
+        continue;
+      }
+      if (suppliedType == null) row['range_type'] = rangeType;
+      accepted.add(row);
+    }
+    rows
+      ..clear()
+      ..addAll(accepted);
+  }
+
+  void _sanitizeDueIntervals(_LegacyBundle bundle) {
+    for (final row in [
+      ...bundle.biomarkerListNodes,
+      ...bundle.biomarkerListEntryNodes,
+    ]) {
+      if (!row.containsKey('due_duration')) continue;
+      final interval = _integer(row['due_duration']);
+      if (interval == null || interval <= 0) {
+        bundle.warnings.add('Ignored invalid retest interval.');
+        row['due_duration'] = null;
+      } else {
+        row['due_duration'] = interval;
+      }
+    }
+  }
+
+  void _omitUnorderedPair(
+    _LegacyBundle bundle,
+    Map<dynamic, dynamic> row, {
+    required String lowField,
+    required String highField,
+    required String label,
+  }) {
+    final low = _double(row[lowField]);
+    final high = _double(row[highField]);
+    if (low != null && high != null && low > high) {
+      row[lowField] = null;
+      row[highField] = null;
+      bundle.warnings.add('Ignored unordered $label.');
+    }
+  }
+
+  void _omitUnorderedAliasPair(
+    _LegacyBundle bundle,
+    Map<dynamic, dynamic> row, {
+    required List<String> lowFields,
+    required List<String> highFields,
+    required String label,
+  }) {
+    final low = lowFields
+        .map((field) => _double(row[field]))
+        .firstWhere((value) => value != null, orElse: () => null);
+    final high = highFields
+        .map((field) => _double(row[field]))
+        .firstWhere((value) => value != null, orElse: () => null);
+    if (low != null && high != null && low > high) {
+      for (final field in [...lowFields, ...highFields]) {
+        row[field] = null;
+      }
+      bundle.warnings.add('Ignored unordered $label.');
+    }
+  }
+
+  void _sanitizeEvidenceUrl(
+    _LegacyBundle bundle,
+    Map<dynamic, dynamic> row,
+    String label,
+  ) {
+    final raw = row['evidence_url'];
+    if (raw == null || raw.toString().trim().isEmpty) return;
+    final uri = Uri.tryParse(raw.toString().trim());
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
+      row['evidence_url'] = null;
+      bundle.warnings.add('Ignored invalid $label evidence URL.');
+    }
+  }
+
+  void _sanitizeOptionalNumber(
+    _LegacyBundle bundle,
+    Map<dynamic, dynamic> row,
+    String field,
+    String label,
+  ) {
+    if (!row.containsKey(field)) return;
+    final value = _double(row[field]);
+    if (value == null) {
+      if (_isNonFiniteNumber(row[field])) _warnNonFinite(bundle, label);
+      row[field] = null;
+      return;
+    }
+    row[field] = value;
+  }
+
+  void _sanitizeOptionalInteger(
+    _LegacyBundle bundle,
+    Map<dynamic, dynamic> row,
+    String field,
+    String label,
+  ) {
+    if (!row.containsKey(field)) return;
+    final value = _integer(row[field]);
+    if (value == null) {
+      if (_isNonFiniteNumber(row[field])) _warnNonFinite(bundle, label);
+      row[field] = null;
+      return;
+    }
+    row[field] = value;
   }
 
   Future<LegacyImportResult> commit(LegacyImportPreview preview) async {
@@ -668,6 +1108,46 @@ class LegacyImportService {
         return true;
       }
 
+      Future<void> fillMissingProfileFields(
+        Map<String, Object?> existing,
+        _LegacyProfile legacy,
+      ) async {
+        final changes = <String, Object?>{};
+        if (existing['date_of_birth'] == null && legacy.dateOfBirth != null) {
+          changes['date_of_birth'] = legacy.dateOfBirth!
+              .toIso8601String()
+              .split('T')
+              .first;
+        }
+        if (existing['sex'] == null && legacy.sex != null) {
+          changes['sex'] = legacy.sex;
+        }
+        if (existing['height_cm'] == null && legacy.heightCm != null) {
+          changes['height_cm'] = legacy.heightCm;
+        }
+        if (existing['weight_kg'] == null && legacy.weightKg != null) {
+          changes['weight_kg'] = legacy.weightKg;
+        }
+        if (changes.isEmpty) return;
+        final before = Map<String, Object?>.from(existing);
+        changes['updated_at'] = DateTime.now().toUtc().toIso8601String();
+        await txn.update(
+          'profiles',
+          changes,
+          where: 'id = ?',
+          whereArgs: [existing['id']],
+        );
+        existing.addAll(changes);
+        await txn.insert('import_audit', {
+          'import_id': importId,
+          'sequence': auditSequence++,
+          'table_name': 'profiles',
+          'row_id': '${existing['id']}',
+          'action': 'update',
+          'before_json': jsonEncode(before),
+        });
+      }
+
       final existingProfiles = await txn.query(
         'profiles',
         where: 'deleted = 0',
@@ -675,6 +1155,12 @@ class LegacyImportService {
       final profileIds = <String, String>{};
       for (final profile in bundle.profiles.values) {
         if (profile.directProfileId != null) {
+          final direct = existingProfiles.where(
+            (row) => row['id'] == profile.directProfileId,
+          );
+          if (direct.isNotEmpty) {
+            await fillMissingProfileFields(direct.first, profile);
+          }
           profileIds[profile.key] = profile.directProfileId!;
           continue;
         }
@@ -684,6 +1170,7 @@ class LegacyImportService {
               _normalized(profile.displayName),
         );
         if (matching.isNotEmpty) {
+          await fillMissingProfileFields(matching.first, profile);
           profileIds[profile.key] = '${matching.first['id']}';
           continue;
         }
@@ -697,6 +1184,7 @@ class LegacyImportService {
             displayName: profile.displayName,
             dateOfBirth: profile.dateOfBirth,
             sex: profile.sex,
+            heightCm: profile.heightCm,
             weightKg: profile.weightKg,
             notes: profile.notes,
             createdAt: now,
@@ -788,23 +1276,31 @@ class LegacyImportService {
           ).toMap(),
         );
         supplementIds[item.token] = id;
-        final initialUnits = item.unitsPerContainer * item.containerCount;
-        if (initialUnits != 0) {
-          final movementId = _legacyId(bundle.sourceHash, 'inventory', id);
-          await insertAudited(
-            'inventory_movements',
-            movementId,
-            InventoryMovement(
-              id: movementId,
-              supplementId: id,
-              quantityUnits: initialUnits,
-              occurredAt: now,
-              reason: 'import',
-              notes: 'Current stock imported from Supplement Manager.',
-              createdAt: now,
-              updatedAt: now,
-            ).toMap(),
-          );
+        final unitsPerContainer = item.unitsPerContainer;
+        final containerCount = item.containerCount;
+        if (unitsPerContainer != null &&
+            unitsPerContainer != 0 &&
+            containerCount != null &&
+            containerCount != 0 &&
+            containerCount.isFinite) {
+          final initialUnits = unitsPerContainer * containerCount;
+          if (initialUnits.isFinite && initialUnits != 0) {
+            final movementId = _legacyId(bundle.sourceHash, 'inventory', id);
+            await insertAudited(
+              'inventory_movements',
+              movementId,
+              InventoryMovement(
+                id: movementId,
+                supplementId: id,
+                quantityUnits: initialUnits,
+                occurredAt: now,
+                reason: 'import',
+                notes: 'Current stock imported from Supplement Manager.',
+                createdAt: now,
+                updatedAt: now,
+              ).toMap(),
+            );
+          }
         }
       }
 
@@ -873,7 +1369,7 @@ class LegacyImportService {
             profileId: profileId,
             kind: item.kind,
             name: item.name,
-            useScore: item.score != null,
+            useScore: true,
             colorValue: item.colorValue,
             createdAt: now,
             updatedAt: now,
@@ -1401,6 +1897,7 @@ class _LegacyProfile {
     this.directProfileId,
     this.dateOfBirth,
     this.sex,
+    this.heightCm,
     this.weightKg,
     this.notes = '',
   });
@@ -1411,6 +1908,7 @@ class _LegacyProfile {
   final String? directProfileId;
   final DateTime? dateOfBirth;
   final String? sex;
+  final double? heightCm;
   final double? weightKg;
   final String notes;
 }
