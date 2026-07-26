@@ -386,8 +386,9 @@ class BiomarkerStatusService {
   ) {
     if (range.deleted || range.biomarkerId != biomarker.id) return false;
     final rangeSex = _normalizeSex(range.sex);
-    if (rangeSex != null && rangeSex != _normalizeSex(profile.sex))
+    if (rangeSex != null && rangeSex != _normalizeSex(profile.sex)) {
       return false;
+    }
     if (range.ageMin == null && range.ageMax == null) return true;
     final age = _ageOn(profile.dateOfBirth, measurement.takenAt);
     return age != null &&
