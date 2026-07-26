@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
@@ -14,13 +15,20 @@ import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
 import '../ai/provider_clients.dart';
 import '../analysis/correlation_service.dart';
+import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
 import '../export/lab_plan_export_service.dart';
 import '../import/legacy_import_service.dart';
+import '../reminders/reminder_service.dart';
+import '../reminders/reminder_planner.dart';
 import '../sync/one_drive_service.dart';
+import '../sync/restore_sync_gate.dart';
+import '../sync/snapshot_service.dart';
 import '../workspace/safe_workspace_service.dart';
+import 'appearance_settings.dart';
+import 'initial_setup_progress.dart';
 
 class AppController extends ChangeNotifier {
   AppController({
@@ -38,6 +46,12 @@ class AppController extends ChangeNotifier {
     required LabPlanExportService exportService,
     required AiProviderClientFactory clientFactory,
     ProviderCapabilityRegistry? capabilityRegistry,
+    ReminderService? reminderService,
+    PortableBackupService? portableBackupService,
+    DocumentsDirectory? documentsDirectory,
+    AppearanceSettingsStore? appearanceSettingsStore,
+    InitialSetupProgressStore? initialSetupProgressStore,
+    RestoreSyncGateStore? restoreSyncGateStore,
   }) : _database = database,
        repository = repository,
        keyStore = keyStore,
@@ -51,7 +65,15 @@ class AppController extends ChangeNotifier {
        workspaceService = workspaceService,
        exportService = exportService,
        _clientFactory = clientFactory,
-       capabilityRegistry = capabilityRegistry ?? ProviderCapabilityRegistry();
+       capabilityRegistry = capabilityRegistry ?? ProviderCapabilityRegistry(),
+       _reminderService = reminderService ?? ReminderService(),
+       _portableBackupService = portableBackupService,
+       _documentsDirectory = documentsDirectory,
+       _appearanceSettingsStore =
+           appearanceSettingsStore ?? AppearanceSettingsStore(),
+       _initialSetupProgressStore =
+           initialSetupProgressStore ?? InitialSetupProgressStore(),
+       _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore();
 
   final AppDatabase _database;
   final HealthRepository repository;
@@ -67,9 +89,20 @@ class AppController extends ChangeNotifier {
   final LabPlanExportService exportService;
   final AiProviderClientFactory _clientFactory;
   final ProviderCapabilityRegistry capabilityRegistry;
+  final ReminderService _reminderService;
+  final PortableBackupService? _portableBackupService;
+  final DocumentsDirectory? _documentsDirectory;
+  final AppearanceSettingsStore _appearanceSettingsStore;
+  final InitialSetupProgressStore _initialSetupProgressStore;
+  final RestoreSyncGateStore _restoreSyncGateStore;
 
   bool initialized = false;
   bool busy = false;
+  bool appearanceSaving = false;
+  AppearanceSettings appearanceSettings = AppearanceSettings.defaults;
+  InitialSetupProgress initialSetupProgress =
+      const InitialSetupProgress.empty();
+  bool restoreSyncDecisionPending = false;
   String? initializationError;
   Profile? activeProfile;
   List<Profile> profiles = const [];
@@ -100,17 +133,41 @@ class AppController extends ChangeNotifier {
   AiTaskSettings? parsingSettings;
   final Map<AiProvider, bool> hasApiKey = {};
   final Map<AiProvider, List<AiModelInfo>> availableModels = {};
+  ReminderPermissionStatus reminderPermissionStatus =
+      ReminderPermissionStatus.unknown;
+  String? reminderStatusMessage;
+  int scheduledReminderCount = 0;
+  int omittedReminderOccurrenceCount = 0;
+  DateTime? reminderCoverageThrough;
+  ReminderCoverageReason? reminderCoverageReason;
+  int lastLowStockAlertCount = 0;
+
+  AppThemeMode get themeMode => appearanceSettings.themeMode;
+  AppColorPalette get colorPalette => appearanceSettings.palette;
+  AppColorMode get colorMode => appearanceSettings.colorMode;
+  bool get highContrast => appearanceSettings.highContrast;
+  AppLanguage get language => appearanceSettings.language;
 
   List<WorkspaceProposal> get workspaceProposals => workspaceService.pending
       .where((item) => item.profileId == activeProfile?.id)
       .toList(growable: false);
 
   Future<void> initialize() async {
+    // Appearance is loaded before opening the initialized-app gate. Its values
+    // are intentionally device-wide, and corrupt preference values fall back
+    // harmlessly rather than blocking access to the health record.
+    try {
+      appearanceSettings = await _appearanceSettingsStore.load();
+    } on Object {
+      appearanceSettings = AppearanceSettings.defaults;
+    }
     try {
       advisorSettings = await _aiSettingsStore.load(AiTask.advisor);
       parsingSettings = await _aiSettingsStore.load(AiTask.parsing);
       await refreshKeyStatus();
+      restoreSyncDecisionPending = await _restoreSyncGateStore.isPending();
       await refreshProfiles();
+      await _reconcileReminders();
     } on Object catch (error) {
       initializationError = error.toString();
     } finally {
@@ -119,11 +176,194 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> setThemeMode(AppThemeMode value) =>
+      _saveAppearance(appearanceSettings.copyWith(themeMode: value));
+
+  Future<void> setColorPalette(AppColorPalette value) =>
+      _saveAppearance(appearanceSettings.copyWith(palette: value));
+
+  Future<void> setColorMode(AppColorMode value) =>
+      _saveAppearance(appearanceSettings.copyWith(colorMode: value));
+
+  Future<void> setHighContrast(bool value) =>
+      _saveAppearance(appearanceSettings.copyWith(highContrast: value));
+
+  Future<void> setLanguage(AppLanguage value) =>
+      _saveAppearance(appearanceSettings.copyWith(language: value));
+
+  Future<void> _saveAppearance(AppearanceSettings next) async {
+    if (appearanceSaving || next == appearanceSettings) return;
+    final previous = appearanceSettings;
+    appearanceSettings = next;
+    appearanceSaving = true;
+    notifyListeners();
+    try {
+      if (!await _appearanceSettingsStore.save(next)) {
+        throw StateError('Could not save appearance settings on this device.');
+      }
+    } on Object {
+      appearanceSettings = previous;
+      rethrow;
+    } finally {
+      appearanceSaving = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> refreshKeyStatus() async {
     for (final provider in AiProvider.values) {
       hasApiKey[provider] = await keyStore.hasKey(provider);
     }
+    await refreshInitialSetupProgress();
+  }
+
+  /// Refreshes device-local setup progress from persisted action facts and
+  /// current profile, OneDrive, and advisor configuration state.
+  ///
+  /// UI flows that directly connect or select OneDrive storage can call this
+  /// after their action succeeds. Refreshing alone never records completion.
+  Future<void> refreshInitialSetupProgress({bool notify = true}) async {
+    final facts = await _initialSetupProgressStore.loadFacts();
+    var oneDriveReady = false;
+    try {
+      final signedIn = await oneDriveService.isSignedIn();
+      if (signedIn) {
+        final mode = await oneDriveService.currentStorageMode();
+        oneDriveReady =
+            mode == OneDriveStorageMode.appFolder ||
+            (mode == OneDriveStorageMode.sharedFolder &&
+                await oneDriveService.selectedFolder() != null);
+      }
+    } on Object {
+      // Setup progress must not turn a transient cloud status read into an app
+      // initialization failure. The next explicit refresh can recover it.
+      oneDriveReady = false;
+    }
+    final advisor = advisorSettings;
+    initialSetupProgress = InitialSetupProgress(
+      profileExists: profiles.isNotEmpty,
+      legacyJsonImported: facts.legacyJsonImported,
+      legacyJsonSkipped: facts.legacyJsonSkipped,
+      legacyPdfsAttached: facts.legacyPdfsAttached,
+      legacyPdfsSkipped: facts.legacyPdfsSkipped,
+      dataRestored: facts.dataRestored,
+      oneDriveReady: oneDriveReady,
+      firstSuccessfulSync: facts.firstSuccessfulSync,
+      cloudSkipped: facts.cloudSkipped,
+      advisorReady: advisor != null && hasApiKey[advisor.provider] == true,
+      aiSkipped: facts.aiSkipped,
+    );
+    if (notify) notifyListeners();
+  }
+
+  Future<void> markLegacyJsonImportSkipped() async {
+    await _initialSetupProgressStore.recordLegacyJsonSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  Future<void> markLegacyPdfsImportSkipped() async {
+    await _initialSetupProgressStore.recordLegacyPdfsSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  Future<void> markCloudSetupSkipped() async {
+    await _initialSetupProgressStore.recordCloudSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  Future<void> markAiSetupSkipped() async {
+    await _initialSetupProgressStore.recordAiSkipped();
+    await refreshInitialSetupProgress();
+  }
+
+  /// Requests Android 13+ notification permission from an explicit settings
+  /// action. This is never requested at startup.
+  Future<ReminderPermissionStatus> requestReminderPermission() async {
+    try {
+      reminderPermissionStatus = await _reminderService.requestPermission();
+      reminderStatusMessage = switch (reminderPermissionStatus) {
+        ReminderPermissionStatus.granted => null,
+        ReminderPermissionStatus.denied =>
+          'Notification permission is not granted.',
+        ReminderPermissionStatus.unsupported =>
+          'Dose reminders are currently available on Android only.',
+        ReminderPermissionStatus.unknown => 'Notification status is unknown.',
+      };
+      if (reminderPermissionStatus == ReminderPermissionStatus.granted) {
+        await _reconcileReminders();
+      }
+    } on Object catch (error) {
+      reminderPermissionStatus = ReminderPermissionStatus.unknown;
+      reminderStatusMessage = 'Could not request notifications: $error';
+    }
     notifyListeners();
+    return reminderPermissionStatus;
+  }
+
+  /// Rebuilds the OS notification plan without requesting permission.
+  Future<void> refreshReminderStatus() =>
+      _withBusy(() async => _reconcileReminders());
+
+  /// Writes a self-contained portable backup to app storage for sharing.
+  /// API keys, Microsoft credentials and remote IDs are never included.
+  Future<File> exportPortableBackup() {
+    return _withBusy(() async {
+      final service = _portableBackupService;
+      final directoryProvider = _documentsDirectory;
+      if (service == null || directoryProvider == null) {
+        throw StateError('Portable backup is not available in this build.');
+      }
+      final source = await service.createJson();
+      final base = await directoryProvider();
+      final directory = Directory(
+        '${base.path}${Platform.pathSeparator}exports',
+      );
+      await directory.create(recursive: true);
+      final timestamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+        RegExp(r'[^0-9]'),
+        '',
+      );
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}'
+        'superhealth-backup-$timestamp-${repository.newId()}.json',
+      );
+      await file.writeAsString(source, flush: true);
+      return file;
+    });
+  }
+
+  /// Replaces synchronized health data only after the UI has collected its
+  /// explicit destructive confirmations. Device secrets remain untouched.
+  Future<void> restorePortableBackup(String source) {
+    return _withBusy(() async {
+      final service = _portableBackupService;
+      if (service == null) {
+        throw StateError('Portable backup is not available in this build.');
+      }
+      // Arm the durable safety gate before changing the database. If device
+      // preferences cannot persist it, do not risk producing restored data
+      // that could automatically synchronize on the next app launch.
+      await _restoreSyncGateStore.requireDecision();
+      restoreSyncDecisionPending = true;
+      try {
+        await service.restoreJson(source, confirmedReplaceCurrentData: true);
+      } on Object catch (error, stackTrace) {
+        // The restore service validates before replacing rows. If it fails,
+        // return to ordinary sync behavior when possible. If local settings
+        // cannot clear the gate, keep it visibly and durably fail-closed while
+        // preserving the original restore error for the caller.
+        try {
+          await _restoreSyncGateStore.clearDecision();
+          restoreSyncDecisionPending = false;
+        } on Object {
+          restoreSyncDecisionPending = true;
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      await _initialSetupProgressStore.recordDataRestored();
+      await refreshProfiles();
+      await _reconcileReminders();
+    });
   }
 
   Future<void> refreshProfiles() async {
@@ -140,6 +380,7 @@ class AppController extends ChangeNotifier {
       await preferences.setString('active_profile_id', activeProfile!.id);
       await refreshActiveData();
     }
+    await refreshInitialSetupProgress(notify: false);
     notifyListeners();
   }
 
@@ -147,6 +388,7 @@ class AppController extends ChangeNotifier {
     required String name,
     DateTime? dateOfBirth,
     String? sex,
+    double? heightCm,
     double? weightKg,
     String notes = '',
   }) async {
@@ -154,11 +396,13 @@ class AppController extends ChangeNotifier {
       displayName: name,
       dateOfBirth: dateOfBirth,
       sex: sex,
+      heightCm: heightCm,
       weightKg: weightKg,
       notes: notes,
     );
     await refreshProfiles();
     await selectProfile(profile.id);
+    await _reconcileReminders();
     return profile;
   }
 
@@ -169,6 +413,7 @@ class AppController extends ChangeNotifier {
         displayName: profile.displayName.trim(),
         dateOfBirth: profile.dateOfBirth,
         sex: profile.sex,
+        heightCm: profile.heightCm,
         weightKg: profile.weightKg,
         notes: profile.notes.trim(),
         createdAt: profile.createdAt,
@@ -177,6 +422,7 @@ class AppController extends ChangeNotifier {
       ),
     );
     await refreshProfiles();
+    await _reconcileReminders();
   }
 
   Future<void> deleteProfile(Profile profile) async {
@@ -185,6 +431,7 @@ class AppController extends ChangeNotifier {
     }
     await repository.softDelete('profiles', profile.id);
     await refreshProfiles();
+    await _reconcileReminders();
   }
 
   Future<void> selectProfile(String profileId) async {
@@ -196,6 +443,7 @@ class AppController extends ChangeNotifier {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString('active_profile_id', profileId);
     await refreshActiveData();
+    await _reconcileReminders();
     notifyListeners();
   }
 
@@ -315,6 +563,7 @@ class AppController extends ChangeNotifier {
       );
     }
     await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> updateSupplement(Supplement supplement) async {
@@ -343,6 +592,7 @@ class AppController extends ChangeNotifier {
       ),
     );
     await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> adjustStock({
@@ -367,16 +617,13 @@ class AppController extends ChangeNotifier {
       ),
     );
     await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> deleteSupplement(Supplement supplement) async {
-    await repository.softDelete('supplements', supplement.id);
-    for (final schedule in schedules.where(
-      (item) => item.supplementId == supplement.id,
-    )) {
-      await repository.softDelete('supplement_schedules', schedule.id);
-    }
+    await repository.deleteSupplementWithSchedules(supplement.id);
     await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> addSchedule({
@@ -417,6 +664,7 @@ class AppController extends ChangeNotifier {
       ),
     );
     await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> updateSchedule(SupplementSchedule schedule) async {
@@ -440,11 +688,13 @@ class AppController extends ChangeNotifier {
       ),
     );
     await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> deleteSchedule(SupplementSchedule schedule) async {
     await repository.softDelete('supplement_schedules', schedule.id);
     await refreshActiveData();
+    await _reconcileReminders();
   }
 
   Future<void> logIntake({
@@ -478,6 +728,7 @@ class AppController extends ChangeNotifier {
           : _stockUnitsForDose(supplement, dose, unit),
     );
     await refreshActiveData();
+    await _reconcileStockAlerts();
   }
 
   Future<void> updateIntake(SupplementIntake intake) async {
@@ -505,6 +756,7 @@ class AppController extends ChangeNotifier {
           : _stockUnitsForDose(supplement, intake.dose, intake.unit),
     );
     await refreshActiveData();
+    await _reconcileStockAlerts();
   }
 
   Future<void> deleteIntake(SupplementIntake intake) async {
@@ -962,7 +1214,7 @@ class AppController extends ChangeNotifier {
     } else {
       parsingSettings = settings;
     }
-    notifyListeners();
+    await refreshInitialSetupProgress();
   }
 
   Future<void> askAdvisor(String question) async {
@@ -1022,6 +1274,11 @@ class AppController extends ChangeNotifier {
   Future<void> saveDraftLabPlan() async {
     final draft = draftLabPlan;
     if (draft == null) throw StateError('There is no draft plan to save.');
+    if (!draft.canSave) {
+      throw StateError(
+        'This lab-plan draft was not approved by the independent verification.',
+      );
+    }
     await repository.saveLabPlan(draft.plan);
     draftLabPlan = null;
     await refreshActiveData();
@@ -1066,6 +1323,10 @@ class AppController extends ChangeNotifier {
         provider: plan.provider,
         model: plan.model,
         status: plan.status,
+        verificationSummary: plan.verificationSummary,
+        verificationWarnings: plan.verificationWarnings,
+        verificationCitations: plan.verificationCitations,
+        verifiedAt: plan.verifiedAt,
         items: updatedItems,
       ),
     );
@@ -1163,7 +1424,9 @@ class AppController extends ChangeNotifier {
   Future<LegacyImportResult> commitImport(LegacyImportPreview preview) async {
     return _withBusy(() async {
       final result = await importService.commit(preview);
+      await _initialSetupProgressStore.recordLegacyJsonImported();
       await refreshProfiles();
+      await _reconcileReminders();
       return result;
     });
   }
@@ -1177,16 +1440,96 @@ class AppController extends ChangeNotifier {
   ) {
     return _withBusy(() async {
       final result = await importService.commitPdfs(preview);
+      await _initialSetupProgressStore.recordLegacyPdfsAttached();
       await refreshActiveData();
+      await refreshInitialSetupProgress();
       return result;
     });
   }
 
   Future<OneDriveSyncResult> synchronizeOneDrive() async {
     return _withBusy(() async {
-      final result = await oneDriveService.synchronize();
-      await refreshProfiles();
+      if (await _restoreSyncGateStore.isPending()) {
+        restoreSyncDecisionPending = true;
+        throw RestoreSyncDecisionRequiredError();
+      }
+      return _synchronizeOneDriveNormally();
+    });
+  }
+
+  /// Explicitly resumes the standard conflict-aware sync after a restore.
+  ///
+  /// The guard is opened only while beginning that sync. Any exception closes
+  /// it again, so a transient cloud failure cannot turn into an implicit later
+  /// publish or merge.
+  Future<OneDriveSyncResult> resumeRestoredDataAndMerge() {
+    return _withBusy(() async {
+      if (!await _restoreSyncGateStore.isPending()) {
+        throw StateError('There is no restored-data sync decision pending.');
+      }
+      await _restoreSyncGateStore.clearDecision();
+      restoreSyncDecisionPending = false;
+      try {
+        return await _synchronizeOneDriveNormally();
+      } on Object {
+        await _restoreSyncGateStore.requireDecision();
+        restoreSyncDecisionPending = true;
+        rethrow;
+      }
+    });
+  }
+
+  /// Explicitly publishes the restored local record without merging the remote
+  /// snapshot. The OneDrive service uses ETag preconditions and uploads PDFs
+  /// only after the snapshot has been conditionally accepted.
+  Future<OneDriveSyncResult> publishRestoredDataToOneDrive() {
+    return _withBusy(() async {
+      if (!await _restoreSyncGateStore.isPending()) {
+        throw StateError('There is no restored-data sync decision pending.');
+      }
+      final result = await oneDriveService.publishRestoredDataAuthoritatively();
+      await _restoreSyncGateStore.clearDecision();
+      restoreSyncDecisionPending = false;
+      await _afterSuccessfulOneDriveSync(result);
       return result;
+    });
+  }
+
+  Future<OneDriveSyncResult> _synchronizeOneDriveNormally() async {
+    final result = await oneDriveService.synchronize();
+    await _afterSuccessfulOneDriveSync(result);
+    return result;
+  }
+
+  Future<void> _afterSuccessfulOneDriveSync(OneDriveSyncResult result) async {
+    if (result.conflicts == 0) {
+      await _initialSetupProgressStore.recordFirstSuccessfulSync();
+    }
+    await refreshProfiles();
+    if (result.conflicts == 0 &&
+        result.remoteFound &&
+        result.appliedRows > 0 &&
+        profiles.isNotEmpty) {
+      await _initialSetupProgressStore.recordDataRestored();
+      await refreshInitialSetupProgress();
+    }
+    await _reconcileReminders();
+  }
+
+  Future<List<SnapshotConflict>> unresolvedSyncConflicts() =>
+      oneDriveService.unresolvedSyncConflicts();
+
+  Future<void> resolveSyncConflict({
+    required int conflictId,
+    required SyncConflictResolution resolution,
+  }) {
+    return _withBusy(() async {
+      await oneDriveService.resolveSyncConflict(
+        conflictId: conflictId,
+        resolution: resolution,
+      );
+      await refreshProfiles();
+      await _reconcileReminders();
     });
   }
 
@@ -1194,6 +1537,47 @@ class AppController extends ChangeNotifier {
     final profile = activeProfile;
     if (profile == null) throw StateError('Create or select a profile first.');
     return profile.id;
+  }
+
+  Future<void> _reconcileReminders() async {
+    try {
+      reminderPermissionStatus = await _reminderService.initialize();
+      final plan = await _reminderService.reconcile(
+        profiles: profiles,
+        supplements: supplements,
+        schedules: householdSchedules,
+      );
+      scheduledReminderCount = plan.reminders.length;
+      omittedReminderOccurrenceCount = plan.omittedOccurrenceCount;
+      reminderCoverageThrough = plan.coverageThrough;
+      reminderCoverageReason = plan.coverageReason;
+      lastLowStockAlertCount = await _reminderService.reconcileLowStockAlerts(
+        supplements: supplements,
+        stockLevels: stockLevels,
+      );
+      reminderStatusMessage = switch (reminderPermissionStatus) {
+        ReminderPermissionStatus.granted => null,
+        ReminderPermissionStatus.denied =>
+          'Notification permission is not granted.',
+        ReminderPermissionStatus.unsupported =>
+          'Dose reminders are currently available on Android only.',
+        ReminderPermissionStatus.unknown => 'Notification status is unknown.',
+      };
+    } on Object catch (error) {
+      reminderPermissionStatus = ReminderPermissionStatus.unknown;
+      reminderStatusMessage = 'Could not synchronize dose reminders: $error';
+    }
+  }
+
+  Future<void> _reconcileStockAlerts() async {
+    try {
+      lastLowStockAlertCount = await _reminderService.reconcileLowStockAlerts(
+        supplements: supplements,
+        stockLevels: stockLevels,
+      );
+    } on Object catch (error) {
+      reminderStatusMessage = 'Could not synchronize low-stock alerts: $error';
+    }
   }
 
   double? _stockUnitsForDose(
