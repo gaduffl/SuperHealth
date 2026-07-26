@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../app/app_controller.dart';
+import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
+
+String _listsText(BuildContext context, String english, String german) =>
+    AppLocalizations.of(context).pick(english, german);
 
 Future<void> showBiomarkerListsSheet(
   BuildContext context,
@@ -37,11 +41,15 @@ class _BiomarkerListsSheet extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Biomarker lists',
+                      _listsText(context, 'Biomarker lists', 'Biomarkerlisten'),
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
-                    const Text(
-                      'Reusable checklists with profile-specific retest intervals.',
+                    Text(
+                      _listsText(
+                        context,
+                        'Reusable checklists with profile-specific retest intervals.',
+                        'Wiederverwendbare Checklisten mit profilspezifischen Wiederholungsintervallen.',
+                      ),
                     ),
                   ],
                 ),
@@ -49,17 +57,24 @@ class _BiomarkerListsSheet extends StatelessWidget {
               FilledButton.icon(
                 onPressed: () => _editList(context),
                 icon: const Icon(Icons.add),
-                label: const Text('List'),
+                label: Text(_listsText(context, 'List', 'Liste')),
               ),
             ],
           ),
           const SizedBox(height: 12),
           if (controller.biomarkerLists.isEmpty)
-            const EmptyState(
+            EmptyState(
               icon: Icons.checklist_outlined,
-              title: 'No saved lists',
-              message:
-                  'Create a list such as Annual baseline or Cardiometabolic follow-up.',
+              title: _listsText(
+                context,
+                'No saved lists',
+                'Keine gespeicherten Listen',
+              ),
+              message: _listsText(
+                context,
+                'Create a list such as Annual baseline or Cardiometabolic follow-up.',
+                'Erstelle beispielsweise eine jährliche Basisliste oder eine kardiometabolische Verlaufsliste.',
+              ),
             )
           else
             for (final list in controller.biomarkerLists)
@@ -85,31 +100,43 @@ class _BiomarkerListsSheet extends StatelessWidget {
     final save = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(existing == null ? 'Create biomarker list' : 'Edit list'),
+        title: Text(
+          existing == null
+              ? _listsText(
+                  context,
+                  'Create biomarker list',
+                  'Biomarkerliste erstellen',
+                )
+              : _listsText(context, 'Edit list', 'Liste bearbeiten'),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: name,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'Name *'),
+              decoration: InputDecoration(
+                labelText: _listsText(context, 'Name *', 'Name *'),
+              ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: description,
               maxLines: 3,
-              decoration: const InputDecoration(labelText: 'Description'),
+              decoration: InputDecoration(
+                labelText: _listsText(context, 'Description', 'Beschreibung'),
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_listsText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Save'),
+            child: Text(_listsText(context, 'Save', 'Speichern')),
           ),
         ],
       ),
@@ -158,7 +185,14 @@ class _BiomarkerListsSheet extends StatelessWidget {
         .firstOrNull
         ?.id;
     if (biomarkerId == null) {
-      await showAppError(context, 'Every catalog biomarker is already listed.');
+      await showAppError(
+        context,
+        _listsText(
+          context,
+          'Every catalog biomarker is already listed.',
+          'Jeder Biomarker aus dem Katalog ist bereits enthalten.',
+        ),
+      );
       return;
     }
     final interval = TextEditingController(
@@ -169,14 +203,24 @@ class _BiomarkerListsSheet extends StatelessWidget {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text(existing == null ? 'Add to list' : 'Edit list item'),
+          title: Text(
+            existing == null
+                ? _listsText(context, 'Add to list', 'Zur Liste hinzufügen')
+                : _listsText(
+                    context,
+                    'Edit list item',
+                    'Listeneintrag bearbeiten',
+                  ),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
                 initialValue: biomarkerId,
                 isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Biomarker'),
+                decoration: InputDecoration(
+                  labelText: _listsText(context, 'Biomarker', 'Biomarker'),
+                ),
                 items: [
                   for (final biomarker in controller.biomarkers)
                     if (biomarker.id == existing?.biomarkerId ||
@@ -194,28 +238,37 @@ class _BiomarkerListsSheet extends StatelessWidget {
               TextField(
                 controller: interval,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Retest interval (days)',
-                  helperText:
-                      'Leave empty to keep the item without due alerts.',
+                decoration: InputDecoration(
+                  labelText: _listsText(
+                    context,
+                    'Retest interval (days)',
+                    'Wiederholungsintervall (Tage)',
+                  ),
+                  helperText: _listsText(
+                    context,
+                    'Leave empty to keep the item without due alerts.',
+                    'Leer lassen, um den Eintrag ohne Fälligkeitshinweise zu behalten.',
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: notes,
                 maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Notes'),
+                decoration: InputDecoration(
+                  labelText: _listsText(context, 'Notes', 'Notizen'),
+                ),
               ),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(_listsText(context, 'Cancel', 'Abbrechen')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Save'),
+              child: Text(_listsText(context, 'Save', 'Speichern')),
             ),
           ],
         ),
@@ -227,7 +280,13 @@ class _BiomarkerListsSheet extends StatelessWidget {
             ? null
             : int.tryParse(interval.text.trim());
         if (parsed != null && parsed <= 0) {
-          throw StateError('The retest interval must be a positive number.');
+          throw StateError(
+            _listsText(
+              context,
+              'The retest interval must be a positive number.',
+              'Das Wiederholungsintervall muss positiv sein.',
+            ),
+          );
         }
         final biomarker = controller.biomarkers.firstWhere(
           (item) => item.id == biomarkerId,
@@ -257,9 +316,17 @@ class _BiomarkerListsSheet extends StatelessWidget {
   Future<void> _deleteList(BuildContext context, BiomarkerList list) async {
     final confirmed = await showConfirmAction(
       context,
-      title: 'Delete ${list.name}?',
-      message: 'This removes the list and its retest schedule.',
-      confirmLabel: 'Delete',
+      title: _listsText(
+        context,
+        'Delete ${list.name}?',
+        '${list.name} löschen?',
+      ),
+      message: _listsText(
+        context,
+        'This removes the list and its retest schedule.',
+        'Dadurch werden die Liste und ihr Wiederholungsplan entfernt.',
+      ),
+      confirmLabel: _listsText(context, 'Delete', 'Löschen'),
       destructive: true,
     );
     if (confirmed) await controller.deleteBiomarkerList(list);
@@ -289,15 +356,22 @@ class _ListCard extends StatelessWidget {
       leading: const Icon(Icons.checklist_outlined),
       title: Text(list.name),
       subtitle: Text(
-        '${list.items.length} biomarkers${list.description.isEmpty ? '' : ' · ${list.description}'}',
+        '${_listsText(context, '${list.items.length} biomarkers', '${list.items.length} Biomarker')}'
+        '${list.description.isEmpty ? '' : ' · ${list.description}'}',
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
       trailing: PopupMenuButton<String>(
         onSelected: (value) => value == 'edit' ? onEdit() : onDelete(),
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: 'edit', child: Text('Edit list')),
-          PopupMenuItem(value: 'delete', child: Text('Delete list')),
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'edit',
+            child: Text(_listsText(context, 'Edit list', 'Liste bearbeiten')),
+          ),
+          PopupMenuItem(
+            value: 'delete',
+            child: Text(_listsText(context, 'Delete list', 'Liste löschen')),
+          ),
         ],
       ),
       children: [
@@ -305,17 +379,25 @@ class _ListCard extends StatelessWidget {
           ListTile(
             dense: true,
             leading: const Icon(Icons.science_outlined),
-            title: Text(_biomarkerName(item.biomarkerId)),
+            title: Text(_biomarkerName(context, item.biomarkerId)),
             subtitle: Text(
               [
                 if (item.dueIntervalDays != null)
-                  'Every ${item.dueIntervalDays} days',
+                  _listsText(
+                    context,
+                    'Every ${item.dueIntervalDays} days',
+                    'Alle ${item.dueIntervalDays} Tage',
+                  ),
                 if (item.notes.isNotEmpty) item.notes,
               ].join(' · '),
             ),
             onTap: () => onEditItem(item),
             trailing: IconButton(
-              tooltip: 'Remove from list',
+              tooltip: _listsText(
+                context,
+                'Remove from list',
+                'Aus Liste entfernen',
+              ),
               icon: const Icon(Icons.remove_circle_outline),
               onPressed: () => controller.removeBiomarkerListItem(item),
             ),
@@ -327,7 +409,9 @@ class _ListCard extends StatelessWidget {
             child: TextButton.icon(
               onPressed: onAddItem,
               icon: const Icon(Icons.add),
-              label: const Text('Add biomarker'),
+              label: Text(
+                _listsText(context, 'Add biomarker', 'Biomarker hinzufügen'),
+              ),
             ),
           ),
         ),
@@ -335,11 +419,15 @@ class _ListCard extends StatelessWidget {
     ),
   );
 
-  String _biomarkerName(String id) {
+  String _biomarkerName(BuildContext context, String id) {
     for (final biomarker in controller.biomarkers) {
       if (biomarker.id == id) return biomarker.displayName;
     }
-    return 'Missing catalog item';
+    return _listsText(
+      context,
+      'Missing catalog item',
+      'Fehlender Katalogeintrag',
+    );
   }
 }
 
