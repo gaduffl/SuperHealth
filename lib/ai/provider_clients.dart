@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
 import 'ai_models.dart';
@@ -52,6 +53,11 @@ abstract class _BaseClient implements AiProviderClient {
   final Dio dio;
   final ProviderCapabilityRegistry capabilityRegistry;
 
+  /// Whether this concrete client implements a documented, code-container
+  /// upload path. A model capability alone is not enough: Gemini currently has
+  /// no such path in this app, so it must fail instead of silently inlining.
+  bool get supportsContextFile => false;
+
   void validate(ProviderRequest request) {
     final capabilities = capabilityRegistry.forModel(provider, request.model);
     final reasoning = request.reasoningLevel;
@@ -70,6 +76,33 @@ abstract class _BaseClient implements AiProviderClient {
       throw AiProviderException(
         'Code execution is not documented for ${request.model}.',
       );
+    }
+    if (request.contextFile && !capabilities.losslessContextFile) {
+      throw AiProviderException(
+        'Lossless context-file analysis is not documented for ${request.model}.',
+      );
+    }
+    if (request.contextFile && !supportsContextFile) {
+      throw AiProviderException(
+        '${provider.name} does not have a supported lossless context-file '
+        'path in this app.',
+      );
+    }
+    if (request.contextFile && !request.codeExecution) {
+      throw const AiProviderException(
+        'Lossless context-file analysis requires code execution.',
+      );
+    }
+    if (request.contextFile) {
+      final expected = request.contextFileSha256;
+      final actual = sha256
+          .convert(utf8.encode(request.contextJson))
+          .toString();
+      if (expected == null || expected != actual) {
+        throw const AiProviderException(
+          'The context file checksum does not match the exact upload bytes.',
+        );
+      }
     }
   }
 
@@ -130,6 +163,9 @@ class OpenAiClient extends _BaseClient {
   @override
   AiProvider get provider => AiProvider.openai;
 
+  @override
+  bool get supportsContextFile => true;
+
   Options _options(String key) => Options(
     headers: {
       'Authorization': 'Bearer $key',
@@ -171,8 +207,22 @@ class OpenAiClient extends _BaseClient {
     }
   }
 
-  bool _isLikelyTextModel(String id) =>
-      id.startsWith('gpt-') || RegExp(r'^o[1-9]').hasMatch(id);
+  bool _isLikelyTextModel(String id) {
+    if (!(id.startsWith('gpt-') || RegExp(r'^o[1-9]').hasMatch(id))) {
+      return false;
+    }
+    const nonTextMarkers = [
+      'audio',
+      'tts',
+      'transcribe',
+      'realtime',
+      'image',
+      'whisper',
+      'embedding',
+      'moderation',
+    ];
+    return !nonTextMarkers.any(id.contains);
+  }
 
   @override
   Future<ProviderResponse> respond(
@@ -180,34 +230,49 @@ class OpenAiClient extends _BaseClient {
     ProviderRequest request,
   ) async {
     validate(request);
-    final body = <String, Object?>{
-      'model': request.model,
-      'store': false,
-      'instructions': request.systemPrompt,
-      'input':
-          '${request.userPrompt}\n\n<complete_health_context>\n'
-          '${request.contextJson}\n</complete_health_context>',
-      'max_output_tokens': request.maxOutputTokens,
-    };
-    if (request.reasoningLevel != null) {
-      body['reasoning'] = {'effort': request.reasoningLevel};
-    }
-    final tools = <Map<String, Object?>>[];
-    if (request.webSearch) tools.add({'type': 'web_search'});
-    if (request.codeExecution) {
-      tools.add({
-        'type': 'code_interpreter',
-        'container': {'type': 'auto', 'memory_limit': '4g'},
-      });
-    }
-    if (tools.isNotEmpty) body['tools'] = tools;
-    if (request.requireJson) {
-      body['text'] = {
-        'format': {'type': 'json_object'},
-      };
-    }
-
+    String? contextFileId;
     try {
+      if (request.contextFile) {
+        contextFileId = await _uploadContext(apiKey, request.contextJson);
+      }
+      final body = <String, Object?>{
+        'model': request.model,
+        'store': false,
+        'instructions': request.systemPrompt,
+        'input': request.contextFile
+            ? '${request.userPrompt}\n\nThe complete health evidence package is '
+                  'available in the code-interpreter container. Locate '
+                  'superhealth-context.json, use code to load every section, '
+                  'verify the exact file SHA-256 ${request.contextFileSha256}, and '
+                  'follow the coverage protocol before answering.'
+            : '${request.userPrompt}\n\n<complete_health_context>\n'
+                  '${request.contextJson}\n</complete_health_context>',
+        'max_output_tokens': request.maxOutputTokens,
+      };
+      if (request.reasoningLevel != null) {
+        body['reasoning'] = {'effort': request.reasoningLevel};
+      }
+      final tools = <Map<String, Object?>>[];
+      if (request.webSearch) tools.add({'type': 'web_search'});
+      if (request.codeExecution) {
+        tools.add({
+          'type': 'code_interpreter',
+          'container': {
+            'type': 'auto',
+            'memory_limit': '4g',
+            if (contextFileId != null) 'file_ids': [contextFileId],
+          },
+        });
+      }
+      if (tools.isNotEmpty) body['tools'] = tools;
+      if (request.requireJson &&
+          capabilityRegistry
+              .forModel(provider, request.model)
+              .structuredOutput) {
+        body['text'] = {
+          'format': {'type': 'json_object'},
+        };
+      }
       final response = await dio.post<Map<String, dynamic>>(
         '$_baseUrl/responses',
         data: body,
@@ -237,6 +302,42 @@ class OpenAiClient extends _BaseClient {
       );
     } on DioException catch (error) {
       providerError('OpenAI', error);
+    } finally {
+      if (contextFileId != null) {
+        try {
+          await dio.delete<void>(
+            '$_baseUrl/files/$contextFileId',
+            options: _options(apiKey),
+          );
+        } on DioException {
+          // The request result is more important than best-effort cleanup.
+        }
+      }
+    }
+  }
+
+  Future<String> _uploadContext(String apiKey, String json) async {
+    try {
+      final response = await dio.post<Map<String, dynamic>>(
+        '$_baseUrl/files',
+        data: FormData.fromMap({
+          'purpose': 'user_data',
+          'file': MultipartFile.fromBytes(
+            utf8.encode(json),
+            filename: 'superhealth-context.json',
+          ),
+        }),
+        options: Options(headers: {'Authorization': 'Bearer $apiKey'}),
+      );
+      final id = response.data?['id']?.toString();
+      if (id == null || id.isEmpty) {
+        throw const AiProviderException(
+          'OpenAI did not return a context file ID.',
+        );
+      }
+      return id;
+    } on DioException catch (error) {
+      providerError('OpenAI context upload', error);
     }
   }
 }
@@ -245,14 +346,24 @@ class AnthropicClient extends _BaseClient {
   AnthropicClient(super.dio, super.capabilityRegistry);
 
   static const _baseUrl = 'https://api.anthropic.com/v1';
+  static const _adaptiveThinkingModels = {
+    'claude-opus-4-8',
+    'claude-opus-4-7',
+    'claude-opus-4-6',
+    'claude-sonnet-4-6',
+  };
 
   @override
   AiProvider get provider => AiProvider.anthropic;
 
-  Options _options(String key) => Options(
+  @override
+  bool get supportsContextFile => true;
+
+  Options _options(String key, {bool filesBeta = false}) => Options(
     headers: {
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
+      if (filesBeta) 'anthropic-beta': 'files-api-2025-04-14',
       'Content-Type': 'application/json',
     },
   );
@@ -274,7 +385,9 @@ class AnthropicClient extends _BaseClient {
           for (final value in rows.whereType<Map>()) {
             final row = Map<String, Object?>.from(value);
             final id = row['id']?.toString();
-            if (id == null || id.isEmpty) continue;
+            if (id == null || id.isEmpty || !id.startsWith('claude-')) {
+              continue;
+            }
             models.add(
               AiModelInfo(
                 id: id,
@@ -302,41 +415,61 @@ class AnthropicClient extends _BaseClient {
     ProviderRequest request,
   ) async {
     validate(request);
-    final body = <String, Object?>{
-      'model': request.model,
-      'max_tokens': request.maxOutputTokens,
-      'system': request.systemPrompt,
-      'messages': [
-        {
-          'role': 'user',
-          'content':
-              '${request.userPrompt}\n\n<complete_health_context>\n'
-              '${request.contextJson}\n</complete_health_context>',
-        },
-      ],
-    };
-    if (request.reasoningLevel != null) {
-      body['thinking'] = {'type': 'adaptive'};
-      body['output_config'] = {'effort': request.reasoningLevel};
-    }
-    final tools = <Map<String, Object?>>[];
-    if (request.webSearch) {
-      tools.add({
-        'type': 'web_search_20260209',
-        'name': 'web_search',
-        'max_uses': 8,
-      });
-    }
-    if (request.codeExecution) {
-      tools.add({'type': 'code_execution_20260521', 'name': 'code_execution'});
-    }
-    if (tools.isNotEmpty) body['tools'] = tools;
-
+    String? contextFileId;
     try {
+      if (request.contextFile) {
+        contextFileId = await _uploadContext(apiKey, request.contextJson);
+      }
+      final body = <String, Object?>{
+        'model': request.model,
+        'max_tokens': request.maxOutputTokens,
+        'system': request.systemPrompt,
+        'messages': [
+          {
+            'role': 'user',
+            'content': request.contextFile
+                ? [
+                    {
+                      'type': 'text',
+                      'text':
+                          '${request.userPrompt}\n\nThe complete health evidence '
+                          'package is attached as superhealth-context.json. Use '
+                          'code execution to load every section, verify the exact '
+                          'file SHA-256 ${request.contextFileSha256}, and follow '
+                          'the coverage protocol before answering.',
+                    },
+                    {'type': 'container_upload', 'file_id': contextFileId},
+                  ]
+                : '${request.userPrompt}\n\n<complete_health_context>\n'
+                      '${request.contextJson}\n</complete_health_context>',
+          },
+        ],
+      };
+      if (request.reasoningLevel != null) {
+        if (_adaptiveThinkingModels.contains(request.model)) {
+          body['thinking'] = {'type': 'adaptive'};
+        }
+        body['output_config'] = {'effort': request.reasoningLevel};
+      }
+      final tools = <Map<String, Object?>>[];
+      if (request.webSearch) {
+        tools.add({
+          'type': 'web_search_20260318',
+          'name': 'web_search',
+          'max_uses': 8,
+        });
+      }
+      if (request.codeExecution) {
+        tools.add({
+          'type': 'code_execution_20260521',
+          'name': 'code_execution',
+        });
+      }
+      if (tools.isNotEmpty) body['tools'] = tools;
       final response = await dio.post<Map<String, dynamic>>(
         '$_baseUrl/messages',
         data: body,
-        options: _options(apiKey),
+        options: _options(apiKey, filesBeta: request.contextFile),
       );
       final raw = objectMap(response.data);
       final content = raw['content'];
@@ -360,6 +493,47 @@ class AnthropicClient extends _BaseClient {
       );
     } on DioException catch (error) {
       providerError('Anthropic', error);
+    } finally {
+      if (contextFileId != null) {
+        try {
+          await dio.delete<void>(
+            '$_baseUrl/files/$contextFileId',
+            options: _options(apiKey, filesBeta: true),
+          );
+        } on DioException {
+          // The request result is more important than best-effort cleanup.
+        }
+      }
+    }
+  }
+
+  Future<String> _uploadContext(String apiKey, String json) async {
+    try {
+      final response = await dio.post<Map<String, dynamic>>(
+        '$_baseUrl/files',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(
+            utf8.encode(json),
+            filename: 'superhealth-context.json',
+          ),
+        }),
+        options: Options(
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'files-api-2025-04-14',
+          },
+        ),
+      );
+      final id = response.data?['id']?.toString();
+      if (id == null || id.isEmpty) {
+        throw const AiProviderException(
+          'Anthropic did not return a context file ID.',
+        );
+      }
+      return id;
+    } on DioException catch (error) {
+      providerError('Anthropic context upload', error);
     }
   }
 }
@@ -398,7 +572,12 @@ class GeminiClient extends _BaseClient {
             }
             final name = row['name']?.toString() ?? '';
             final id = name.replaceFirst(RegExp(r'^models/'), '');
-            if (!id.startsWith('gemini-')) continue;
+            if (!id.startsWith('gemini-') ||
+                id.contains('image') ||
+                id.contains('audio') ||
+                id.contains('tts')) {
+              continue;
+            }
             models.add(
               AiModelInfo(
                 id: id,
@@ -436,6 +615,8 @@ class GeminiClient extends _BaseClient {
         if (request.reasoningLevel != null)
           'thinking_level': request.reasoningLevel,
       },
+      if (request.requireJson)
+        'response_format': {'type': 'text', 'mime_type': 'application/json'},
     };
     final tools = <Map<String, Object?>>[];
     if (request.webSearch) tools.add({'type': 'google_search'});
