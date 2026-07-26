@@ -141,6 +141,7 @@ class _BiomarkerListsSheet extends StatelessWidget {
         ],
       ),
     );
+    if (!context.mounted) return;
     try {
       if (save == true && name.text.trim().isNotEmpty) {
         if (existing == null) {
