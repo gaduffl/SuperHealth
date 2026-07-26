@@ -706,7 +706,7 @@ class DocumentParsingService {
           'Ignored an invalid extraction confidence for $reportedName.',
         );
       }
-      final confidence = hasExtractionConfidence ? parsedConfidence! : 0;
+      final confidence = hasExtractionConfidence ? parsedConfidence : 0.0;
       var refLow = _optionalNumber(row, 'ref_low', reportedName, warnings);
       var refHigh = _optionalNumber(row, 'ref_high', reportedName, warnings);
       if (refLow != null && refHigh != null && refLow > refHigh) {
