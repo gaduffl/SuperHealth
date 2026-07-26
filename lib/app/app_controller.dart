@@ -1487,6 +1487,7 @@ class AppController extends ChangeNotifier {
       if (!await _restoreSyncGateStore.isPending()) {
         throw StateError('There is no restored-data sync decision pending.');
       }
+      restoreSyncDecisionPending = true;
       final result = await oneDriveService.publishRestoredDataAuthoritatively();
       await _restoreSyncGateStore.clearDecision();
       restoreSyncDecisionPending = false;
