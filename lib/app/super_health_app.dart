@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../ui/advisor_screen.dart';
@@ -9,68 +10,33 @@ import '../ui/health_screen.dart';
 import '../ui/settings_screen.dart';
 import '../ui/tracking_screen.dart';
 import 'app_controller.dart';
+import 'app_localizations.dart';
+import 'app_theme.dart';
 
 class SuperHealthApp extends StatelessWidget {
   const SuperHealthApp({super.key});
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'SuperHealth',
-    debugShowCheckedModeBanner: false,
-    themeMode: ThemeMode.system,
-    theme: _theme(Brightness.light),
-    darkTheme: _theme(Brightness.dark),
-    home: const _AppGate(),
-  );
-
-  ThemeData _theme(Brightness brightness) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF087F78),
-      brightness: brightness,
-      dynamicSchemeVariant: DynamicSchemeVariant.fidelity,
-    );
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: scheme.surface,
-      appBarTheme: AppBarTheme(
-        centerTitle: false,
-        backgroundColor: scheme.surface,
-        surfaceTintColor: Colors.transparent,
+  Widget build(BuildContext context) {
+    final appearance = context.watch<AppController>().appearanceSettings;
+    return MaterialApp(
+      onGenerateTitle: (context) => AppLocalizations.of(context).appName,
+      debugShowCheckedModeBanner: false,
+      locale: appearance.language.locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      themeMode: appearance.themeMode.materialThemeMode,
+      theme: buildAppTheme(brightness: Brightness.light, settings: appearance),
+      darkTheme: buildAppTheme(
+        brightness: Brightness.dark,
+        settings: appearance,
       ),
-      cardTheme: CardThemeData(
-        elevation: 0,
-        margin: const EdgeInsets.symmetric(vertical: 5),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.7)),
-        ),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: scheme.surfaceContainerLow,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: scheme.outlineVariant),
-        ),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        height: 72,
-        indicatorShape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
-          ),
-        ),
-      ),
+      home: const _AppGate(),
     );
   }
 }
@@ -81,8 +47,9 @@ class _AppGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final strings = AppLocalizations.of(context);
     if (!controller.initialized) {
-      return const Scaffold(
+      return Scaffold(
         body: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -91,7 +58,7 @@ class _AppGate extends StatelessWidget {
               SizedBox(height: 18),
               CircularProgressIndicator(),
               SizedBox(height: 12),
-              Text('Opening your private health record…'),
+              Text(strings.openingRecord),
             ],
           ),
         ),
@@ -106,7 +73,7 @@ class _AppGate extends StatelessWidget {
               padding: const EdgeInsets.all(24),
               child: EmptyState(
                 icon: Icons.error_outline,
-                title: 'SuperHealth could not start',
+                title: strings.couldNotStart,
                 message: error,
               ),
             ),
@@ -123,99 +90,107 @@ class _ProfileOnboarding extends StatelessWidget {
   const _ProfileOnboarding();
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(28),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    shape: BoxShape.circle,
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.health_and_safety_outlined,
+                      size: 58,
+                    ),
                   ),
-                  child: const Icon(Icons.health_and_safety_outlined, size: 58),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Welcome to SuperHealth',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'One private place for supplements, symptoms, biomarkers, lab planning, '
-                  'and a full-context AI advisor.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  const SizedBox(height: 24),
+                  Text(
+                    strings.welcome,
+                    style: Theme.of(context).textTheme.headlineMedium,
                   ),
-                ),
-                const SizedBox(height: 24),
-                const Card(
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: Icon(Icons.people_outline),
-                        title: Text('Isolated profiles'),
-                        subtitle: Text(
-                          'Only the selected profile enters an AI request or export.',
+                  const SizedBox(height: 10),
+                  Text(
+                    strings.onboardingDescription,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Card(
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: Icon(Icons.people_outline),
+                          title: Text(strings.isolatedProfiles),
+                          subtitle: Text(strings.isolatedProfilesDescription),
                         ),
-                      ),
-                      Divider(height: 1),
-                      ListTile(
-                        leading: Icon(Icons.lock_outline),
-                        title: Text('Local-first and BYOK'),
-                        subtitle: Text(
-                          'No Google login, billing worker, or app-owned AI keys.',
+                        Divider(height: 1),
+                        ListTile(
+                          leading: Icon(Icons.lock_outline),
+                          title: Text(strings.localFirstByok),
+                          subtitle: Text(strings.localFirstByokDescription),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: () => showAddProfileDialog(
-                    context,
-                    context.read<AppController>(),
-                  ),
-                  icon: const Icon(Icons.person_add_outlined),
-                  label: const Text('Create first profile'),
-                ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => Scaffold(
-                        appBar: AppBar(
-                          title: const Text('Restore from OneDrive'),
+                  const SizedBox(height: 18),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.restore_page_outlined),
+                      title: Text(strings.restoreOrTransferExistingData),
+                      subtitle: Text(strings.restoreOrTransferDescription),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => Scaffold(
+                            appBar: AppBar(
+                              title: Text(strings.setupExistingData),
+                            ),
+                            body: const SettingsScreen(),
+                          ),
                         ),
-                        body: const SettingsScreen(),
                       ),
                     ),
                   ),
-                  icon: const Icon(Icons.cloud_download_outlined),
-                  label: const Text('Restore from OneDrive'),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'On an additional phone, restore the shared snapshot before '
-                  'creating a local profile.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  const SizedBox(height: 10),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.person_add_outlined),
+                      title: Text(strings.startFresh),
+                      subtitle: Text(strings.startFreshDescription),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showAddProfileDialog(
+                        context,
+                        context.read<AppController>(),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    strings.additionalPhoneHint,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _HomeShell extends StatefulWidget {
@@ -228,13 +203,6 @@ class _HomeShell extends StatefulWidget {
 class _HomeShellState extends State<_HomeShell> {
   var _index = 0;
 
-  static const _titles = [
-    'Today',
-    'Supplements',
-    'Health',
-    'Advisor',
-    'Settings',
-  ];
   static const _screens = [
     DashboardScreen(),
     TrackingScreen(),
@@ -246,12 +214,20 @@ class _HomeShellState extends State<_HomeShell> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final strings = AppLocalizations.of(context);
+    final titles = [
+      strings.today,
+      strings.supplements,
+      strings.health,
+      strings.advisor,
+      strings.settings,
+    ];
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(_titles[_index]),
+            Text(titles[_index]),
             Text(
               controller.activeProfile!.displayName,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -262,7 +238,7 @@ class _HomeShellState extends State<_HomeShell> {
         ),
         actions: [
           PopupMenuButton<String>(
-            tooltip: 'Switch profile',
+            tooltip: strings.switchProfile,
             icon: CircleAvatar(
               radius: 17,
               child: Text(
@@ -293,13 +269,13 @@ class _HomeShellState extends State<_HomeShell> {
                   ),
                 ),
               const PopupMenuDivider(),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: '__new',
                 child: Row(
                   children: [
                     Icon(Icons.person_add_outlined, size: 18),
                     SizedBox(width: 8),
-                    Text('New profile'),
+                    Text(strings.newProfile),
                   ],
                 ),
               ),
@@ -318,31 +294,31 @@ class _HomeShellState extends State<_HomeShell> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home),
-            label: 'Today',
+            label: strings.today,
           ),
           NavigationDestination(
             icon: Icon(Icons.medication_outlined),
             selectedIcon: Icon(Icons.medication),
-            label: 'Supplements',
+            label: strings.supplements,
           ),
           NavigationDestination(
             icon: Icon(Icons.monitor_heart_outlined),
             selectedIcon: Icon(Icons.monitor_heart),
-            label: 'Health',
+            label: strings.health,
           ),
           NavigationDestination(
             icon: Icon(Icons.psychology_outlined),
             selectedIcon: Icon(Icons.psychology),
-            label: 'Advisor',
+            label: strings.advisor,
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
+            label: strings.settings,
           ),
         ],
       ),
