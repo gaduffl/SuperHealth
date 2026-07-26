@@ -214,6 +214,13 @@ void main() {
         ),
       ], fallbackProfile: profile);
 
+      expect(preview.counts['biomarkers'], 1);
+      expect(
+        preview.duplicates,
+        contains(
+          contains('both use the canonical name “1_25_dihydroxy_vitamin_d”'),
+        ),
+      );
       await service.commit(preview);
 
       final biomarkers = await repository.biomarkers();
