@@ -29,6 +29,7 @@ class Profile {
     required this.updatedAt,
     this.dateOfBirth,
     this.sex,
+    this.heightCm,
     this.weightKg,
     this.notes = '',
     this.deleted = false,
@@ -38,6 +39,7 @@ class Profile {
   final String displayName;
   final DateTime? dateOfBirth;
   final String? sex;
+  final double? heightCm;
   final double? weightKg;
   final String notes;
   final DateTime createdAt;
@@ -61,6 +63,7 @@ class Profile {
     'display_name': displayName,
     'date_of_birth': dateOfBirth?.toIso8601String().split('T').first,
     'sex': sex,
+    'height_cm': heightCm,
     'weight_kg': weightKg,
     'notes': notes,
     'created_at': _iso(createdAt),
@@ -75,6 +78,7 @@ class Profile {
         ? null
         : DateTime.tryParse('${map['date_of_birth']}'),
     sex: map['sex']?.toString(),
+    heightCm: (map['height_cm'] as num?)?.toDouble(),
     weightKg: (map['weight_kg'] as num?)?.toDouble(),
     notes: map['notes']?.toString() ?? '',
     createdAt: _date(map['created_at']),
@@ -1195,6 +1199,10 @@ class LabPlan {
     this.provider,
     this.model,
     this.status = 'draft',
+    this.verificationSummary = '',
+    this.verificationWarnings = const [],
+    this.verificationCitations = const [],
+    this.verifiedAt,
     this.deleted = false,
   });
 
@@ -1209,6 +1217,10 @@ class LabPlan {
   final String? provider;
   final String? model;
   final String status;
+  final String verificationSummary;
+  final List<String> verificationWarnings;
+  final List<String> verificationCitations;
+  final DateTime? verifiedAt;
   final bool deleted;
   final List<LabPlanItem> items;
 
@@ -1234,6 +1246,10 @@ class LabPlan {
     'provider': provider,
     'model': model,
     'status': status,
+    'verification_summary': verificationSummary,
+    'verification_warnings_json': jsonEncode(verificationWarnings),
+    'verification_citations_json': jsonEncode(verificationCitations),
+    'verified_at': verifiedAt == null ? null : _iso(verifiedAt!),
     'deleted': deleted ? 1 : 0,
   };
 
@@ -1252,6 +1268,12 @@ class LabPlan {
         provider: map['provider']?.toString(),
         model: map['model']?.toString(),
         status: map['status']?.toString() ?? 'draft',
+        verificationSummary: map['verification_summary']?.toString() ?? '',
+        verificationWarnings: _strings(map['verification_warnings_json']),
+        verificationCitations: _strings(map['verification_citations_json']),
+        verifiedAt: map['verified_at'] == null
+            ? null
+            : _date(map['verified_at']),
         deleted: _boolFromDb(map['deleted']),
         items: items,
       );
