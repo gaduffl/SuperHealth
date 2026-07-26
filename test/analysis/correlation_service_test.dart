@@ -52,6 +52,211 @@ void main() {
     expect(results, hasLength(1));
     expect(results.single.sampleSize, 10);
     expect(results.single.coefficient, closeTo(1, 0.0001));
+    expect(results.single.spearmanCoefficient, closeTo(1, 0.0001));
+    expect(results.single.pValue, lessThan(0.001));
+    expect(results.single.adjustedPValue, lessThan(0.001));
+    expect(results.single.isStatisticallySignificant, isTrue);
+    await database.close();
+  });
+
+  test(
+    'reports rank correlation for monotonic non-linear associations',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Rank');
+      final start = DateTime(2026, 2, 1);
+      final doses = [1, 2, 3, 4, 5, 6, 100];
+      for (var index = 0; index < doses.length; index++) {
+        final day = start.add(Duration(days: index));
+        await _saveTag(repository, profile.id, 'Dose', day, doses[index]);
+        await _saveSymptom(repository, profile.id, 'Energy', day, index + 1);
+      }
+
+      final result = (await CorrelationService(
+        repository,
+      ).analyze(profile.id, lags: const [0])).single;
+
+      expect(result.coefficient, lessThan(0.8));
+      expect(result.spearmanCoefficient, closeTo(1, 0.0001));
+      await database.close();
+    },
+  );
+
+  test(
+    'skips constant and insufficient series without producing invalid values',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Safe');
+      final shortProfile = await repository.createProfile(displayName: 'Short');
+      final start = DateTime(2026, 3, 1);
+      for (var index = 0; index < 7; index++) {
+        final day = start.add(Duration(days: index));
+        await _saveTag(repository, profile.id, 'Constant', day, 1);
+        await _saveSymptom(repository, profile.id, 'Pain', day, index + 1);
+      }
+      for (var index = 0; index < 2; index++) {
+        final day = start.add(Duration(days: index));
+        await _saveTag(repository, shortProfile.id, 'Short', day, index + 1);
+        await _saveSymptom(
+          repository,
+          shortProfile.id,
+          'Short pain',
+          day,
+          index + 1,
+        );
+      }
+
+      final results = await CorrelationService(
+        repository,
+      ).analyze(profile.id, minimumPairs: 2, lags: const [0]);
+      final shortResults = await CorrelationService(
+        repository,
+      ).analyze(shortProfile.id, minimumPairs: 2, lags: const [0]);
+
+      expect(results, isEmpty);
+      expect(shortResults, isEmpty);
+      await database.close();
+    },
+  );
+
+  test(
+    'uses Benjamini-Hochberg adjustment and deterministic result ordering',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Adjusted');
+      final start = DateTime(2026, 4, 1);
+      final strong = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
+      final noisy = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1];
+      for (var index = 0; index < 10; index++) {
+        final day = start.add(Duration(days: index));
+        await _saveTag(repository, profile.id, 'Z strong', day, strong[index]);
+        await _saveTag(repository, profile.id, 'A noisy', day, noisy[index]);
+        await _saveSymptom(repository, profile.id, 'Focus', day, index + 1);
+      }
+
+      final results = await CorrelationService(
+        repository,
+      ).analyze(profile.id, lags: const [0, 0]);
+      final strongResult = results.singleWhere(
+        (result) => result.exposure == 'Tag: Z strong',
+      );
+      final noisyResult = results.singleWhere(
+        (result) => result.exposure == 'Tag: A noisy',
+      );
+
+      expect(results, hasLength(2));
+      expect(results.first.exposure, 'Tag: Z strong');
+      expect(strongResult.pValue, isNotNull);
+      expect(strongResult.adjustedPValue, isNotNull);
+      expect(noisyResult.pValue, isNotNull);
+      expect(noisyResult.adjustedPValue, isNotNull);
+      expect(
+        strongResult.adjustedPValue,
+        greaterThanOrEqualTo(strongResult.pValue!),
+      );
+      expect(
+        noisyResult.adjustedPValue,
+        greaterThanOrEqualTo(noisyResult.pValue!),
+      );
+      expect(
+        strongResult.adjustedPValue,
+        closeTo(strongResult.pValue! * 2, 1e-10),
+      );
+      expect(noisyResult.adjustedPValue, closeTo(noisyResult.pValue!, 1e-10));
+      await database.close();
+    },
+  );
+
+  test('keeps results isolated to the requested profile', () async {
+    sqfliteFfiInit();
+    final database = AppDatabase(
+      factory: databaseFactoryFfi,
+      databasePath: inMemoryDatabasePath,
+    );
+    final repository = HealthRepository(database);
+    final selected = await repository.createProfile(displayName: 'Selected');
+    final other = await repository.createProfile(displayName: 'Other');
+    final start = DateTime(2026, 5, 1);
+    for (var index = 0; index < 7; index++) {
+      final day = start.add(Duration(days: index));
+      await _saveTag(
+        repository,
+        selected.id,
+        'Selected tag',
+        day,
+        index.isEven ? 1 : 0,
+      );
+      await _saveSymptom(
+        repository,
+        selected.id,
+        'Selected symptom',
+        day,
+        index.isEven ? 9 : 1,
+      );
+      await _saveTag(repository, other.id, 'Other tag', day, index + 1);
+      await _saveSymptom(repository, other.id, 'Other symptom', day, 7 - index);
+    }
+
+    final results = await CorrelationService(
+      repository,
+    ).analyze(selected.id, lags: const [0]);
+
+    expect(results, hasLength(1));
+    expect(results.single.exposure, 'Tag: Selected tag');
+    expect(results.single.outcome, 'Selected symptom');
     await database.close();
   });
 }
+
+Future<void> _saveTag(
+  HealthRepository repository,
+  String profileId,
+  String name,
+  DateTime day,
+  num value,
+) => repository.saveEvent(
+  HealthEvent(
+    id: repository.newId(),
+    profileId: profileId,
+    kind: EventKind.tag,
+    name: name,
+    observedAt: day,
+    numericValue: value.toDouble(),
+    createdAt: day,
+    updatedAt: day,
+  ),
+);
+
+Future<void> _saveSymptom(
+  HealthRepository repository,
+  String profileId,
+  String name,
+  DateTime day,
+  int score,
+) => repository.saveEvent(
+  HealthEvent(
+    id: repository.newId(),
+    profileId: profileId,
+    kind: EventKind.symptom,
+    name: name,
+    observedAt: day,
+    score: score,
+    createdAt: day,
+    updatedAt: day,
+  ),
+);
