@@ -14,12 +14,12 @@ import '../data/health_repository.dart';
 /// data are neither read into nor restored from the portable bundle.
 class PortableBackupService {
   // Keep the public named argument stable while storing it privately.
-  // ignore: prefer_initializing_formals
   PortableBackupService(
     AppDatabase appDatabase, {
     required DocumentsDirectory documentsDirectory,
   }) : _appDatabase = appDatabase,
        _repository = HealthRepository(appDatabase),
+       // ignore: prefer_initializing_formals
        _documentsDirectory = documentsDirectory;
 
   static const schema = 'superhealth.portable_backup';
