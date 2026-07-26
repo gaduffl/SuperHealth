@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:super_health/app/app_localizations.dart';
 import 'package:super_health/app/initial_setup_progress.dart';
@@ -8,7 +9,12 @@ void main() {
   Widget app(Widget child) => MaterialApp(
     locale: const Locale('en'),
     supportedLocales: AppLocalizations.supportedLocales,
-    localizationsDelegates: const [AppLocalizations.delegate],
+    localizationsDelegates: const [
+      AppLocalizations.delegate,
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
     home: Scaffold(body: child),
   );
 
@@ -74,7 +80,12 @@ void main() {
       MaterialApp(
         locale: const Locale('de'),
         supportedLocales: AppLocalizations.supportedLocales,
-        localizationsDelegates: const [AppLocalizations.delegate],
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
         home: Scaffold(
           body: SingleChildScrollView(
             child: InitialSetupChecklistCard(
