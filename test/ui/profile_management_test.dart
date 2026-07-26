@@ -68,7 +68,13 @@ void main() {
       expect(find.text('Edit profile'), findsOneWidget);
       expect(find.text('Notes / goals'), findsOneWidget);
       expect(find.text('Height (cm)'), findsOneWidget);
-      expect(find.textContaining('Age '), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.textContaining('Age '),
+        ),
+        findsOneWidget,
+      );
       expect(find.widgetWithText(FilledButton, 'Save changes'), findsOneWidget);
 
       await tester.enterText(find.byType(TextFormField).at(1), '251');
