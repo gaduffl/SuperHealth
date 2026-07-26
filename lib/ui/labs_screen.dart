@@ -9,12 +9,101 @@ import 'package:url_launcher/url_launcher.dart';
 import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
 import '../app/app_controller.dart';
+import '../app/app_localizations.dart';
+import '../biomarkers/biomarker_status_service.dart';
 import '../domain/entities.dart';
 import '../export/lab_plan_export_service.dart';
 import 'biomarker_detail_sheet.dart';
 import 'biomarker_lists_sheet.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import 'temporary_biomarker_resolution_screen.dart';
+
+String _labsText(BuildContext context, String english, String german) =>
+    AppLocalizations.of(context).pick(english, german);
+
+Uri? _safeWebUri(String value) {
+  final uri = Uri.tryParse(value);
+  return uri != null && (uri.scheme == 'https' || uri.scheme == 'http')
+      ? uri
+      : null;
+}
+
+String _localizedStatusLabel(
+  BuildContext context,
+  BiomarkerStatus status,
+) => switch (status.label) {
+  'Never measured' => _labsText(context, status.label, 'Noch nie gemessen'),
+  'Unavailable' => _labsText(context, status.label, 'Nicht verfügbar'),
+  'Below personal target' => _labsText(
+    context,
+    status.label,
+    'Unter persönlichem Zielbereich',
+  ),
+  'Above personal target' => _labsText(
+    context,
+    status.label,
+    'Über persönlichem Zielbereich',
+  ),
+  'In personal target' => _labsText(
+    context,
+    status.label,
+    'Im persönlichen Zielbereich',
+  ),
+  'In stored optimal band' => _labsText(
+    context,
+    status.label,
+    'Im gespeicherten Optimalbereich',
+  ),
+  'Below stored reference' => _labsText(
+    context,
+    status.label,
+    'Unter gespeichertem Referenzbereich',
+  ),
+  'Above stored reference' => _labsText(
+    context,
+    status.label,
+    'Über gespeichertem Referenzbereich',
+  ),
+  'Within stored reference' => _labsText(
+    context,
+    status.label,
+    'Im gespeicherten Referenzbereich',
+  ),
+  'Below stored optimal band' => _labsText(
+    context,
+    status.label,
+    'Unter gespeichertem Optimalbereich',
+  ),
+  'Above stored optimal band' => _labsText(
+    context,
+    status.label,
+    'Über gespeichertem Optimalbereich',
+  ),
+  'Below lab range' => _labsText(context, status.label, 'Unter Laborbereich'),
+  'Above lab range' => _labsText(context, status.label, 'Über Laborbereich'),
+  'Within lab range' => _labsText(context, status.label, 'Im Laborbereich'),
+  _ => status.label,
+};
+
+String _localizedStatusDetail(BuildContext context, BiomarkerStatus status) {
+  final german = status.detail
+      .replaceAll('No recorded result', 'Kein Ergebnis gespeichert')
+      .replaceAll(
+        'The reported value or unit cannot be evaluated safely',
+        'Der angegebene Wert oder die Einheit kann nicht sicher ausgewertet werden',
+      )
+      .replaceAll(
+        'No usable personal target, stored reference, or lab range',
+        'Kein verwendbarer persönlicher Ziel-, Referenz- oder Laborbereich',
+      )
+      .replaceAll('Personal target:', 'Persönlicher Zielbereich:')
+      .replaceAll('Borderline:', 'Grenzbereich:')
+      .replaceAll('Stored reference:', 'Gespeicherte Referenz:')
+      .replaceAll('Stored optimal:', 'Gespeicherter Optimalbereich:')
+      .replaceAll('Lab-reported range:', 'Vom Labor angegebener Bereich:');
+  return _labsText(context, status.detail, german);
+}
 
 class LabsScreen extends StatelessWidget {
   const LabsScreen({super.key});
@@ -22,23 +111,39 @@ class LabsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final now = DateTime.now();
+    final activeProfile = controller.activeProfile;
     final latestByBiomarker = <String, Measurement>{};
     for (final measurement in controller.measurements) {
-      latestByBiomarker.putIfAbsent(measurement.biomarkerId, () => measurement);
+      final existing = latestByBiomarker[measurement.biomarkerId];
+      if (existing == null || measurement.takenAt.isAfter(existing.takenAt)) {
+        latestByBiomarker[measurement.biomarkerId] = measurement;
+      }
     }
     return PageBody(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 110),
         children: [
           SectionHeader(
-            title: 'Lab visit planner',
-            subtitle:
-                'Three cumulative tiers priced from your biomarker catalog',
+            title: _labsText(
+              context,
+              'Lab visit planner',
+              'Laborbesuch planen',
+            ),
+            subtitle: _labsText(
+              context,
+              'Three cumulative tiers priced from your biomarker catalog',
+              'Drei aufeinander aufbauende Stufen mit Preisen aus deinem Biomarkerkatalog',
+            ),
             action: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton.filledTonal(
-                  tooltip: 'Import lab PDF',
+                  tooltip: _labsText(
+                    context,
+                    'Import lab PDF',
+                    'Labor-PDF importieren',
+                  ),
                   onPressed: controller.busy
                       ? null
                       : () => _importPdf(context, controller),
@@ -50,7 +155,7 @@ class LabsScreen extends StatelessWidget {
                       ? null
                       : () => _generate(context, controller),
                   icon: const Icon(Icons.auto_awesome),
-                  label: const Text('Plan'),
+                  label: Text(_labsText(context, 'Plan', 'Planen')),
                 ),
               ],
             ),
@@ -58,12 +163,21 @@ class LabsScreen extends StatelessWidget {
           if (controller.biomarkers.isEmpty)
             EmptyState(
               icon: Icons.science_outlined,
-              title: 'Import or add your biomarker catalog first',
-              message:
-                  'The planner only selects known biomarkers and calculates tiers from stored EUR prices.',
+              title: _labsText(
+                context,
+                'Import or add your biomarker catalog first',
+                'Importiere oder ergänze zuerst deinen Biomarkerkatalog',
+              ),
+              message: _labsText(
+                context,
+                'The planner only selects known biomarkers and calculates tiers from stored EUR prices.',
+                'Die Planung wählt nur bekannte Biomarker und berechnet die Stufen aus den gespeicherten Euro-Preisen.',
+              ),
               action: FilledButton.tonal(
                 onPressed: () => showAddBiomarkerDialog(context, controller),
-                child: const Text('Add biomarker'),
+                child: Text(
+                  _labsText(context, 'Add biomarker', 'Biomarker hinzufügen'),
+                ),
               ),
             )
           else if (controller.draftLabPlan case final draft?)
@@ -74,7 +188,15 @@ class LabsScreen extends StatelessWidget {
                   await controller.saveDraftLabPlan();
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Lab plan saved.')),
+                      SnackBar(
+                        content: Text(
+                          _labsText(
+                            context,
+                            'Lab plan saved.',
+                            'Laborplan gespeichert.',
+                          ),
+                        ),
+                      ),
                     );
                   }
                 } on Object catch (error) {
@@ -94,10 +216,15 @@ class LabsScreen extends StatelessWidget {
                       color: Theme.of(context).colorScheme.primary,
                     ),
                     const SizedBox(width: 14),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'The advisor will review the complete active profile, including past '
-                        'results, supplements, conditions, medicines, goals, symptoms, and prices.',
+                        _labsText(
+                          context,
+                          'The advisor will review the complete active profile, including past '
+                              'results, supplements, conditions, medicines, goals, symptoms, and prices.',
+                          'Die Beratung prüft das vollständige aktive Profil einschließlich früherer '
+                              'Ergebnisse, Nahrungsergänzungen, Erkrankungen, Medikamente, Ziele, Symptome und Preise.',
+                        ),
                       ),
                     ),
                   ],
@@ -105,7 +232,9 @@ class LabsScreen extends StatelessWidget {
               ),
             ),
           if (controller.labPlans.isNotEmpty) ...[
-            const SectionHeader(title: 'Saved plans'),
+            SectionHeader(
+              title: _labsText(context, 'Saved plans', 'Gespeicherte Pläne'),
+            ),
             for (final plan in controller.labPlans)
               _SavedPlanCard(
                 plan: plan,
@@ -115,9 +244,17 @@ class LabsScreen extends StatelessWidget {
                 onDelete: () async {
                   final confirmed = await showConfirmAction(
                     context,
-                    title: 'Delete ${plan.title}?',
-                    message: 'The exported files, if any, are not affected.',
-                    confirmLabel: 'Delete',
+                    title: _labsText(
+                      context,
+                      'Delete ${plan.title}?',
+                      '${plan.title} löschen?',
+                    ),
+                    message: _labsText(
+                      context,
+                      'The exported files, if any, are not affected.',
+                      'Bereits exportierte Dateien bleiben erhalten.',
+                    ),
+                    confirmLabel: _labsText(context, 'Delete', 'Löschen'),
                     destructive: true,
                   );
                   if (confirmed) await controller.deleteLabPlan(plan);
@@ -125,9 +262,17 @@ class LabsScreen extends StatelessWidget {
               ),
           ],
           if (controller.dueBiomarkers.isNotEmpty) ...[
-            const SectionHeader(
-              title: 'Due for retest',
-              subtitle: 'From the active profile’s saved biomarker lists',
+            SectionHeader(
+              title: _labsText(
+                context,
+                'Due for retest',
+                'Erneute Messung fällig',
+              ),
+              subtitle: _labsText(
+                context,
+                'From the active profile’s saved biomarker lists',
+                'Aus den gespeicherten Biomarkerlisten des aktiven Profils',
+              ),
             ),
             Card(
               clipBehavior: Clip.antiAlias,
@@ -140,8 +285,8 @@ class LabsScreen extends StatelessWidget {
                       ),
                       title: Text(due.biomarker.displayName),
                       subtitle: Text(
-                        '${due.listName} · every ${due.intervalDays} days · '
-                        '${due.lastMeasuredAt == null ? 'never measured' : '${due.daysOverdue} days overdue'}',
+                        '${due.listName} · ${_labsText(context, 'every ${due.intervalDays} days', 'alle ${due.intervalDays} Tage')} · '
+                        '${due.lastMeasuredAt == null ? _labsText(context, 'never measured', 'noch nie gemessen') : _labsText(context, '${due.daysOverdue} days overdue', '${due.daysOverdue} Tage überfällig')}',
                       ),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => showBiomarkerDetail(
@@ -155,9 +300,13 @@ class LabsScreen extends StatelessWidget {
             ),
           ],
           if (controller.documents.isNotEmpty) ...[
-            const SectionHeader(
-              title: 'Lab documents',
-              subtitle: 'Reviewed PDF imports and their extraction status',
+            SectionHeader(
+              title: _labsText(context, 'Lab documents', 'Labordokumente'),
+              subtitle: _labsText(
+                context,
+                'Reviewed PDF imports and their extraction status',
+                'Geprüfte PDF-Importe und ihr Extraktionsstatus',
+              ),
             ),
             Card(
               clipBehavior: Clip.antiAlias,
@@ -192,30 +341,60 @@ class LabsScreen extends StatelessWidget {
             ),
           ],
           SectionHeader(
-            title: 'Biomarker catalog',
-            subtitle:
-                '${controller.biomarkers.length} tests · ${controller.measurements.length} results',
+            title: _labsText(context, 'Biomarker catalog', 'Biomarkerkatalog'),
+            subtitle: _labsText(
+              context,
+              '${controller.biomarkers.length} tests · ${controller.measurements.length} results',
+              '${controller.biomarkers.length} Tests · ${controller.measurements.length} Ergebnisse',
+            ),
             action: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton.filledTonal(
-                  tooltip: 'Saved biomarker lists',
+                  tooltip: _labsText(
+                    context,
+                    'Saved biomarker lists',
+                    'Gespeicherte Biomarkerlisten',
+                  ),
                   onPressed: () => showBiomarkerListsSheet(context, controller),
                   icon: const Icon(Icons.checklist_outlined),
                 ),
+                if (controller.biomarkers.any((item) => item.isTemporary)) ...[
+                  const SizedBox(width: 6),
+                  IconButton.filledTonal(
+                    tooltip: _labsText(
+                      context,
+                      'Resolve temporary biomarkers',
+                      'Temporäre Biomarker zuordnen',
+                    ),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            const TemporaryBiomarkerResolutionScreen(),
+                      ),
+                    ),
+                    icon: const Icon(Icons.merge_type_outlined),
+                  ),
+                ],
                 const SizedBox(width: 6),
                 IconButton.filledTonal(
-                  tooltip: 'Add biomarker',
+                  tooltip: _labsText(
+                    context,
+                    'Add biomarker',
+                    'Biomarker hinzufügen',
+                  ),
                   onPressed: () => showAddBiomarkerDialog(context, controller),
                   icon: const Icon(Icons.add),
                 ),
               ],
             ),
           ),
-          if (controller.biomarkers.isNotEmpty)
+          if (controller.biomarkers.isNotEmpty && activeProfile != null)
             _BiomarkerCatalog(
               controller: controller,
               latestByBiomarker: latestByBiomarker,
+              profile: activeProfile,
+              now: now,
             ),
         ],
       ),
@@ -228,7 +407,11 @@ class LabsScreen extends StatelessWidget {
   ) async {
     try {
       final selection = await FilePicker.platform.pickFiles(
-        dialogTitle: 'Choose a lab report PDF',
+        dialogTitle: _labsText(
+          context,
+          'Choose a lab report PDF',
+          'Laborbericht als PDF auswählen',
+        ),
         type: FileType.custom,
         allowedExtensions: const ['pdf'],
         withData: true,
@@ -241,7 +424,13 @@ class LabsScreen extends StatelessWidget {
               ? null
               : await File(selected.path!).readAsBytes());
       if (bytes == null) {
-        throw StateError('The selected PDF could not be read.');
+        throw StateError(
+          _labsText(
+            context,
+            'The selected PDF could not be read.',
+            'Die ausgewählte PDF konnte nicht gelesen werden.',
+          ),
+        );
       }
       final report = await controller.parseLabPdf(
         fileName: selected.name,
@@ -268,7 +457,13 @@ class LabsScreen extends StatelessWidget {
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Review extracted lab report'),
+          title: Text(
+            _labsText(
+              context,
+              'Review extracted lab report',
+              'Extrahierten Laborbericht prüfen',
+            ),
+          ),
           content: SizedBox(
             width: 720,
             height: MediaQuery.sizeOf(context).height * 0.68,
@@ -285,7 +480,13 @@ class LabsScreen extends StatelessWidget {
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Sample / report date *'),
+                  title: Text(
+                    _labsText(
+                      context,
+                      'Sample / report date *',
+                      'Proben- / Berichtsdatum *',
+                    ),
+                  ),
                   subtitle: Text(DateFormat('dd.MM.yyyy').format(reportDate)),
                   trailing: const Icon(Icons.calendar_today_outlined),
                   onTap: () async {
@@ -303,8 +504,12 @@ class LabsScreen extends StatelessWidget {
                 TextField(
                   controller: comment,
                   maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Report comment',
+                  decoration: InputDecoration(
+                    labelText: _labsText(
+                      context,
+                      'Report comment',
+                      'Kommentar zum Bericht',
+                    ),
                   ),
                 ),
                 if (report.errors.isNotEmpty) ...[
@@ -330,7 +535,11 @@ class LabsScreen extends StatelessWidget {
                 ],
                 const Divider(height: 28),
                 Text(
-                  '${candidates.length} measurements',
+                  _labsText(
+                    context,
+                    '${candidates.length} measurements',
+                    '${candidates.length} Messwerte',
+                  ),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 8),
@@ -362,7 +571,35 @@ class LabsScreen extends StatelessWidget {
                                 ),
                               ),
                               IconButton(
-                                tooltip: 'Exclude row',
+                                tooltip: _labsText(
+                                  context,
+                                  'Review and edit row',
+                                  'Zeile prüfen und bearbeiten',
+                                ),
+                                onPressed: () async {
+                                  final original = candidates[index];
+                                  final edited = await _editParsedMeasurement(
+                                    context,
+                                    original,
+                                  );
+                                  if (edited == null) return;
+                                  final currentIndex = candidates.indexOf(
+                                    original,
+                                  );
+                                  if (currentIndex >= 0) {
+                                    setState(
+                                      () => candidates[currentIndex] = edited,
+                                    );
+                                  }
+                                },
+                                icon: const Icon(Icons.edit_outlined),
+                              ),
+                              IconButton(
+                                tooltip: _labsText(
+                                  context,
+                                  'Exclude row',
+                                  'Zeile ausschließen',
+                                ),
                                 onPressed: () =>
                                     setState(() => candidates.removeAt(index)),
                                 icon: const Icon(Icons.close),
@@ -376,13 +613,23 @@ class LabsScreen extends StatelessWidget {
                             initialValue:
                                 candidates[index].biomarkerId ?? temporary,
                             isExpanded: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Map to biomarker',
+                            decoration: InputDecoration(
+                              labelText: _labsText(
+                                context,
+                                'Map to biomarker',
+                                'Biomarker zuordnen',
+                              ),
                             ),
                             items: [
-                              const DropdownMenuItem(
+                              DropdownMenuItem(
                                 value: temporary,
-                                child: Text('Create temporary biomarker'),
+                                child: Text(
+                                  _labsText(
+                                    context,
+                                    'Create temporary biomarker',
+                                    'Temporären Biomarker erstellen',
+                                  ),
+                                ),
                               ),
                               for (final biomarker in controller.biomarkers)
                                 DropdownMenuItem(
@@ -404,7 +651,7 @@ class LabsScreen extends StatelessWidget {
                             Padding(
                               padding: const EdgeInsets.only(top: 6),
                               child: Text(
-                                'Page ${candidates[index].page ?? '?'} · '
+                                '${_labsText(context, 'Page', 'Seite')} ${candidates[index].page ?? '?'} · '
                                 '${candidates[index].rowText}',
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
@@ -419,14 +666,20 @@ class LabsScreen extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Discard'),
+              child: Text(_labsText(context, 'Discard', 'Verwerfen')),
             ),
             FilledButton.icon(
               onPressed: report.errors.isNotEmpty || candidates.isEmpty
                   ? null
                   : () => Navigator.pop(dialogContext, true),
               icon: const Icon(Icons.save_outlined),
-              label: const Text('Save PDF + results'),
+              label: Text(
+                _labsText(
+                  context,
+                  'Save PDF + results',
+                  'PDF und Ergebnisse speichern',
+                ),
+              ),
             ),
           ],
         ),
@@ -445,7 +698,11 @@ class LabsScreen extends StatelessWidget {
             SnackBar(
               content: Text(
                 result.cloudWarning ??
-                    'Saved ${candidates.length} measurements from ${report.fileName}.',
+                    _labsText(
+                      context,
+                      'Saved ${candidates.length} measurements from ${report.fileName}.',
+                      '${candidates.length} Messwerte aus ${report.fileName} gespeichert.',
+                    ),
               ),
             ),
           );
@@ -455,6 +712,280 @@ class LabsScreen extends StatelessWidget {
       }
     }
     comment.dispose();
+  }
+
+  Future<ParsedMeasurementCandidate?> _editParsedMeasurement(
+    BuildContext context,
+    ParsedMeasurementCandidate candidate,
+  ) async {
+    final name = TextEditingController(text: candidate.reportedName);
+    final value = TextEditingController(text: candidate.value.toString());
+    final unit = TextEditingController(text: candidate.unit);
+    final refLow = TextEditingController(
+      text: candidate.refLow?.toString() ?? '',
+    );
+    final refHigh = TextEditingController(
+      text: candidate.refHigh?.toString() ?? '',
+    );
+    final page = TextEditingController(text: candidate.page?.toString() ?? '');
+    final notes = TextEditingController(text: candidate.notes);
+    String? validationError;
+
+    double? parseNumber(String text) =>
+        double.tryParse(text.trim().replaceAll(',', '.'));
+
+    try {
+      return await showDialog<ParsedMeasurementCandidate>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(
+              _labsText(context, 'Review measurement', 'Messwert prüfen'),
+            ),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: name,
+                      decoration: InputDecoration(
+                        labelText: _labsText(
+                          context,
+                          'Reported biomarker name *',
+                          'Angegebener Biomarkername *',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: value,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            ),
+                            decoration: InputDecoration(
+                              labelText: _labsText(
+                                context,
+                                'Value *',
+                                'Wert *',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: unit,
+                            decoration: InputDecoration(
+                              labelText: _labsText(
+                                context,
+                                'Reported unit *',
+                                'Angegebene Einheit *',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: refLow,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            ),
+                            decoration: InputDecoration(
+                              labelText: _labsText(
+                                context,
+                                'Reference low',
+                                'Referenzwert unten',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: refHigh,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            ),
+                            decoration: InputDecoration(
+                              labelText: _labsText(
+                                context,
+                                'Reference high',
+                                'Referenzwert oben',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 100,
+                          child: TextField(
+                            controller: page,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              labelText: _labsText(
+                                context,
+                                'PDF page',
+                                'PDF-Seite',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: notes,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: _labsText(context, 'Notes', 'Notizen'),
+                      ),
+                    ),
+                    if (candidate.rowText?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _labsText(
+                            context,
+                            'Source row (read-only)',
+                            'Quellzeile (schreibgeschützt)',
+                          ),
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: SelectableText(candidate.rowText!),
+                      ),
+                    ],
+                    if (validationError != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        validationError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(_labsText(context, 'Cancel', 'Abbrechen')),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final parsedValue = parseNumber(value.text);
+                  final parsedLow = refLow.text.trim().isEmpty
+                      ? null
+                      : parseNumber(refLow.text);
+                  final parsedHigh = refHigh.text.trim().isEmpty
+                      ? null
+                      : parseNumber(refHigh.text);
+                  final parsedPage = page.text.trim().isEmpty
+                      ? null
+                      : int.tryParse(page.text.trim());
+                  String? error;
+                  if (name.text.trim().isEmpty) {
+                    error = _labsText(
+                      context,
+                      'Enter the biomarker name.',
+                      'Gib den Biomarkernamen ein.',
+                    );
+                  } else if (parsedValue == null || !parsedValue.isFinite) {
+                    error = _labsText(
+                      context,
+                      'Enter a valid finite measurement value.',
+                      'Gib einen gültigen endlichen Messwert ein.',
+                    );
+                  } else if (unit.text.trim().isEmpty) {
+                    error = _labsText(
+                      context,
+                      'Enter the unit exactly as reported.',
+                      'Gib die Einheit genau wie im Bericht an.',
+                    );
+                  } else if (refLow.text.trim().isNotEmpty &&
+                      (parsedLow == null || !parsedLow.isFinite)) {
+                    error = _labsText(
+                      context,
+                      'Enter a valid lower reference bound or leave it blank.',
+                      'Gib einen gültigen unteren Referenzwert ein oder lasse das Feld leer.',
+                    );
+                  } else if (refHigh.text.trim().isNotEmpty &&
+                      (parsedHigh == null || !parsedHigh.isFinite)) {
+                    error = _labsText(
+                      context,
+                      'Enter a valid upper reference bound or leave it blank.',
+                      'Gib einen gültigen oberen Referenzwert ein oder lasse das Feld leer.',
+                    );
+                  } else if (parsedLow != null &&
+                      parsedHigh != null &&
+                      parsedLow > parsedHigh) {
+                    error = _labsText(
+                      context,
+                      'The lower reference bound cannot exceed the upper bound.',
+                      'Der untere Referenzwert darf nicht über dem oberen liegen.',
+                    );
+                  } else if (page.text.trim().isNotEmpty &&
+                      (parsedPage == null || parsedPage < 1)) {
+                    error = _labsText(
+                      context,
+                      'Enter a PDF page of 1 or higher, or leave it blank.',
+                      'Gib eine PDF-Seite ab 1 ein oder lasse das Feld leer.',
+                    );
+                  }
+                  if (error != null) {
+                    setState(() => validationError = error);
+                    return;
+                  }
+                  Navigator.pop(
+                    dialogContext,
+                    candidate.copyWith(
+                      reportedName: name.text.trim(),
+                      value: parsedValue!,
+                      unit: unit.text.trim(),
+                      refLow: parsedLow,
+                      clearRefLow: parsedLow == null,
+                      refHigh: parsedHigh,
+                      clearRefHigh: parsedHigh == null,
+                      page: parsedPage,
+                      clearPage: parsedPage == null,
+                      notes: notes.text.trim(),
+                    ),
+                  );
+                },
+                child: Text(_labsText(context, 'Apply', 'Übernehmen')),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      name.dispose();
+      value.dispose();
+      unit.dispose();
+      refLow.dispose();
+      refHigh.dispose();
+      page.dispose();
+      notes.dispose();
+    }
   }
 
   Future<void> _showDocument(
@@ -473,12 +1004,22 @@ class LabsScreen extends StatelessWidget {
               leading: const Icon(Icons.picture_as_pdf_outlined),
               title: Text(document.fileName),
               subtitle: Text(
-                '${controller.measurements.where((item) => item.documentId == document.id).length} linked results',
+                _labsText(
+                  context,
+                  '${controller.measurements.where((item) => item.documentId == document.id).length} linked results',
+                  '${controller.measurements.where((item) => item.documentId == document.id).length} verknüpfte Ergebnisse',
+                ),
               ),
             ),
             ListTile(
               leading: const Icon(Icons.edit_outlined),
-              title: const Text('Edit report metadata'),
+              title: Text(
+                _labsText(
+                  context,
+                  'Edit report metadata',
+                  'Berichtsdaten bearbeiten',
+                ),
+              ),
               onTap: () => Navigator.pop(context, 'edit'),
             ),
             ListTile(
@@ -486,7 +1027,13 @@ class LabsScreen extends StatelessWidget {
                 Icons.delete_outline,
                 color: Theme.of(context).colorScheme.error,
               ),
-              title: const Text('Delete report and linked results'),
+              title: Text(
+                _labsText(
+                  context,
+                  'Delete report and linked results',
+                  'Bericht und verknüpfte Ergebnisse löschen',
+                ),
+              ),
               onTap: () => Navigator.pop(context, 'delete'),
             ),
           ],
@@ -499,10 +1046,17 @@ class LabsScreen extends StatelessWidget {
     } else {
       final confirmed = await showConfirmAction(
         context,
-        title: 'Delete ${document.fileName}?',
-        message:
-            'The PDF record and every measurement imported from it will be removed.',
-        confirmLabel: 'Delete all',
+        title: _labsText(
+          context,
+          'Delete ${document.fileName}?',
+          '${document.fileName} löschen?',
+        ),
+        message: _labsText(
+          context,
+          'The PDF record and every measurement imported from it will be removed.',
+          'Der PDF-Datensatz und alle daraus importierten Messwerte werden entfernt.',
+        ),
+        confirmLabel: _labsText(context, 'Delete all', 'Alles löschen'),
         destructive: true,
       );
       if (confirmed) await controller.deleteDocument(document);
@@ -521,20 +1075,24 @@ class LabsScreen extends StatelessWidget {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Edit lab report'),
+          title: Text(
+            _labsText(context, 'Edit lab report', 'Laborbericht bearbeiten'),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: lab,
-                decoration: const InputDecoration(labelText: 'Lab name'),
+                decoration: InputDecoration(
+                  labelText: _labsText(context, 'Lab name', 'Laborname'),
+                ),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Report date'),
+                title: Text(_labsText(context, 'Report date', 'Berichtsdatum')),
                 subtitle: Text(
                   date == null
-                      ? 'Not set'
+                      ? _labsText(context, 'Not set', 'Nicht festgelegt')
                       : DateFormat('dd.MM.yyyy').format(date!),
                 ),
                 trailing: const Icon(Icons.calendar_today_outlined),
@@ -551,18 +1109,20 @@ class LabsScreen extends StatelessWidget {
               TextField(
                 controller: comment,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Comment'),
+                decoration: InputDecoration(
+                  labelText: _labsText(context, 'Comment', 'Kommentar'),
+                ),
               ),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(_labsText(context, 'Cancel', 'Abbrechen')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Save'),
+              child: Text(_labsText(context, 'Save', 'Speichern')),
             ),
           ],
         ),
@@ -606,7 +1166,9 @@ class LabsScreen extends StatelessWidget {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Plan a lab visit'),
+          title: Text(
+            _labsText(context, 'Plan a lab visit', 'Laborbesuch planen'),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -614,18 +1176,31 @@ class LabsScreen extends StatelessWidget {
                 controller: priorities,
                 autofocus: true,
                 maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Priorities (optional)',
-                  hintText:
-                      'e.g. cardiometabolic risk, fatigue, 250 € upper budget',
+                decoration: InputDecoration(
+                  labelText: _labsText(
+                    context,
+                    'Priorities (optional)',
+                    'Prioritäten (optional)',
+                  ),
+                  hintText: _labsText(
+                    context,
+                    'e.g. cardiometabolic risk, fatigue, 250 € upper budget',
+                    'z. B. kardiometabolisches Risiko, Erschöpfung, höchstens 250 €',
+                  ),
                 ),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Target visit date'),
+                title: Text(
+                  _labsText(
+                    context,
+                    'Target visit date',
+                    'Geplanter Besuchstermin',
+                  ),
+                ),
                 subtitle: Text(
                   targetDate == null
-                      ? 'Not set'
+                      ? _labsText(context, 'Not set', 'Nicht festgelegt')
                       : DateFormat('dd.MM.yyyy').format(targetDate!),
                 ),
                 trailing: const Icon(Icons.calendar_today_outlined),
@@ -638,12 +1213,22 @@ class LabsScreen extends StatelessWidget {
                   if (selected != null) setState(() => targetDate = selected);
                 },
               ),
-              const ListTile(
+              ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.lock_outline),
-                title: Text('Complete active-profile context'),
+                leading: const Icon(Icons.lock_outline),
+                title: Text(
+                  _labsText(
+                    context,
+                    'Complete active-profile context',
+                    'Vollständiger Kontext des aktiven Profils',
+                  ),
+                ),
                 subtitle: Text(
-                  'No silent truncation; only the configured provider receives it.',
+                  _labsText(
+                    context,
+                    'No silent truncation; only the configured provider receives it.',
+                    'Keine stille Kürzung; nur der konfigurierte Anbieter erhält den Kontext.',
+                  ),
                 ),
               ),
             ],
@@ -651,12 +1236,14 @@ class LabsScreen extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(_labsText(context, 'Cancel', 'Abbrechen')),
             ),
             FilledButton.icon(
               onPressed: () => Navigator.pop(dialogContext, true),
               icon: const Icon(Icons.auto_awesome),
-              label: const Text('Generate draft'),
+              label: Text(
+                _labsText(context, 'Generate draft', 'Entwurf erstellen'),
+              ),
             ),
           ],
         ),
@@ -687,10 +1274,20 @@ class LabsScreen extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const ListTile(
-              title: Text('Export checklist'),
+            ListTile(
+              title: Text(
+                _labsText(
+                  context,
+                  'Export checklist',
+                  'Checkliste exportieren',
+                ),
+              ),
               subtitle: Text(
-                'You will choose the destination before a file is created.',
+                _labsText(
+                  context,
+                  'You will choose the destination before a file is created.',
+                  'Du wählst den Speicherort, bevor eine Datei erstellt wird.',
+                ),
               ),
             ),
             for (final format in LabPlanExportFormat.values)
@@ -712,7 +1309,11 @@ class LabsScreen extends StatelessWidget {
       final file = await controller.exportService.build(plan, format);
       final extension = format.name;
       final path = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save ${file.fileName}',
+        dialogTitle: _labsText(
+          context,
+          'Save ${file.fileName}',
+          '${file.fileName} speichern',
+        ),
         fileName: file.fileName,
         type: FileType.custom,
         allowedExtensions: [extension],
@@ -720,7 +1321,15 @@ class LabsScreen extends StatelessWidget {
       );
       if (path != null && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${format.name.toUpperCase()} export saved.')),
+          SnackBar(
+            content: Text(
+              _labsText(
+                context,
+                '${format.name.toUpperCase()} export saved.',
+                '${format.name.toUpperCase()}-Export gespeichert.',
+              ),
+            ),
+          ),
         );
       }
     } on Object catch (error) {
@@ -756,7 +1365,11 @@ class _DraftPlanCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Unsaved draft · ${generation.plan.title}',
+                  _labsText(
+                    context,
+                    'Unsaved draft · ${generation.plan.title}',
+                    'Ungespeicherter Entwurf · ${generation.plan.title}',
+                  ),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -771,6 +1384,36 @@ class _DraftPlanCard extends StatelessWidget {
                 title: Text(warning),
               ),
             ),
+          ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              generation.verification.approved
+                  ? Icons.verified_outlined
+                  : Icons.gpp_bad_outlined,
+            ),
+            title: Text(
+              generation.verification.approved
+                  ? _labsText(
+                      context,
+                      'Independent verification passed',
+                      'Unabhängige Prüfung bestanden',
+                    )
+                  : _labsText(
+                      context,
+                      'Independent verification rejected this draft',
+                      'Unabhängige Prüfung hat diesen Entwurf abgelehnt',
+                    ),
+            ),
+            subtitle: Text(generation.verification.summary),
+          ),
+          for (final issue in generation.verification.blockingIssues)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.block_outlined),
+              title: Text(issue),
+            ),
           _PlanTiers(plan: generation.plan),
           if (generation.citations.isNotEmpty)
             Wrap(
@@ -781,11 +1424,21 @@ class _DraftPlanCard extends StatelessWidget {
                   index < generation.citations.length;
                   index++
                 )
-                  ActionChip(
-                    avatar: const Icon(Icons.open_in_new, size: 16),
-                    label: Text('Source ${index + 1}'),
-                    onPressed: () =>
-                        launchUrl(Uri.parse(generation.citations[index])),
+                  Builder(
+                    builder: (context) {
+                      final uri = _safeWebUri(generation.citations[index]);
+                      return ActionChip(
+                        avatar: const Icon(Icons.open_in_new, size: 16),
+                        label: Text(
+                          _labsText(
+                            context,
+                            'Source ${index + 1}',
+                            'Quelle ${index + 1}',
+                          ),
+                        ),
+                        onPressed: uri == null ? null : () => launchUrl(uri),
+                      );
+                    },
                   ),
               ],
             ),
@@ -794,15 +1447,15 @@ class _DraftPlanCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               TextButton.icon(
-                onPressed: onExport,
+                onPressed: generation.canSave ? onExport : null,
                 icon: const Icon(Icons.ios_share_outlined),
-                label: const Text('Export'),
+                label: Text(_labsText(context, 'Export', 'Exportieren')),
               ),
               const SizedBox(width: 8),
               FilledButton.icon(
-                onPressed: onSave,
+                onPressed: generation.canSave ? onSave : null,
                 icon: const Icon(Icons.save_outlined),
-                label: const Text('Save plan'),
+                label: Text(_labsText(context, 'Save plan', 'Plan speichern')),
               ),
             ],
           ),
@@ -831,17 +1484,75 @@ class _SavedPlanCard extends StatelessWidget {
       title: Text(plan.title),
       subtitle: Text(
         '${DateFormat.yMMMd().format(plan.plannedFor ?? plan.createdAt)} · '
-        '${plan.items.length} tests · ${plan.provider ?? 'manual'}',
+        '${_labsText(context, '${plan.items.length} tests', '${plan.items.length} Tests')} · '
+        '${plan.provider ?? _labsText(context, 'manual', 'manuell')}',
       ),
       trailing: PopupMenuButton<String>(
-        tooltip: 'Plan actions',
+        tooltip: _labsText(context, 'Plan actions', 'Planaktionen'),
         onSelected: (value) => value == 'export' ? onExport() : onDelete(),
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: 'export', child: Text('Export')),
-          PopupMenuItem(value: 'delete', child: Text('Delete')),
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'export',
+            child: Text(_labsText(context, 'Export', 'Exportieren')),
+          ),
+          PopupMenuItem(
+            value: 'delete',
+            child: Text(_labsText(context, 'Delete', 'Löschen')),
+          ),
         ],
       ),
       children: [
+        if (plan.status == 'verified')
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.verified_outlined),
+            title: Text(
+              _labsText(
+                context,
+                'Independent verification passed',
+                'Unabhängige Prüfung bestanden',
+              ),
+            ),
+            subtitle: Text(plan.verificationSummary),
+          ),
+        for (final warning in plan.verificationWarnings)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.warning_amber_outlined),
+            title: Text(warning),
+          ),
+        if (plan.verificationCitations.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Wrap(
+              spacing: 6,
+              children: [
+                for (
+                  var index = 0;
+                  index < plan.verificationCitations.length;
+                  index++
+                )
+                  Builder(
+                    builder: (context) {
+                      final uri = _safeWebUri(
+                        plan.verificationCitations[index],
+                      );
+                      return ActionChip(
+                        avatar: const Icon(Icons.open_in_new, size: 16),
+                        label: Text(
+                          _labsText(
+                            context,
+                            'Source ${index + 1}',
+                            'Quelle ${index + 1}',
+                          ),
+                        ),
+                        onPressed: uri == null ? null : () => launchUrl(uri),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           child: _PlanTiers(plan: plan, onToggle: onToggle),
@@ -864,11 +1575,17 @@ class _PlanTiers extends StatelessWidget {
         ExpansionTile(
           initiallyExpanded: tier == LabTier.core,
           tilePadding: EdgeInsets.zero,
-          title: Text(_label(tier)),
+          title: Text(_label(context, tier)),
           subtitle: Text(
-            '${plan.itemsThrough(tier).length} tests · '
-            '${plan.knownTotal(tier).toStringAsFixed(2)} € known'
-            '${plan.missingPriceCount(tier) == 0 ? '' : ' + ${plan.missingPriceCount(tier)} unpriced'}',
+            _labsText(
+              context,
+              '${plan.itemsThrough(tier).length} tests · '
+                  '${plan.knownTotal(tier).toStringAsFixed(2)} € known'
+                  '${plan.missingPriceCount(tier) == 0 ? '' : ' + ${plan.missingPriceCount(tier)} unpriced'}',
+              '${plan.itemsThrough(tier).length} Tests · '
+                  '${plan.knownTotal(tier).toStringAsFixed(2)} € bekannt'
+                  '${plan.missingPriceCount(tier) == 0 ? '' : ' + ${plan.missingPriceCount(tier)} ohne Preis'}',
+            ),
           ),
           children: [
             for (final item in plan.itemsThrough(tier))
@@ -882,7 +1599,7 @@ class _PlanTiers extends StatelessWidget {
                     item.rationale,
                     if (item.preparation.isNotEmpty) item.preparation,
                     item.priceEur == null
-                        ? 'Price unknown'
+                        ? _labsText(context, 'Price unknown', 'Preis unbekannt')
                         : '${item.priceEur!.toStringAsFixed(2)} €',
                   ].join(' · '),
                 ),
@@ -897,10 +1614,18 @@ class _PlanTiers extends StatelessWidget {
     ],
   );
 
-  String _label(LabTier tier) => switch (tier) {
-    LabTier.core => 'Core',
-    LabTier.advanced => 'Advanced (includes Core)',
-    LabTier.comprehensive => 'Comprehensive (includes all)',
+  String _label(BuildContext context, LabTier tier) => switch (tier) {
+    LabTier.core => _labsText(context, 'Core', 'Basis'),
+    LabTier.advanced => _labsText(
+      context,
+      'Advanced (includes Core)',
+      'Erweitert (enthält Basis)',
+    ),
+    LabTier.comprehensive => _labsText(
+      context,
+      'Comprehensive (includes all)',
+      'Umfassend (enthält alle)',
+    ),
   };
 }
 
@@ -908,10 +1633,14 @@ class _BiomarkerCatalog extends StatefulWidget {
   const _BiomarkerCatalog({
     required this.controller,
     required this.latestByBiomarker,
+    required this.profile,
+    required this.now,
   });
 
   final AppController controller;
   final Map<String, Measurement> latestByBiomarker;
+  final Profile profile;
+  final DateTime now;
 
   @override
   State<_BiomarkerCatalog> createState() => _BiomarkerCatalogState();
@@ -930,6 +1659,18 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
 
   @override
   Widget build(BuildContext context) {
+    final statusService = BiomarkerStatusService();
+    final statusByBiomarker = {
+      for (final biomarker in widget.controller.biomarkers)
+        biomarker.id: statusService.evaluate(
+          biomarker: biomarker,
+          measurement: widget.latestByBiomarker[biomarker.id],
+          profile: widget.profile,
+          targets: widget.controller.profileTargets,
+          referenceRanges: widget.controller.biomarkerRanges,
+          now: widget.now,
+        ),
+    };
     final categories = {
       'All',
       ...widget.controller.biomarkers
@@ -946,8 +1687,18 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
       final matchesCategory =
           _category == 'All' || biomarker.category == _category;
       final matchesStatus = switch (_status) {
-        'Measured' => latest != null,
-        'Never measured' => latest == null,
+        'Below' => statusByBiomarker[biomarker.id]!.isBelow,
+        'Above' => statusByBiomarker[biomarker.id]!.isAbove,
+        'In target/optimal' =>
+          statusByBiomarker[biomarker.id]!.isTargetOrOptimal,
+        'Within reference/lab' =>
+          statusByBiomarker[biomarker.id]!.isReferenceOrLab,
+        'Unavailable' =>
+          statusByBiomarker[biomarker.id]!.kind ==
+              BiomarkerStatusKind.unavailable,
+        'Never measured' =>
+          statusByBiomarker[biomarker.id]!.kind ==
+              BiomarkerStatusKind.neverMeasured,
         'Missing price' => biomarker.priceEur == null,
         'Conversion issue' => widget.controller.measurements.any(
           (item) =>
@@ -965,11 +1716,15 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
           onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search),
-            hintText: 'Search names and lab synonyms',
+            hintText: _labsText(
+              context,
+              'Search names and lab synonyms',
+              'Namen und Laborsynonyme durchsuchen',
+            ),
             suffixIcon: _search.text.isEmpty
                 ? null
                 : IconButton(
-                    tooltip: 'Clear',
+                    tooltip: _labsText(context, 'Clear', 'Leeren'),
                     onPressed: () => setState(_search.clear),
                     icon: const Icon(Icons.close),
                   ),
@@ -984,42 +1739,111 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
                 value: _category,
                 items: [
                   for (final category in categories)
-                    DropdownMenuItem(value: category, child: Text(category)),
+                    DropdownMenuItem(
+                      value: category,
+                      child: Text(
+                        category == 'All'
+                            ? _labsText(context, 'All', 'Alle')
+                            : category,
+                      ),
+                    ),
                 ],
                 onChanged: (value) => setState(() => _category = value!),
               ),
               const SizedBox(width: 12),
               DropdownButton<String>(
                 value: _status,
-                items: const [
-                  DropdownMenuItem(value: 'All', child: Text('All statuses')),
-                  DropdownMenuItem(value: 'Measured', child: Text('Measured')),
+                items: [
+                  DropdownMenuItem(
+                    value: 'All',
+                    child: Text(
+                      _labsText(context, 'All statuses', 'Alle Status'),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Below',
+                    child: Text(_labsText(context, 'Below', 'Unterhalb')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Above',
+                    child: Text(_labsText(context, 'Above', 'Oberhalb')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'In target/optimal',
+                    child: Text(
+                      _labsText(
+                        context,
+                        'In target/optimal',
+                        'Im Ziel-/Optimalbereich',
+                      ),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Within reference/lab',
+                    child: Text(
+                      _labsText(
+                        context,
+                        'Within reference/lab',
+                        'Im Referenz-/Laborbereich',
+                      ),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Unavailable',
+                    child: Text(
+                      _labsText(context, 'Unavailable', 'Nicht verfügbar'),
+                    ),
+                  ),
                   DropdownMenuItem(
                     value: 'Never measured',
-                    child: Text('Never measured'),
+                    child: Text(
+                      _labsText(context, 'Never measured', 'Noch nie gemessen'),
+                    ),
                   ),
                   DropdownMenuItem(
                     value: 'Missing price',
-                    child: Text('Missing price'),
+                    child: Text(
+                      _labsText(context, 'Missing price', 'Preis fehlt'),
+                    ),
                   ),
                   DropdownMenuItem(
                     value: 'Conversion issue',
-                    child: Text('Conversion issue'),
+                    child: Text(
+                      _labsText(
+                        context,
+                        'Conversion issue',
+                        'Umrechnungsproblem',
+                      ),
+                    ),
                   ),
                 ],
                 onChanged: (value) => setState(() => _status = value!),
               ),
               const SizedBox(width: 12),
-              Text('${filtered.length} shown'),
+              Text(
+                _labsText(
+                  context,
+                  '${filtered.length} shown',
+                  '${filtered.length} angezeigt',
+                ),
+              ),
             ],
           ),
         ),
         const SizedBox(height: 8),
         if (filtered.isEmpty)
-          const EmptyState(
+          EmptyState(
             icon: Icons.filter_alt_off_outlined,
-            title: 'No matching biomarkers',
-            message: 'Clear or change the catalog filters.',
+            title: _labsText(
+              context,
+              'No matching biomarkers',
+              'Keine passenden Biomarker',
+            ),
+            message: _labsText(
+              context,
+              'Clear or change the catalog filters.',
+              'Leere oder ändere die Katalogfilter.',
+            ),
           )
         else
           Card(
@@ -1030,6 +1854,7 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
                   _BiomarkerTile(
                     biomarker: biomarker,
                     latest: widget.latestByBiomarker[biomarker.id],
+                    status: statusByBiomarker[biomarker.id]!,
                     controller: widget.controller,
                   ),
               ],
@@ -1044,41 +1869,67 @@ class _BiomarkerTile extends StatelessWidget {
   const _BiomarkerTile({
     required this.biomarker,
     required this.latest,
+    required this.status,
     required this.controller,
   });
 
   final Biomarker biomarker;
   final Measurement? latest;
+  final BiomarkerStatus status;
   final AppController controller;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    leading: const CircleAvatar(child: Icon(Icons.science_outlined)),
-    title: Text(biomarker.displayName),
-    subtitle: Text(
-      [
-        if (biomarker.category.isNotEmpty) biomarker.category,
-        if (latest != null)
-          '${latest!.value} ${latest!.unit} · ${DateFormat.yMMMd().format(latest!.takenAt)}'
-        else
-          'No result yet',
-        if (latest?.conversionStatus == 'unsupported') 'Conversion unavailable',
-      ].join(' · '),
+  Widget build(BuildContext context) => Semantics(
+    label: _labsText(
+      context,
+      '${biomarker.displayName}. Status: ${status.label}. ${status.detail}',
+      '${biomarker.displayName}. Status: ${_localizedStatusLabel(context, status)}. ${_localizedStatusDetail(context, status)}',
     ),
-    trailing: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Text(
-          biomarker.priceEur == null
-              ? 'No price'
-              : '${biomarker.priceEur!.toStringAsFixed(2)} €',
-        ),
-        const Icon(Icons.chevron_right, size: 18),
-      ],
+    child: ListTile(
+      leading: CircleAvatar(child: Icon(_statusIcon(status))),
+      title: Text(biomarker.displayName),
+      subtitle: Text(
+        [
+          if (biomarker.category.isNotEmpty) biomarker.category,
+          if (latest != null)
+            '${latest!.value} ${latest!.unit} · ${DateFormat.yMMMd().format(latest!.takenAt)}'
+          else
+            _labsText(context, 'No result yet', 'Noch kein Ergebnis'),
+          _localizedStatusLabel(context, status),
+          if (latest?.conversionStatus == 'unsupported')
+            _labsText(
+              context,
+              'Conversion unavailable',
+              'Umrechnung nicht verfügbar',
+            ),
+        ].join(' · '),
+      ),
+      trailing: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            biomarker.priceEur == null
+                ? _labsText(context, 'No price', 'Kein Preis')
+                : '${biomarker.priceEur!.toStringAsFixed(2)} €',
+          ),
+          const Icon(Icons.chevron_right, size: 18),
+        ],
+      ),
+      onTap: () => showBiomarkerDetail(context, controller, biomarker),
+      onLongPress: () =>
+          showAddBiomarkerDialog(context, controller, existing: biomarker),
     ),
-    onTap: () => showBiomarkerDetail(context, controller, biomarker),
-    onLongPress: () =>
-        showAddBiomarkerDialog(context, controller, existing: biomarker),
   );
+
+  IconData _statusIcon(BiomarkerStatus value) => switch (value.kind) {
+    BiomarkerStatusKind.below => Icons.arrow_downward_outlined,
+    BiomarkerStatusKind.above => Icons.arrow_upward_outlined,
+    BiomarkerStatusKind.inPersonalTarget ||
+    BiomarkerStatusKind.inStoredOptimal => Icons.track_changes_outlined,
+    BiomarkerStatusKind.withinStoredReference ||
+    BiomarkerStatusKind.withinLabRange => Icons.check_circle_outline,
+    BiomarkerStatusKind.neverMeasured => Icons.remove_circle_outline,
+    BiomarkerStatusKind.unavailable => Icons.help_outline,
+  };
 }
