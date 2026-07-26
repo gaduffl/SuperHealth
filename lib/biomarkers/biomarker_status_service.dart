@@ -401,9 +401,11 @@ class BiomarkerStatusService {
   }
 
   static int _rangeOrder(BiomarkerReferenceRange a, BiomarkerReferenceRange b) {
-    final sex = _hasSex(b).compareTo(_hasSex(a));
+    final sex = (_hasSex(b) ? 1 : 0).compareTo(_hasSex(a) ? 1 : 0);
     if (sex != 0) return sex;
-    final bounded = _hasAgeBound(b).compareTo(_hasAgeBound(a));
+    final bounded = (_hasAgeBound(b) ? 1 : 0).compareTo(
+      _hasAgeBound(a) ? 1 : 0,
+    );
     if (bounded != 0) return bounded;
     final span = _ageSpan(a).compareTo(_ageSpan(b));
     if (span != 0) return span;
