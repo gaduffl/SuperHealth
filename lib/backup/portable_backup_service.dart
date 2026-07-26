@@ -13,6 +13,8 @@ import '../data/health_repository.dart';
 /// OneDrive credentials and item IDs, sync shadows/conflicts, and import audit
 /// data are neither read into nor restored from the portable bundle.
 class PortableBackupService {
+  // Keep the public named argument stable while storing it privately.
+  // ignore: prefer_initializing_formals
   PortableBackupService(
     AppDatabase appDatabase, {
     required DocumentsDirectory documentsDirectory,
@@ -181,8 +183,9 @@ class PortableBackupService {
 
   Future<_RestorePlan> _validate(String source) async {
     final decoded = jsonDecode(source);
-    if (decoded is! Map)
+    if (decoded is! Map) {
       throw const FormatException('Portable backup must be an object.');
+    }
     final bundle = Map<String, Object?>.from(decoded);
     _requireExactKeys(bundle, const [
       'schema',
@@ -232,19 +235,23 @@ class PortableBackupService {
     final tables = <String, List<Map<String, Object?>>>{};
     for (final table in AppDatabase.synchronizedTables) {
       final node = tablesNode[table];
-      if (node is! List) throw FormatException('$table rows must be a list.');
+      if (node is! List) {
+        throw FormatException('$table rows must be a list.');
+      }
       final rows = <Map<String, Object?>>[];
       final ids = <String>{};
       for (final rawRow in node) {
-        if (rawRow is! Map)
+        if (rawRow is! Map) {
           throw FormatException('$table contains a non-object row.');
+        }
         final row = Map<String, Object?>.from(rawRow);
         final id = row['id'];
         if (id is! String || id.isEmpty) {
           throw FormatException('$table row has invalid id.');
         }
-        if (!ids.add(id))
+        if (!ids.add(id)) {
           throw FormatException('$table contains duplicate id $id.');
+        }
         rows.add(row);
       }
       rows.sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
@@ -270,8 +277,9 @@ class PortableBackupService {
     Object? manifestNode,
     Map<String, List<Map<String, Object?>>> tables,
   ) {
-    if (node is! List)
+    if (node is! List) {
       throw const FormatException('Document bundle must be a list.');
+    }
     final manifest = _object(manifestNode, 'document manifest');
     _requireExactKeys(manifest, const [
       'count',
