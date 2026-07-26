@@ -75,8 +75,8 @@ void main() {
     await tester.pump();
 
     expect(find.text('Welcome to SuperHealth'), findsOneWidget);
-    expect(find.text('Create first profile'), findsOneWidget);
-    expect(find.text('Restore from OneDrive'), findsOneWidget);
+    expect(find.text('Start fresh'), findsOneWidget);
+    expect(find.text('Restore or transfer existing data'), findsOneWidget);
 
     controller.dispose();
   });
