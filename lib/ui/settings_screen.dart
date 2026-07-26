@@ -16,6 +16,7 @@ import '../import/legacy_import_service.dart';
 import '../reminders/reminder_planner.dart';
 import '../reminders/reminder_service.dart';
 import '../sync/one_drive_service.dart';
+import '../sync/restore_sync_gate.dart';
 import 'common.dart';
 import 'dialogs.dart';
 import 'initial_setup_widgets.dart';
