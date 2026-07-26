@@ -380,7 +380,11 @@ class _Fixture {
   );
 
   Future<String> profileName() async =>
-      (await (await database.database).query('profiles')).single['display_name']
+      (await (await database.database).query(
+            'profiles',
+            where: 'id = ?',
+            whereArgs: const ['profile-1'],
+          )).single['display_name']
           as String;
 
   Future<void> dispose() => database.close();
