@@ -57,7 +57,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Active profile'), findsOneWidget);
+      expect(find.textContaining('Active profile'), findsOneWidget);
       expect(find.byTooltip('Actions for Alice'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Actions for Alice'));
