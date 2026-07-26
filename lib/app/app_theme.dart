@@ -391,16 +391,15 @@ const _midnightFriendlyDark = _SchemeColors(
 
 /// WCAG's relative luminance formula for opaque sRGB colors.
 double relativeLuminance(Color color) {
-  double linearize(int channel) {
-    final value = channel / 255;
+  double linearize(double value) {
     return value <= 0.04045
         ? value / 12.92
         : math.pow((value + 0.055) / 1.055, 2.4).toDouble();
   }
 
-  return 0.2126 * linearize(color.red) +
-      0.7152 * linearize(color.green) +
-      0.0722 * linearize(color.blue);
+  return 0.2126 * linearize(color.r) +
+      0.7152 * linearize(color.g) +
+      0.0722 * linearize(color.b);
 }
 
 double colorContrastRatio(Color first, Color second) {
