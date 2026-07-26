@@ -2,10 +2,10 @@ import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../app/app_controller.dart';
+import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
 import 'dialogs.dart';
@@ -15,28 +15,40 @@ class HealthScreen extends StatelessWidget {
   const HealthScreen({super.key});
 
   @override
-  Widget build(BuildContext context) => DefaultTabController(
-    length: 3,
-    child: Column(
-      children: [
-        const Material(
-          color: Colors.transparent,
-          child: TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.monitor_heart_outlined), text: 'Journal'),
-              Tab(icon: Icon(Icons.science_outlined), text: 'Biomarkers'),
-              Tab(icon: Icon(Icons.assignment_ind_outlined), text: 'Context'),
-            ],
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: TabBar(
+              tabs: [
+                Tab(
+                  icon: const Icon(Icons.monitor_heart_outlined),
+                  text: strings.journal,
+                ),
+                Tab(
+                  icon: const Icon(Icons.science_outlined),
+                  text: strings.biomarkers,
+                ),
+                Tab(
+                  icon: const Icon(Icons.assignment_ind_outlined),
+                  text: strings.context,
+                ),
+              ],
+            ),
           ),
-        ),
-        const Expanded(
-          child: TabBarView(
-            children: [_JournalPane(), LabsScreen(), _ContextPane()],
+          const Expanded(
+            child: TabBarView(
+              children: [_JournalPane(), LabsScreen(), _ContextPane()],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 class _JournalPane extends StatefulWidget {
@@ -54,6 +66,7 @@ class _JournalPaneState extends State<_JournalPane> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final strings = AppLocalizations.of(context);
     final cutoff = DateTime.now().subtract(Duration(days: _rangeDays));
     final filtered = controller.events
         .where(
@@ -93,10 +106,10 @@ class _JournalPaneState extends State<_JournalPane> {
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
         children: [
           SectionHeader(
-            title: 'Quick check-in',
-            subtitle: 'Symptoms, exposures, habits, and interventions',
+            title: strings.quickCheckIn,
+            subtitle: strings.quickCheckInDescription,
             action: IconButton.filled(
-              tooltip: 'Track a health event',
+              tooltip: strings.trackHealthEvent,
               onPressed: () => showAddEventDialog(context, controller),
               icon: const Icon(Icons.add),
             ),
@@ -124,18 +137,16 @@ class _JournalPaneState extends State<_JournalPane> {
               ],
             )
           else
-            const Card(
+            Card(
               child: ListTile(
                 leading: Icon(Icons.lightbulb_outline),
-                title: Text('Create reusable check-ins as you log'),
-                subtitle: Text(
-                  'Examples: headache severity, energy, caffeine, alcohol, exercise, sleep quality.',
-                ),
+                title: Text(strings.reusableCheckIns),
+                subtitle: Text(strings.reusableCheckInsExamples),
               ),
             ),
           if (trendEvents.isNotEmpty) ...[
             SectionHeader(
-              title: 'Symptom trend',
+              title: strings.symptomTrend,
               action: DropdownButton<String>(
                 value: selectedTrend,
                 items: [
@@ -148,36 +159,36 @@ class _JournalPaneState extends State<_JournalPane> {
             _TrendCard(events: trendEvents),
           ],
           SectionHeader(
-            title: 'Journal',
-            subtitle: '${filtered.length} entries in the selected range',
+            title: strings.journal,
+            subtitle: strings.journalEntries(filtered.length),
             action: PopupMenuButton<int>(
-              tooltip: 'Change date range',
+              tooltip: strings.changeDateRange,
               initialValue: _rangeDays,
               onSelected: (value) => setState(() => _rangeDays = value),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 30, child: Text('Last 30 days')),
-                PopupMenuItem(value: 90, child: Text('Last 90 days')),
-                PopupMenuItem(value: 365, child: Text('Last year')),
-                PopupMenuItem(value: 36500, child: Text('All history')),
+              itemBuilder: (_) => [
+                PopupMenuItem(value: 30, child: Text(strings.lastDays(30))),
+                PopupMenuItem(value: 90, child: Text(strings.lastDays(90))),
+                PopupMenuItem(value: 365, child: Text(strings.lastYear)),
+                PopupMenuItem(value: 36500, child: Text(strings.allHistory)),
               ],
               icon: const Icon(Icons.date_range_outlined),
             ),
           ),
           SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'all', label: Text('All')),
-              ButtonSegment(value: 'symptom', label: Text('Symptoms')),
-              ButtonSegment(value: 'tag', label: Text('Tags')),
+            segments: [
+              ButtonSegment(value: 'all', label: Text(strings.all)),
+              ButtonSegment(value: 'symptom', label: Text(strings.symptoms)),
+              ButtonSegment(value: 'tag', label: Text(strings.tags)),
             ],
             selected: {_kind},
             onSelectionChanged: (value) => setState(() => _kind = value.first),
           ),
           const SizedBox(height: 10),
           if (filtered.isEmpty)
-            const EmptyState(
+            EmptyState(
               icon: Icons.monitor_heart_outlined,
-              title: 'No journal entries',
-              message: 'Track a symptom or exposure to start the timeline.',
+              title: strings.noJournalEntries,
+              message: strings.noJournalEntriesDescription,
             )
           else
             Card(
@@ -190,9 +201,8 @@ class _JournalPaneState extends State<_JournalPane> {
               ),
             ),
           SectionHeader(
-            title: 'Exploratory correlations',
-            subtitle:
-                'Daily exposure vs symptom scores; association is not causation',
+            title: strings.exploratoryCorrelations,
+            subtitle: strings.correlationsDescription,
             action: TextButton.icon(
               onPressed: controller.busy
                   ? null
@@ -204,17 +214,15 @@ class _JournalPaneState extends State<_JournalPane> {
                       }
                     },
               icon: const Icon(Icons.analytics_outlined),
-              label: const Text('Analyze'),
+              label: Text(strings.analyze),
             ),
           ),
           if (controller.correlations.isEmpty)
-            const Card(
+            Card(
               child: ListTile(
                 leading: Icon(Icons.info_outline),
-                title: Text('At least 7 overlapping days are required'),
-                subtitle: Text(
-                  'Repeated check-ins are needed. Constant exposures cannot produce a correlation.',
-                ),
+                title: Text(strings.minimumCorrelationDays),
+                subtitle: Text(strings.minimumCorrelationDaysDescription),
               ),
             )
           else
@@ -223,12 +231,25 @@ class _JournalPaneState extends State<_JournalPane> {
                 children: [
                   for (final result in controller.correlations.take(20))
                     ListTile(
+                      isThreeLine: true,
                       title: Text('${result.exposure} → ${result.outcome}'),
                       subtitle: Text(
-                        'Lag ${result.lagDays}d · n=${result.sampleSize} · ${result.strength}',
+                        strings.correlationSummary(
+                          lagDays: result.lagDays,
+                          sampleSize: result.sampleSize,
+                          strength: result.strength,
+                          spearman: result.spearmanCoefficient,
+                          adjustedQ: result.adjustedPValue,
+                          statisticallySignificant:
+                              result.isStatisticallySignificant,
+                        ),
                       ),
-                      trailing: Text(result.coefficient.toStringAsFixed(2)),
+                      trailing: Text(strings.pearson(result.coefficient)),
                     ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                    child: Text(strings.correlationCaveat),
+                  ),
                 ],
               ),
             ),
@@ -252,11 +273,17 @@ class _JournalPaneState extends State<_JournalPane> {
         title: Text(event.name),
         subtitle: Text(
           [
-            DateFormat('dd.MM.yyyy HH:mm').format(event.observedAt),
-            if (event.score != null) 'Score ${event.score}/10',
+            AppLocalizations.of(
+              context,
+            ).formatTrackingDateTime(event.observedAt),
+            if (event.score != null)
+              AppLocalizations.of(context).scoreOutOfTen(event.score!),
             if (event.numericValue != null)
-              '${event.numericValue} ${event.unit ?? ''}',
-            if (event.durationMinutes != null) '${event.durationMinutes} min',
+              '${AppLocalizations.of(context).formatNumber(event.numericValue!)} ${event.unit ?? ''}',
+            if (event.durationMinutes != null)
+              AppLocalizations.of(
+                context,
+              ).durationMinutes(event.durationMinutes!),
             if (event.notes.isNotEmpty) event.notes,
           ].join(' · '),
         ),
@@ -268,17 +295,25 @@ class _JournalPaneState extends State<_JournalPane> {
             } else if (value == 'delete') {
               final confirmed = await showConfirmAction(
                 context,
-                title: 'Delete journal entry?',
-                message: 'This removes the entry from future analysis.',
-                confirmLabel: 'Delete',
+                title: AppLocalizations.of(context).deleteJournalEntryTitle,
+                message: AppLocalizations.of(
+                  context,
+                ).deleteJournalEntryDescription,
+                confirmLabel: AppLocalizations.of(context).delete,
                 destructive: true,
               );
               if (confirmed) await controller.deleteEvent(event);
             }
           },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'edit', child: Text('Edit')),
-            PopupMenuItem(value: 'delete', child: Text('Delete')),
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'edit',
+              child: Text(AppLocalizations.of(context).edit),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              child: Text(AppLocalizations.of(context).delete),
+            ),
           ],
         ),
       ),
@@ -301,8 +336,9 @@ class _TrendCard extends StatelessWidget {
     final minValue = values.reduce(math.min);
     final maxValue = values.reduce(math.max);
     return Semantics(
-      label:
-          '${events.first.name} trend with ${events.length} points, from ${minValue.toStringAsFixed(1)} to ${maxValue.toStringAsFixed(1)}.',
+      label: AppLocalizations.of(
+        context,
+      ).trendSemantics(events.first.name, events.length, minValue, maxValue),
       child: Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -380,32 +416,31 @@ class _ContextPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final strings = AppLocalizations.of(context);
     const labels = {
-      'condition': ('Conditions', Icons.healing_outlined),
-      'medication': ('Medicines', Icons.medication_liquid_outlined),
-      'goal': ('Goals', Icons.flag_outlined),
-      'family_history': ('Family history', Icons.family_restroom_outlined),
+      'condition': Icons.healing_outlined,
+      'medication': Icons.medication_liquid_outlined,
+      'goal': Icons.flag_outlined,
+      'family_history': Icons.family_restroom_outlined,
     };
     return PageBody(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
         children: [
           SectionHeader(
-            title: 'Health context',
-            subtitle:
-                'Personal facts used by the advisor and lab planner—not shared across profiles',
+            title: strings.healthContext,
+            subtitle: strings.healthContextDescription,
             action: IconButton.filled(
-              tooltip: 'Add health context',
+              tooltip: strings.addHealthContext,
               onPressed: () => showAddNamedRecordDialog(context, controller),
               icon: const Icon(Icons.add),
             ),
           ),
           if (controller.namedRecords.isEmpty)
-            const EmptyState(
+            EmptyState(
               icon: Icons.assignment_ind_outlined,
-              title: 'No health context yet',
-              message:
-                  'Add conditions, medicines, goals, and family history so advice can account for them.',
+              title: strings.noHealthContext,
+              message: strings.noHealthContextDescription,
             )
           else
             for (final entry in labels.entries)
@@ -415,8 +450,8 @@ class _ContextPane extends StatelessWidget {
                 Card(
                   child: ExpansionTile(
                     initiallyExpanded: true,
-                    leading: Icon(entry.value.$2),
-                    title: Text(entry.value.$1),
+                    leading: Icon(entry.value),
+                    title: Text(strings.contextCategory(entry.key)),
                     children: [
                       for (final record in controller.namedRecords.where(
                         (item) => item.kind == entry.key,
@@ -427,7 +462,7 @@ class _ContextPane extends StatelessWidget {
                             [
                               record.status,
                               if (record.dose != null)
-                                '${record.dose} ${record.unit ?? ''}',
+                                '${strings.formatNumber(record.dose!)} ${record.unit ?? ''}',
                               if (record.schedule?.isNotEmpty == true)
                                 record.schedule!,
                               if (record.notes.isNotEmpty) record.notes,
@@ -439,14 +474,17 @@ class _ContextPane extends StatelessWidget {
                             existing: record,
                           ),
                           trailing: IconButton(
-                            tooltip: 'Delete ${record.name}',
+                            tooltip: strings.deleteNamedRecordTitle(
+                              record.name,
+                            ),
                             onPressed: () async {
                               final confirmed = await showConfirmAction(
                                 context,
-                                title: 'Delete ${record.name}?',
-                                message:
-                                    'The record will no longer be included in advisor context.',
-                                confirmLabel: 'Delete',
+                                title: strings.deleteNamedRecordTitle(
+                                  record.name,
+                                ),
+                                message: strings.deleteNamedRecordDescription,
+                                confirmLabel: strings.delete,
                                 destructive: true,
                               );
                               if (confirmed) {
@@ -459,19 +497,15 @@ class _ContextPane extends StatelessWidget {
                     ],
                   ),
                 ),
-          const SectionHeader(
-            title: 'Privacy',
-            subtitle: 'The active profile is the AI and export boundary',
+          SectionHeader(
+            title: strings.privacy,
+            subtitle: strings.privacyDescription,
           ),
-          const Card(
+          Card(
             child: ListTile(
               leading: Icon(Icons.lock_outline),
-              title: Text(
-                'Household inventory is shared; health facts are not',
-              ),
-              subtitle: Text(
-                'Other profiles can use the same supplement stock without their conditions, biomarkers, or journal entering this profile’s AI context.',
-              ),
+              title: Text(strings.sharedInventoryPrivateFacts),
+              subtitle: Text(strings.sharedInventoryPrivateFactsDescription),
             ),
           ),
         ],
