@@ -8,10 +8,13 @@ import 'ai_models.dart';
 typedef HealthSnapshotLoader =
     Future<Map<String, Object?>> Function(String profileId);
 
+enum HealthContextDelivery { inline, providerFile }
+
 class HealthContextEnvelope {
   const HealthContextEnvelope({
     required this.json,
     required this.sha256,
+    required this.fileSha256,
     required this.byteLength,
     required this.estimatedTokens,
     required this.recordCount,
@@ -23,6 +26,9 @@ class HealthContextEnvelope {
   /// snapshot is removed or replaced by a summary.
   final String json;
   final String sha256;
+
+  /// SHA-256 of the exact UTF-8 JSON payload sent inline or as a file.
+  final String fileSha256;
   final int byteLength;
   final int estimatedTokens;
   final int recordCount;
@@ -30,9 +36,26 @@ class HealthContextEnvelope {
   final Map<String, String> sectionHashes;
 
   String get receiptInstruction =>
-      'Context receipt: sha256=$sha256, records=$recordCount. '
+      'Context receipt: package_sha256=$sha256, file_sha256=$fileSha256, '
+      'records=$recordCount. '
       'Treat the attention index as navigation only and verify claims against '
       'the complete raw ledger.';
+
+  List<String> get sectionNames {
+    final sections = manifest['sections'];
+    if (sections is! Map) {
+      return const [];
+    }
+    return sections.keys.map((key) => key.toString()).toList()..sort();
+  }
+
+  String get coverageInstruction =>
+      'Before answering, review every manifest section and verify material '
+      'claims against raw_ledger. End with exactly one hidden receipt: '
+      '<context_coverage>{"sha256":"$sha256","file_sha256":"$fileSha256",'
+      '"record_count":$recordCount,"reviewed_sections":${jsonEncode(sectionNames)},'
+      '"section_hashes":${jsonEncode(sectionHashes)}}</context_coverage>. '
+      'Do not mention the receipt in the visible answer.';
 }
 
 /// Builds a layered, lossless package instead of pasting an unstructured
@@ -72,7 +95,7 @@ class HealthContextBuilder {
       recordCount += metadata['records']! as int;
     }
 
-    _validateDeclaredCounts(source['manifest'], sections);
+    _validateDeclaredCounts(source['manifest'], rawData, sections);
     final attentionIndex = _attentionIndex(rawData);
     final stableCore = <String, Object?>{
       'schema': packageSchema,
@@ -91,7 +114,17 @@ class HealthContextBuilder {
     final manifest = <String, Object?>{
       'complete': true,
       'lossless': true,
-      'profile_isolated': true,
+      // Clinical evidence is isolated to the active profile. The supplement
+      // catalog, inventory movements, and derived stock levels are deliberate
+      // household-shared evidence so stock stays correct for shared use.
+      'profile_isolated': false,
+      'clinical_evidence_profile_isolated': true,
+      'household_shared_supplement_inventory': true,
+      'evidence_scope': {
+        'clinical_evidence': 'active_profile_only',
+        'supplement_catalog_and_inventory': 'household_shared',
+        'inventory_movement_profile_id': 'provenance_only',
+      },
       'record_count': recordCount,
       'section_count': sections.length,
       'sections': sections,
@@ -107,12 +140,20 @@ class HealthContextBuilder {
       'coverage_contract': {
         'raw_ledger_is_complete': true,
         'attention_index_is_not_a_summary_replacement': true,
+        'evidence_scope': {
+          'clinical_evidence': 'active_profile_only',
+          'supplement_catalog_and_inventory': 'household_shared',
+          'inventory_movement_profile_id': 'provenance_only',
+        },
         'required_reading_protocol': [
           'Check the manifest and its section counts before reasoning.',
           'Use attention_index to locate changes, mixed units, gaps, and links.',
           'Verify every material claim against raw_ledger source rows.',
           'Scan every manifest section for interactions and contradictions.',
           'Never infer that a record is absent without checking its section count.',
+          'Treat inventory_movements as household stock provenance only. '
+              'Only active-profile supplement_intakes establish this person\'s '
+              'supplement intake.',
           'Reference source rows as section:id when explaining important findings.',
         ],
       },
@@ -125,6 +166,7 @@ class HealthContextBuilder {
     return HealthContextEnvelope(
       json: json,
       sha256: digest,
+      fileSha256: sha256.convert(bytes).toString(),
       byteLength: bytes.length,
       // A conservative display estimate. Providers remain authoritative.
       estimatedTokens: (bytes.length / 3.5).ceil(),
@@ -141,20 +183,51 @@ class HealthContextBuilder {
     int promptReserveTokens = 3000,
     int additionalInputTokens = 0,
   }) {
+    deliveryFor(
+      context: context,
+      capabilities: capabilities,
+      maxOutputTokens: maxOutputTokens,
+      promptReserveTokens: promptReserveTokens,
+      additionalInputTokens: additionalInputTokens,
+    );
+  }
+
+  HealthContextDelivery deliveryFor({
+    required HealthContextEnvelope context,
+    required ModelCapabilities capabilities,
+    required int maxOutputTokens,
+    int promptReserveTokens = 3000,
+    int additionalInputTokens = 0,
+  }) {
     final limit = capabilities.contextWindowTokens;
-    if (limit == null) return;
+    if (limit == null) {
+      throw StateError(
+        'This model does not expose a documented context limit. The complete '
+        'profile was not sent because SuperHealth cannot prove that it and '
+        'the reserved working room would fit. '
+        'Choose a model with documented long-context support.',
+      );
+    }
     final required =
         context.estimatedTokens +
         additionalInputTokens +
         maxOutputTokens +
         promptReserveTokens;
-    if (required > limit) {
-      throw StateError(
-        'The complete profile needs about $required tokens but this model has a '
-        '$limit-token context window. No health data was truncated. Choose a '
-        'larger-context model or a model with lossless context-file analysis.',
-      );
+    // Preserve substantial working room for reasoning and tool output instead
+    // of filling the window until answer quality collapses near the hard limit.
+    final inlineBudget = (limit * 0.72).floor();
+    if (required <= inlineBudget) {
+      return HealthContextDelivery.inline;
     }
+    if (capabilities.losslessContextFile && capabilities.codeExecution) {
+      return HealthContextDelivery.providerFile;
+    }
+    throw StateError(
+      'The complete profile needs about $required tokens and would leave too '
+      'little working context in this model ($limit tokens). No health data was '
+      'truncated. Choose a larger-context model or one with lossless '
+      'context-file analysis.',
+    );
   }
 
   void _validateSource(Map<String, Object?> source, String profileId) {
@@ -173,11 +246,21 @@ class HealthContextBuilder {
   }
 
   Map<String, Object?> _canonicalData(Object? value) {
-    if (value is! Map) throw StateError('Health data is not an object.');
+    if (value is! Map) {
+      throw StateError('Health data is not an object.');
+    }
     final result = <String, Object?>{};
-    final keys = value.keys.map((key) => '$key').toList()..sort();
-    for (final key in keys) {
-      final section = value[key];
+    final entries = <MapEntry<String, Object?>>[];
+    for (final entry in value.entries) {
+      if (entry.key is! String) {
+        throw StateError('Health data has a non-string section name.');
+      }
+      entries.add(MapEntry(entry.key as String, entry.value));
+    }
+    entries.sort((a, b) => a.key.compareTo(b.key));
+    for (final entry in entries) {
+      final key = entry.key;
+      final section = entry.value;
       if (section is List) {
         final rows = section.map(_canonicalValue).toList();
         rows.sort(
@@ -195,12 +278,21 @@ class HealthContextBuilder {
 
   Object? _canonicalValue(Object? value) {
     if (value is Map) {
-      final keys = value.keys.map((key) => '$key').toList()..sort();
+      final entries = <MapEntry<String, Object?>>[];
+      for (final entry in value.entries) {
+        if (entry.key is! String) {
+          throw StateError('Health data has a non-string object key.');
+        }
+        entries.add(MapEntry(entry.key as String, entry.value));
+      }
+      entries.sort((a, b) => a.key.compareTo(b.key));
       return <String, Object?>{
-        for (final key in keys) key: _canonicalValue(value[key]),
+        for (final entry in entries) entry.key: _canonicalValue(entry.value),
       };
     }
-    if (value is List) return value.map(_canonicalValue).toList();
+    if (value is List) {
+      return value.map(_canonicalValue).toList();
+    }
     return value;
   }
 
@@ -211,10 +303,14 @@ class HealthContextBuilder {
     DateTime? earliest;
     DateTime? latest;
     for (final raw in rows) {
-      if (raw is! Map) continue;
+      if (raw is! Map) {
+        continue;
+      }
       final row = Map<String, Object?>.from(raw);
       final id = row['id']?.toString();
-      if (id != null && id.isNotEmpty) ids.add(id);
+      if (id != null && id.isNotEmpty) {
+        ids.add(id);
+      }
       for (final entry in row.entries) {
         final key = entry.key.toLowerCase();
         final text = entry.value?.toString().trim();
@@ -235,7 +331,9 @@ class HealthContextBuilder {
     final duplicateIds = <String>[];
     final seen = <String>{};
     for (final id in ids) {
-      if (!seen.add(id)) duplicateIds.add(id);
+      if (!seen.add(id)) {
+        duplicateIds.add(id);
+      }
     }
     if (duplicateIds.isNotEmpty) {
       throw StateError(
@@ -256,15 +354,43 @@ class HealthContextBuilder {
 
   void _validateDeclaredCounts(
     Object? rawManifest,
+    Map<String, Object?> rawData,
     Map<String, Object?> sections,
   ) {
-    if (rawManifest is! Map || rawManifest['counts'] is! Map) return;
+    if (rawManifest is! Map || rawManifest['counts'] is! Map) {
+      throw StateError('Repository did not provide section counts.');
+    }
     final counts = rawManifest['counts']! as Map;
+    for (final entry in rawData.entries) {
+      if (entry.value is List && !counts.containsKey(entry.key)) {
+        throw StateError(
+          'Context completeness check failed: repository did not declare a '
+          'count for ${entry.key}.',
+        );
+      }
+    }
     for (final entry in counts.entries) {
-      final name = entry.key.toString();
-      final declared = (entry.value as num?)?.toInt();
+      if (entry.key is! String || entry.value is! num) {
+        throw const StateError(
+          'Context completeness check failed: a declared count is invalid.',
+        );
+      }
+      final name = entry.key as String;
+      final rawCount = entry.value as num;
+      if (!rawCount.isFinite) {
+        throw StateError(
+          'Context completeness check failed: invalid declared count for '
+          '$name.',
+        );
+      }
+      final declared = rawCount.toInt();
       final section = sections[name];
-      if (declared == null || section is! Map) continue;
+      if (rawCount != declared || declared < 0 || section is! Map) {
+        throw StateError(
+          'Context completeness check failed: invalid declared count for '
+          '$name.',
+        );
+      }
       final actual = (section['records'] as num?)?.toInt();
       if (actual != declared) {
         throw StateError(
@@ -285,11 +411,66 @@ class HealthContextBuilder {
   Map<String, Object?> _attentionIndex(Map<String, Object?> data) => {
     'latest_biomarkers': _latestBiomarkers(data),
     'supplement_exposure': _supplementExposure(data),
+    'household_stock': _householdStock(data),
     'event_series': _eventSeries(data),
     'active_health_records': _activeHealthRecords(data),
     'chronology': _chronology(data),
     'data_quality_flags': _dataQualityFlags(data),
   };
+
+  List<Map<String, Object?>> _householdStock(Map<String, Object?> data) {
+    final movementIdsBySupplement = <String, List<String>>{};
+    for (final movement in _mapRows(data['inventory_movements'])) {
+      final supplementId = movement['supplement_id']?.toString();
+      final movementId = movement['id']?.toString();
+      if (supplementId == null || movementId == null || movementId.isEmpty) {
+        continue;
+      }
+      movementIdsBySupplement
+          .putIfAbsent(supplementId, () => [])
+          .add(movementId);
+    }
+
+    final result = <Map<String, Object?>>[];
+    for (final row in _mapRows(data['household_stock_levels'])) {
+      final supplementId = row['supplement_id']?.toString();
+      final id = row['id']?.toString();
+      if (supplementId == null || id == null || id.isEmpty) {
+        continue;
+      }
+      final currentUnits = (row['current_units'] as num?)?.toDouble();
+      final threshold = (row['low_stock_threshold_units'] as num?)?.toDouble();
+      final movementIds = List<String>.from(
+        movementIdsBySupplement[supplementId] ?? const [],
+      )..sort();
+      result.add({
+        'supplement_id': supplementId,
+        'name': row['name']?.toString() ?? supplementId,
+        'current_units': currentUnits,
+        'stock_unit': row['stock_unit'],
+        'low_stock_threshold_units': threshold,
+        'is_low_stock':
+            threshold != null &&
+            currentUnits != null &&
+            currentUnits <= threshold,
+        'stock_record_ref': 'household_stock_levels:$id',
+        'inventory_movement_record_refs': [
+          for (final movementId in movementIds)
+            'inventory_movements:$movementId',
+        ],
+        'inventory_movement_record_count': movementIds.length,
+        'personal_intake_inference':
+            'not_permitted; use active-profile supplement_intakes only',
+      });
+    }
+    result.sort((a, b) {
+      final byName = '${a['name']}'.compareTo('${b['name']}');
+      return byName != 0
+          ? byName
+          : '${a['supplement_id']}'.compareTo('${b['supplement_id']}');
+    });
+    return result;
+  }
 
   List<Map<String, Object?>> _latestBiomarkers(Map<String, Object?> data) {
     final catalog = <String, String>{};
@@ -354,7 +535,9 @@ class HealthContextBuilder {
     final names = <String, String>{};
     for (final row in _mapRows(data['supplements'])) {
       final id = row['id']?.toString();
-      if (id != null) names[id] = row['name']?.toString() ?? id;
+      if (id != null) {
+        names[id] = row['name']?.toString() ?? id;
+      }
     }
     final grouped = <String, List<Map<String, Object?>>>{};
     for (final row in _mapRows(data['supplement_intakes'])) {
@@ -441,7 +624,9 @@ class HealthContextBuilder {
   ) {
     final result = <String, List<Map<String, Object?>>>{};
     for (final row in _mapRows(data['conditions_medications_goals_history'])) {
-      if (row['status']?.toString() != 'active') continue;
+      if (row['status']?.toString() != 'active') {
+        continue;
+      }
       final kind = row['kind']?.toString() ?? 'other';
       result.putIfAbsent(kind, () => []).add(row);
     }
@@ -454,8 +639,9 @@ class HealthContextBuilder {
       for (final row in _mapRows(entry.value)) {
         for (final dateKey in _dateKeys) {
           final value = row[dateKey];
-          if (value == null || DateTime.tryParse(value.toString()) == null)
+          if (value == null || DateTime.tryParse(value.toString()) == null) {
             continue;
+          }
           result.add({
             'at': value,
             'section': entry.key,
@@ -527,7 +713,9 @@ class HealthContextBuilder {
   }
 
   List<Map<String, Object?>> _mapRows(Object? value) {
-    if (value is! List) return const [];
+    if (value is! List) {
+      return const [];
+    }
     return value
         .whereType<Map>()
         .map((row) => Map<String, Object?>.from(row))
