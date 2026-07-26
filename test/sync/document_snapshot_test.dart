@@ -58,4 +58,51 @@ void main() {
 
     await database.close();
   });
+
+  test(
+    'rejects a snapshot that tries to supply a device-local document path',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Me');
+      final createdAt = DateTime.utc(2026, 1, 1);
+      await repository.saveDocumentBundle(
+        document: HealthDocument(
+          id: 'document-1',
+          profileId: profile.id,
+          fileName: 'lab.pdf',
+          localPath: '/device/one/lab.pdf',
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ),
+        newBiomarkers: const [],
+        measurements: const [],
+      );
+      final remote =
+          jsonDecode(jsonEncode(await repository.fullSyncSnapshot()))
+              as Map<String, dynamic>;
+      final document =
+          ((remote['tables'] as Map<String, dynamic>)['documents'] as List)
+                  .single
+              as Map<String, dynamic>;
+      document['local_path'] = '/attacker/path.pdf';
+
+      await expectLater(
+        SnapshotService(
+          database,
+          repository,
+        ).merge(Map<String, Object?>.from(remote)),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        (await repository.documents(profile.id)).single.localPath,
+        '/device/one/lab.pdf',
+      );
+    },
+  );
 }
