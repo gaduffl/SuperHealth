@@ -984,6 +984,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
       if (proceed != true) return;
       final success = await controller.oneDriveService.pollForSignIn(code);
+      if (!mounted) return;
       if (!success) {
         throw StateError(
           _settingsText(
@@ -1030,6 +1031,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<bool> _chooseSharedFolder(AppController controller) async {
     try {
       final folders = await controller.oneDriveService.listAvailableFolders();
+      if (!mounted) return false;
       if (folders.isEmpty) {
         throw StateError(
           _settingsText(
@@ -1039,7 +1041,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         );
       }
-      if (!mounted) return false;
       final chosen = await showDialog<OneDriveFolder>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -1186,6 +1187,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         withData: false,
       );
       if (picked == null || picked.files.isEmpty) return;
+      if (!mounted) return;
       final sourcePath = picked.files.single.path;
       if (sourcePath == null || sourcePath.isEmpty) {
         throw StateError(
@@ -1197,7 +1199,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       }
       final file = File(sourcePath);
-      if (!await file.exists()) {
+      final fileExists = await file.exists();
+      if (!mounted) return;
+      if (!fileExists) {
         throw StateError(
           _settingsText(
             context,
@@ -1346,6 +1350,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           files.add(ImportSourceFile(name: selected.name, bytes: bytes));
         }
       }
+      if (!mounted) return;
       if (files.isEmpty) {
         throw StateError(
           _settingsText(
@@ -1404,6 +1409,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           files.add(ImportSourceFile(name: selected.name, bytes: bytes));
         }
       }
+      if (!mounted) return;
       if (files.isEmpty) {
         throw StateError(
           _settingsText(
@@ -1831,13 +1837,18 @@ class _AppearanceRadio<T> extends StatelessWidget {
   final ValueChanged<T> onChanged;
 
   @override
-  Widget build(BuildContext context) => RadioListTile<T>(
-    contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-    dense: true,
-    value: value,
+  Widget build(BuildContext context) => RadioGroup<T>(
     groupValue: groupValue,
-    title: Text(title),
-    onChanged: enabled ? (value) => onChanged(value!) : null,
+    onChanged: (value) {
+      if (enabled && value != null) onChanged(value);
+    },
+    child: RadioListTile<T>(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+      dense: true,
+      value: value,
+      title: Text(title),
+      enabled: enabled,
+    ),
   );
 }
 
