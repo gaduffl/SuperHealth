@@ -165,10 +165,10 @@ class SnapshotService {
           final hasDivergentConflict =
               localChanged &&
               remoteChanged &&
-              _rowsDiffer(existing!, row, table: table);
+              _rowsDiffer(existing, row, table: table);
           if (hasDivergentConflict) {
             conflicts++;
-            await _recordConflict(txn, table, rowId, existing!, row);
+            await _recordConflict(txn, table, rowId, existing, row);
             // A divergence is never a last-write-wins decision. Keep the
             // current row and its shadow untouched until the user decides.
             applyRemote = false;
