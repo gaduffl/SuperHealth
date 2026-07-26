@@ -154,9 +154,10 @@ class SafeWorkspaceService {
     final proposal = _pending[proposalId];
     if (proposal == null) throw StateError('Proposal is no longer pending.');
     final file = await _file(proposal.profileId, proposal.relativePath);
-    final currentHash = await file.exists()
-        ? sha256.convert(await file.readAsBytes()).toString()
-        : null;
+    final previousBytes = await file.exists() ? await file.readAsBytes() : null;
+    final currentHash = previousBytes == null
+        ? null
+        : sha256.convert(previousBytes).toString();
     if (currentHash != proposal.previousSha256) {
       throw StateError(
         'The workspace file changed after the preview. Review it again.',
@@ -167,31 +168,54 @@ class SafeWorkspaceService {
       case WorkspaceOperation.replace:
         await file.parent.create(recursive: true);
         await file.writeAsBytes(proposal.bytes!, flush: true);
-        if (uploadToOneDrive &&
-            _oneDriveService != null &&
-            await _oneDriveService.isSignedIn()) {
-          await _oneDriveService.uploadApprovedFile(
-            profileId: proposal.profileId,
-            relativePath: proposal.relativePath,
-            bytes: proposal.bytes!,
-            contentType: proposal.contentType,
-          );
+        try {
+          if (uploadToOneDrive &&
+              _oneDriveService != null &&
+              await _oneDriveService.isSignedIn()) {
+            await _oneDriveService.uploadApprovedFile(
+              profileId: proposal.profileId,
+              relativePath: proposal.relativePath,
+              bytes: proposal.bytes!,
+              contentType: proposal.contentType,
+            );
+          }
+        } on Object {
+          await _restoreLocalFile(file, previousBytes);
+          rethrow;
         }
+        break;
       case WorkspaceOperation.delete:
-        if (uploadToOneDrive &&
-            _oneDriveService != null &&
-            await _oneDriveService.isSignedIn()) {
-          await _oneDriveService.deleteApprovedFile(
-            profileId: proposal.profileId,
-            relativePath: proposal.relativePath,
-          );
-        }
         await file.delete();
+        try {
+          if (uploadToOneDrive &&
+              _oneDriveService != null &&
+              await _oneDriveService.isSignedIn()) {
+            await _oneDriveService.deleteApprovedFile(
+              profileId: proposal.profileId,
+              relativePath: proposal.relativePath,
+            );
+          }
+        } on Object {
+          await _restoreLocalFile(file, previousBytes);
+          rethrow;
+        }
+        break;
     }
     _pending.remove(proposalId);
   }
 
   void reject(String proposalId) => _pending.remove(proposalId);
+
+  Future<void> _restoreLocalFile(File file, Uint8List? previousBytes) async {
+    if (previousBytes == null) {
+      if (await file.exists()) {
+        await file.delete();
+      }
+      return;
+    }
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(previousBytes, flush: true);
+  }
 
   Future<Directory> _root(String profileId) async {
     final base = await getApplicationDocumentsDirectory();
