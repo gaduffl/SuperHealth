@@ -64,6 +64,22 @@ void main() {
               deleted INTEGER NOT NULL DEFAULT 0
             )
           ''');
+          await db.execute('''
+            CREATE TABLE lab_plans (
+              id TEXT PRIMARY KEY,
+              profile_id TEXT NOT NULL REFERENCES profiles(id),
+              title TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              planned_for TEXT,
+              currency TEXT NOT NULL DEFAULT 'EUR',
+              context_hash TEXT NOT NULL,
+              provider TEXT,
+              model TEXT,
+              status TEXT NOT NULL DEFAULT 'draft',
+              deleted INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
           await db.insert('profiles', {
             'id': 'profile',
             'display_name': 'Legacy',
