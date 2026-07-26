@@ -148,10 +148,10 @@ class ReminderPlanner {
     recurring.sort(_candidateOrder);
     bounded.sort(_candidateOrder);
     final selected = <PlannedReminder>[];
-    final recurringCount = recurring.length.clamp(0, maxOwnedDoseAlarms) as int;
+    final recurringCount = recurring.length.clamp(0, maxOwnedDoseAlarms);
     selected.addAll(recurring.take(recurringCount));
     final remaining = maxOwnedDoseAlarms - selected.length;
-    selected.addAll(bounded.take(remaining.clamp(0, bounded.length) as int));
+    selected.addAll(bounded.take(remaining.clamp(0, bounded.length)));
     final omittedByBudget =
         recurring.length -
         recurringCount +
