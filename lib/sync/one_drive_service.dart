@@ -16,6 +16,20 @@ import 'snapshot_service.dart';
 
 enum OneDriveStorageMode { appFolder, sharedFolder }
 
+/// A safety problem while discovering Graph folders.
+///
+/// These errors are not treated as a transient endpoint failure: returning a
+/// partial folder list after a later request failure, loop, cap breach, or
+/// hostile URL would hide a potentially incomplete picker from the user.
+class OneDriveFolderDiscoveryException implements Exception {
+  const OneDriveFolderDiscoveryException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class OneDriveFolder {
   const OneDriveFolder({
     required this.driveId,
@@ -115,9 +129,11 @@ class OneDriveService {
     FlutterSecureStorage? secureStorage,
     HealthRepository? repository,
     Future<Directory> Function()? documentsDirectory,
+    Future<String> Function()? accessTokenProvider,
   }) : _repository = repository,
        _documentsDirectory =
            documentsDirectory ?? getApplicationDocumentsDirectory,
+       _accessTokenProvider = accessTokenProvider,
        _dio =
            dio ??
            Dio(
@@ -140,6 +156,12 @@ class OneDriveService {
   static const _sharedFolderScope = 'offline_access Files.ReadWrite';
   static const _simpleUploadLimit = 4 * 1024 * 1024;
   static const _chunkSize = 320 * 1024;
+  // Folder discovery is deliberately bounded. A normal Graph page contains at
+  // most a few hundred entries, so these limits leave generous headroom while
+  // preventing a malformed continuation from turning the picker into an
+  // unbounded authenticated request loop.
+  static const _folderDiscoveryMaxPagesPerEndpoint = 100;
+  static const _folderDiscoveryMaxRecordsPerEndpoint = 10000;
 
   static const _accessTokenKey = 'onedrive_access_token';
   static const _refreshTokenKey = 'onedrive_refresh_token';
@@ -157,6 +179,7 @@ class OneDriveService {
   final SnapshotService _snapshotService;
   final HealthRepository? _repository;
   final Future<Directory> Function() _documentsDirectory;
+  final Future<String> Function()? _accessTokenProvider;
 
   static String scopeFor(OneDriveStorageMode mode) =>
       mode == OneDriveStorageMode.appFolder
@@ -299,34 +322,94 @@ class OneDriveService {
     }
     final folders = <String, OneDriveFolder>{};
 
-    Future<void> addFrom(String path, {required bool sharedEndpoint}) async {
-      final response = await _graph<Map<String, dynamic>>('GET', path);
-      final items = response.data?['value'];
-      if (items is! List) return;
-      for (final raw in items) {
-        if (raw is! Map) continue;
-        final folder = OneDriveFolder.tryFromGraphItem(
-          Map<String, dynamic>.from(raw),
-          sharedEndpoint: sharedEndpoint,
-        );
-        if (folder != null) folders[folder.key] = folder;
+    Future<List<OneDriveFolder>> addFrom(
+      String initialPath, {
+      required bool sharedEndpoint,
+    }) async {
+      var path = initialPath;
+      var pages = 0;
+      var records = 0;
+      final seenPaths = <String>{initialPath};
+      final endpointFolders = <String, OneDriveFolder>{};
+
+      while (true) {
+        if (pages >= _folderDiscoveryMaxPagesPerEndpoint) {
+          throw const OneDriveFolderDiscoveryException(
+            'OneDrive folder discovery exceeded 100 pages for one endpoint.',
+          );
+        }
+        Response<Map<String, dynamic>> response;
+        try {
+          response = await _graph<Map<String, dynamic>>('GET', path);
+        } on Object catch (_) {
+          if (pages > 0) {
+            throw const OneDriveFolderDiscoveryException(
+              'OneDrive folder discovery failed after receiving a partial response. Please retry.',
+            );
+          }
+          rethrow;
+        }
+        pages += 1;
+        final data = response.data;
+        final items = data?['value'];
+        if (items is List) {
+          records += items.length;
+          if (records > _folderDiscoveryMaxRecordsPerEndpoint) {
+            throw const OneDriveFolderDiscoveryException(
+              'OneDrive folder discovery exceeded 10000 records for one endpoint.',
+            );
+          }
+          for (final raw in items) {
+            if (raw is! Map) continue;
+            final folder = OneDriveFolder.tryFromGraphItem(
+              Map<String, dynamic>.from(raw),
+              sharedEndpoint: sharedEndpoint,
+            );
+            if (folder != null) endpointFolders[folder.key] = folder;
+          }
+        }
+
+        final nextLink = data?['@odata.nextLink'];
+        if (nextLink == null) return endpointFolders.values.toList();
+        if (nextLink is! String || nextLink.trim().isEmpty) {
+          throw const OneDriveFolderDiscoveryException(
+            'OneDrive returned an invalid folder-discovery continuation URL.',
+          );
+        }
+        final nextPath = _safeGraphContinuationPath(nextLink);
+        if (!seenPaths.add(nextPath)) {
+          throw const OneDriveFolderDiscoveryException(
+            'OneDrive returned a looping folder-discovery continuation URL.',
+          );
+        }
+        path = nextPath;
       }
     }
 
     Object? sharedError;
     try {
-      await addFrom(
-        '/me/drive/sharedWithMe?\$select=id,name,webUrl,folder,remoteItem,parentReference',
+      final sharedFolders = await addFrom(
+        '/me/drive/sharedWithMe?allowexternal=true',
         sharedEndpoint: true,
       );
+      for (final folder in sharedFolders) {
+        folders[folder.key] = folder;
+      }
+    } on OneDriveFolderDiscoveryException {
+      rethrow;
     } on Object catch (error) {
       sharedError = error;
     }
     try {
-      await addFrom(
+      final ownedFolders = await addFrom(
         '/me/drive/root/children?\$select=id,name,webUrl,folder,remoteItem,parentReference',
         sharedEndpoint: false,
       );
+      for (final folder in ownedFolders) {
+        folders[folder.key] = folder;
+      }
+    } on OneDriveFolderDiscoveryException {
+      rethrow;
     } on Object catch (error) {
       if (folders.isEmpty) throw sharedError ?? error;
     }
@@ -363,24 +446,55 @@ class OneDriveService {
 
   Future<OneDriveSyncResult> synchronize() async {
     await _ensureStorageRoot();
-    final uploadedDocuments = await _uploadPendingDocuments();
+    final pendingConflicts = await _snapshotService.unresolvedConflicts();
+    if (pendingConflicts.isNotEmpty) {
+      // A conflict is a required user decision, not a warning that a later
+      // sync may silently work around.
+      return OneDriveSyncResult(
+        remoteFound: false,
+        appliedRows: 0,
+        keptLocalRows: 0,
+        conflicts: pendingConflicts.length,
+        uploadedBytes: 0,
+      );
+    }
     final snapshotAddress = await _itemAddress(_snapshotName);
     Map<String, dynamic>? metadata;
     Uint8List? remoteBytes;
+    var snapshotMetadataMissing = false;
     try {
       final response = await _graph<Map<String, dynamic>>(
         'GET',
         snapshotAddress,
       );
       metadata = response.data;
-      final content = await _graph<List<int>>(
-        'GET',
-        '$snapshotAddress:/content',
-        options: Options(responseType: ResponseType.bytes),
-      );
-      remoteBytes = Uint8List.fromList(content.data ?? const []);
     } on DioException catch (error) {
       if (error.response?.statusCode != 404) rethrow;
+      snapshotMetadataMissing = true;
+    }
+    if (!snapshotMetadataMissing) {
+      final etag = metadata?['eTag']?.toString().trim();
+      if (etag == null || etag.isEmpty) {
+        throw StateError(
+          'OneDrive returned snapshot metadata without an ETag. Sync was not started.',
+        );
+      }
+    }
+    if (!snapshotMetadataMissing) {
+      try {
+        final content = await _graph<List<int>>(
+          'GET',
+          '$snapshotAddress:/content',
+          options: Options(responseType: ResponseType.bytes),
+        );
+        remoteBytes = Uint8List.fromList(content.data ?? const []);
+      } on DioException catch (error) {
+        // If metadata was present but its content disappeared just afterward,
+        // retain its ETag. The final conditional write will fail safely rather
+        // than treating this as a new snapshot and overwriting a concurrent
+        // creation.
+        if (error.response?.statusCode != 404) rethrow;
+      }
     }
 
     var merge = const SnapshotMergeResult(
@@ -391,6 +505,19 @@ class OneDriveService {
     if (remoteBytes != null && remoteBytes.isNotEmpty) {
       merge = await _snapshotService.mergeJson(utf8.decode(remoteBytes));
     }
+    if (merge.conflicts > 0) {
+      // Do not overwrite the cloud snapshot, advance shadows, or upload
+      // documents while any divergent records require an explicit decision.
+      return OneDriveSyncResult(
+        remoteFound: remoteBytes != null,
+        appliedRows: merge.appliedRows,
+        keptLocalRows: merge.keptLocalRows,
+        conflicts: merge.conflicts,
+        uploadedBytes: 0,
+      );
+    }
+
+    final uploadedDocuments = await _uploadPendingDocuments();
     final downloadedDocuments = await _downloadMissingDocuments();
 
     final localJson = await _snapshotService.buildSnapshotJson();
@@ -402,7 +529,10 @@ class OneDriveService {
       data: Stream.fromIterable([bytes]),
       options: Options(
         contentType: 'application/json',
-        headers: etag == null ? null : {'If-Match': etag},
+        headers: {
+          if (etag != null) 'If-Match': etag,
+          if (snapshotMetadataMissing) 'If-None-Match': '*',
+        },
       ),
     );
     await _snapshotService.markCurrentAsSynchronized();
@@ -417,6 +547,110 @@ class OneDriveService {
       downloadedDocuments: downloadedDocuments,
     );
   }
+
+  /// Publishes the current local snapshot without first merging a remote one.
+  ///
+  /// This is reserved for the explicit post-portable-restore choice. The
+  /// initial snapshot write is conditional on the metadata read immediately
+  /// before it, so another device changing the cloud copy yields a 412 instead
+  /// of being overwritten. Attachments are only uploaded after that first
+  /// snapshot succeeds. When attachment IDs change the local snapshot, a final
+  /// conditional snapshot write records them before synchronization is marked.
+  Future<OneDriveSyncResult> publishRestoredDataAuthoritatively() async {
+    await _ensureStorageRoot();
+    final snapshotAddress = await _itemAddress(_snapshotName);
+    Map<String, dynamic>? metadata;
+    try {
+      metadata = (await _graph<Map<String, dynamic>>(
+        'GET',
+        snapshotAddress,
+      )).data;
+    } on DioException catch (error) {
+      if (error.response?.statusCode != 404) rethrow;
+    }
+
+    final existingEtag = metadata?['eTag']?.toString();
+    if (metadata != null && (existingEtag == null || existingEtag.isEmpty)) {
+      throw StateError(
+        'OneDrive returned snapshot metadata without an ETag. Restored data was not published.',
+      );
+    }
+
+    final initialBytes = Uint8List.fromList(
+      utf8.encode(await _snapshotService.buildSnapshotJson()),
+    );
+    final initialUpload = await _putSnapshotConditionally(
+      snapshotAddress: snapshotAddress,
+      bytes: initialBytes,
+      ifMatch: existingEtag,
+      createOnly: metadata == null,
+    );
+
+    // Do not download or merge remote documents in this mode. Their record is
+    // intentionally being replaced by the restored local health record.
+    final uploadedDocuments = await _uploadPendingDocuments();
+    var uploadedBytes = initialBytes.length;
+    if (uploadedDocuments > 0) {
+      final writtenEtag = initialUpload['eTag']?.toString();
+      if (writtenEtag == null || writtenEtag.isEmpty) {
+        throw StateError(
+          'OneDrive did not return an ETag after publishing the restored snapshot.',
+        );
+      }
+      final finalBytes = Uint8List.fromList(
+        utf8.encode(await _snapshotService.buildSnapshotJson()),
+      );
+      await _putSnapshotConditionally(
+        snapshotAddress: snapshotAddress,
+        bytes: finalBytes,
+        ifMatch: writtenEtag,
+        createOnly: false,
+      );
+      uploadedBytes += finalBytes.length;
+    }
+    await _snapshotService.markCurrentAsSynchronized();
+
+    return OneDriveSyncResult(
+      remoteFound: metadata != null,
+      appliedRows: 0,
+      keptLocalRows: 0,
+      conflicts: 0,
+      uploadedBytes: uploadedBytes,
+      uploadedDocuments: uploadedDocuments,
+    );
+  }
+
+  Future<Map<String, dynamic>> _putSnapshotConditionally({
+    required String snapshotAddress,
+    required Uint8List bytes,
+    required String? ifMatch,
+    required bool createOnly,
+  }) async {
+    final response = await _graph<Map<String, dynamic>>(
+      'PUT',
+      '$snapshotAddress:/content',
+      data: Stream.fromIterable([bytes]),
+      options: Options(
+        contentType: 'application/json',
+        headers: {
+          if (ifMatch != null) 'If-Match': ifMatch,
+          if (createOnly) 'If-None-Match': '*',
+        },
+      ),
+    );
+    return response.data ?? <String, dynamic>{};
+  }
+
+  Future<List<SnapshotConflict>> unresolvedSyncConflicts() =>
+      _snapshotService.unresolvedConflicts();
+
+  Future<void> resolveSyncConflict({
+    required int conflictId,
+    required SyncConflictResolution resolution,
+  }) => _snapshotService.resolveConflict(
+    conflictId: conflictId,
+    resolution: resolution,
+  );
 
   Future<Map<String, dynamic>> uploadApprovedFile({
     required String profileId,
@@ -782,7 +1016,49 @@ class OneDriveService {
     return _dio.request<T>('$_graphBase$path', data: data, options: merged);
   }
 
+  String _safeGraphContinuationPath(String nextLink) {
+    final value = nextLink.trim();
+    final parsed = Uri.tryParse(value);
+    if (parsed == null || parsed.hasFragment) {
+      throw const OneDriveFolderDiscoveryException(
+        'OneDrive returned an invalid folder-discovery continuation URL.',
+      );
+    }
+
+    if (parsed.hasScheme || parsed.hasAuthority) {
+      final isGraphOrigin =
+          parsed.scheme == 'https' &&
+          parsed.host == 'graph.microsoft.com' &&
+          (parsed.hasPort == false || parsed.port == 443) &&
+          parsed.path.startsWith('/v1.0/');
+      if (!isGraphOrigin) {
+        throw const OneDriveFolderDiscoveryException(
+          'OneDrive returned an off-origin folder-discovery continuation URL.',
+        );
+      }
+      return '${parsed.path.substring('/v1.0'.length)}'
+          '${parsed.hasQuery ? '?${parsed.query}' : ''}';
+    }
+
+    if (!value.startsWith('/') || value.startsWith('//')) {
+      throw const OneDriveFolderDiscoveryException(
+        'OneDrive returned an invalid folder-discovery continuation URL.',
+      );
+    }
+    final graphPath = parsed.path.startsWith('/v1.0/')
+        ? parsed.path.substring('/v1.0'.length)
+        : parsed.path;
+    if (!graphPath.startsWith('/')) {
+      throw const OneDriveFolderDiscoveryException(
+        'OneDrive returned an invalid folder-discovery continuation URL.',
+      );
+    }
+    return '$graphPath${parsed.hasQuery ? '?${parsed.query}' : ''}';
+  }
+
   Future<String> _validAccessToken() async {
+    final injected = _accessTokenProvider;
+    if (injected != null) return injected();
     final storedClientId = await _secureStorage.read(key: _clientIdKey);
     final mode = await currentStorageMode();
     if (storedClientId != clientId || mode == null) {
