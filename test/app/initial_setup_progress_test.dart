@@ -415,8 +415,7 @@ class _Fixture {
 }
 
 class _TestOneDriveService extends OneDriveService {
-  _TestOneDriveService(SnapshotService snapshotService)
-    : super(snapshotService);
+  _TestOneDriveService(super.snapshotService);
 
   bool signedIn = false;
   OneDriveStorageMode? mode;
