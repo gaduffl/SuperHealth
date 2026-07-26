@@ -1,11 +1,56 @@
 import 'package:flutter/material.dart';
 
-Future<void> showAppError(BuildContext context, Object error) async {
-  if (!context.mounted) return;
-  final message = error.toString().replaceFirst(
+import '../app/app_localizations.dart';
+
+const _redactedErrorValue = '[redacted]';
+const _maxErrorMessageLength = 1200;
+
+/// Produces an actionable, display-safe version of an error message.
+///
+/// Provider and HTTP libraries can include request headers, OAuth callback
+/// URLs, or response payloads in their exception text. Keep the useful error
+/// detail while making credential-shaped values safe to show in the UI.
+String sanitizeAppErrorMessage(String rawMessage) {
+  var message = rawMessage.replaceFirst(
     RegExp(r'^(Exception|StateError):\s*'),
     '',
   );
+
+  message = message.replaceAllMapped(
+    RegExp(
+      r'''(\bauthorization\b\s*[:=]\s*(?:["']?\s*)?(?:bearer\s+)?)([^"'\s,;}\r\n]+)''',
+      caseSensitive: false,
+    ),
+    (match) => '${match.group(1)}$_redactedErrorValue',
+  );
+  message = message.replaceAllMapped(
+    RegExp(r'(\bbearer\s+)([^\s,;}\r\n]+)', caseSensitive: false),
+    (match) => '${match.group(1)}$_redactedErrorValue',
+  );
+  message = message.replaceAllMapped(
+    RegExp(
+      r'''(\b(?:x-api-key|x-goog-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization[_-]?code)\b\s*[:=]\s*["']?)([^"'\s,;}&\r\n]+)''',
+      caseSensitive: false,
+    ),
+    (match) => '${match.group(1)}$_redactedErrorValue',
+  );
+  message = message.replaceAllMapped(
+    RegExp(
+      r'([?&](?:key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization[_-]?code|code)=)([^&#\s]+)',
+      caseSensitive: false,
+    ),
+    (match) => '${match.group(1)}$_redactedErrorValue',
+  );
+
+  if (message.length > _maxErrorMessageLength) {
+    return '${message.substring(0, _maxErrorMessageLength)}… [truncated]';
+  }
+  return message;
+}
+
+Future<void> showAppError(BuildContext context, Object error) async {
+  if (!context.mounted) return;
+  final message = sanitizeAppErrorMessage(error.toString());
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(content: Text(message)));
@@ -15,9 +60,10 @@ Future<bool> showConfirmAction(
   BuildContext context, {
   required String title,
   required String message,
-  String confirmLabel = 'Confirm',
+  String? confirmLabel,
   bool destructive = false,
 }) async {
+  final strings = AppLocalizations.of(context);
   return await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -26,7 +72,7 @@ Future<bool> showConfirmAction(
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(strings.cancel),
             ),
             FilledButton(
               style: destructive
@@ -36,7 +82,7 @@ Future<bool> showConfirmAction(
                     )
                   : null,
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: Text(confirmLabel),
+              child: Text(confirmLabel ?? strings.confirm),
             ),
           ],
         ),
@@ -57,30 +103,46 @@ class SectionHeader extends StatelessWidget {
   final Widget? action;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 24, 4, 8),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+  Widget build(BuildContext context) {
+    final heading = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleLarge),
-              if (subtitle != null)
-                Text(
-                  subtitle!,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-            ],
+        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        if (subtitle != null)
+          Text(
+            subtitle!,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
-        ),
-        ?action,
       ],
-    ),
-  );
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 24, 4, 8),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stackAction = action != null && constraints.maxWidth < 520;
+          if (stackAction) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                heading,
+                const SizedBox(height: 8),
+                Align(alignment: Alignment.centerRight, child: action!),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(child: heading),
+              ?action,
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
 
 class EmptyState extends StatelessWidget {
@@ -176,9 +238,11 @@ class PageBody extends StatelessWidget {
   );
 }
 
-double? parseOptionalDouble(String value) => value.trim().isEmpty
-    ? null
-    : double.tryParse(value.trim().replaceAll(',', '.'));
+double? parseOptionalDouble(String value) {
+  if (value.trim().isEmpty) return null;
+  final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
+  return parsed != null && parsed.isFinite ? parsed : null;
+}
 
 int? parseOptionalInt(String value) =>
     value.trim().isEmpty ? null : int.tryParse(value.trim());
