@@ -613,8 +613,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Text(
               _settingsText(
                 context,
-                'SuperHealth 0.4.0 · Personal-use Android build',
-                'SuperHealth 0.4.0 · Android-Build für den persönlichen Gebrauch',
+                'SuperHealth 0.4.1 · Personal-use Android build',
+                'SuperHealth 0.4.1 · Android-Build für den persönlichen Gebrauch',
               ),
               textAlign: TextAlign.center,
             ),
