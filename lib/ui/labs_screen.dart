@@ -423,6 +423,7 @@ class LabsScreen extends StatelessWidget {
           (selected.path == null
               ? null
               : await File(selected.path!).readAsBytes());
+      if (!context.mounted) return;
       if (bytes == null) {
         throw StateError(
           _labsText(
@@ -1307,6 +1308,7 @@ class LabsScreen extends StatelessWidget {
     if (format == null || !context.mounted) return;
     try {
       final file = await controller.exportService.build(plan, format);
+      if (!context.mounted) return;
       final extension = format.name;
       final path = await FilePicker.platform.saveFile(
         dialogTitle: _labsText(
@@ -1679,7 +1681,6 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
     }.toList()..sort();
     final query = _search.text.trim().toLowerCase();
     final filtered = widget.controller.biomarkers.where((biomarker) {
-      final latest = widget.latestByBiomarker[biomarker.id];
       final matchesQuery =
           query.isEmpty ||
           biomarker.displayName.toLowerCase().contains(query) ||
