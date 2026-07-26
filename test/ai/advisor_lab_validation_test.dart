@@ -579,8 +579,7 @@ AppController _controller(_Fixture fixture) {
 }
 
 class _TestOneDriveService extends OneDriveService {
-  _TestOneDriveService(SnapshotService snapshotService)
-    : super(snapshotService);
+  _TestOneDriveService(super.snapshotService);
 
   @override
   Future<bool> isSignedIn() async => false;
