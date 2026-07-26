@@ -415,6 +415,7 @@ Future<void> _importRanges(
     final bytes =
         file.bytes ??
         (file.path == null ? null : await File(file.path!).readAsBytes());
+    if (!context.mounted) return;
     if (bytes == null) {
       throw StateError(
         _rangesText(
