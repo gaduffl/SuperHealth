@@ -523,17 +523,17 @@ class OneDriveService {
     final localJson = await _snapshotService.buildSnapshotJson();
     final bytes = Uint8List.fromList(utf8.encode(localJson));
     final etag = metadata?['eTag']?.toString();
+    final uploadHeaders = <String, String>{
+      if (snapshotMetadataMissing) 'If-None-Match': '*',
+    };
+    if (etag != null) {
+      uploadHeaders['If-Match'] = etag;
+    }
     await _graph<Object?>(
       'PUT',
       '$snapshotAddress:/content',
       data: Stream.fromIterable([bytes]),
-      options: Options(
-        contentType: 'application/json',
-        headers: {
-          if (etag != null) 'If-Match': etag,
-          if (snapshotMetadataMissing) 'If-None-Match': '*',
-        },
-      ),
+      options: Options(contentType: 'application/json', headers: uploadHeaders),
     );
     await _snapshotService.markCurrentAsSynchronized();
 
@@ -626,17 +626,17 @@ class OneDriveService {
     required String? ifMatch,
     required bool createOnly,
   }) async {
+    final uploadHeaders = <String, String>{
+      if (createOnly) 'If-None-Match': '*',
+    };
+    if (ifMatch != null) {
+      uploadHeaders['If-Match'] = ifMatch;
+    }
     final response = await _graph<Map<String, dynamic>>(
       'PUT',
       '$snapshotAddress:/content',
       data: Stream.fromIterable([bytes]),
-      options: Options(
-        contentType: 'application/json',
-        headers: {
-          if (ifMatch != null) 'If-Match': ifMatch,
-          if (createOnly) 'If-None-Match': '*',
-        },
-      ),
+      options: Options(contentType: 'application/json', headers: uploadHeaders),
     );
     return response.data ?? <String, dynamic>{};
   }
