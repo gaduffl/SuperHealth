@@ -26,11 +26,11 @@ jobs:
       - name: Format sources and expose any required diff
         run: |
           dart format lib test
-          git diff -- lib test
+          git diff -- lib test pubspec.lock
       - run: flutter analyze
       - run: flutter test
-      - name: Require committed formatting
-        run: git diff --exit-code -- lib test
+      - name: Require committed formatting and dependency lock
+        run: git diff --exit-code -- lib test pubspec.lock
       - name: Require private Android signing
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         env:
