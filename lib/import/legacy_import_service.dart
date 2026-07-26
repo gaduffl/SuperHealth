@@ -1207,12 +1207,19 @@ class LegacyImportService {
         where: 'deleted = 0',
       );
       final biomarkerIds = <String, String>{};
+      final biomarkerIdsByCanonical = <String, String>{
+        for (final row in existingBiomarkers)
+          '${row['canonical_name']}': '${row['id']}',
+      };
       for (final item in bundle.biomarkers) {
-        final matching = existingBiomarkers.where(
-          (row) => row['canonical_name'] == item.canonicalName,
-        );
-        if (matching.isNotEmpty) {
-          biomarkerIds[item.legacyId] = '${matching.first['id']}';
+        // Multiple rows in a legacy export can normalize to the same
+        // canonical name (for example punctuation variants of
+        // "1,25-Dihydroxy Vitamin D"). The database correctly enforces one
+        // catalog row per canonical name, so every legacy ID must be aliased
+        // to the first deterministic catalog row created for that name.
+        final canonicalId = biomarkerIdsByCanonical[item.canonicalName];
+        if (canonicalId != null) {
+          biomarkerIds[item.legacyId] = canonicalId;
           continue;
         }
         final id = _legacyId(bundle.sourceHash, 'biomarker', item.legacyId);
@@ -1234,6 +1241,7 @@ class LegacyImportService {
           ).toMap(),
         );
         biomarkerIds[item.legacyId] = id;
+        biomarkerIdsByCanonical[item.canonicalName] = id;
       }
       for (final row in existingBiomarkers) {
         biomarkerIds.putIfAbsent('${row['id']}', () => '${row['id']}');
