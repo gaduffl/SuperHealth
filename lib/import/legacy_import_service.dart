@@ -1899,10 +1899,7 @@ class _LegacyBundle {
     'schedules': schedules.length,
     'intakes': intakes.length,
     'symptoms_and_tags': events.length,
-    'biomarkers': biomarkers
-        .map((item) => item.canonicalName)
-        .toSet()
-        .length,
+    'biomarkers': biomarkers.map((item) => item.canonicalName).toSet().length,
     'measurements': measurementNodes.length,
     'documents': documentNodes.length,
     'ranges': rangeNodes.length,
