@@ -40,9 +40,9 @@ class ReminderService {
     if (!_initialized) {
       tz_data.initializeTimeZones();
       final localTimezone = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(localTimezone.name));
+      tz.setLocalLocation(tz.getLocation(localTimezone.identifier));
       await _notifications.initialize(
-        const InitializationSettings(
+        settings: const InitializationSettings(
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         ),
       );
@@ -96,7 +96,7 @@ class ReminderService {
       desired: planned.reminders,
     );
     for (final notificationId in reconciliation.notificationIdsToCancel) {
-      await _notifications.cancel(notificationId);
+      await _notifications.cancel(id: notificationId);
     }
     for (final reminder in reconciliation.remindersToSchedule) {
       await _schedule(reminder);
@@ -128,10 +128,10 @@ class ReminderService {
     );
     for (final alert in evaluation.alertsToShow) {
       await _notifications.show(
-        alert.notificationId,
-        alert.title,
-        alert.body,
-        const NotificationDetails(
+        id: alert.notificationId,
+        title: alert.title,
+        body: alert.body,
+        notificationDetails: const NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
             'Supplement dose reminders',
@@ -159,11 +159,11 @@ class ReminderService {
       reminder.scheduledAt.minute,
     );
     return _notifications.zonedSchedule(
-      reminder.notificationId,
-      reminder.title,
-      reminder.body,
-      scheduledAt,
-      const NotificationDetails(
+      id: reminder.notificationId,
+      title: reminder.title,
+      body: reminder.body,
+      scheduledDate: scheduledAt,
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelId,
           'Supplement dose reminders',
