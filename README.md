@@ -7,8 +7,8 @@ SuperHealth is a private, Android-first personal health companion combining supp
 - Isolated profiles with conditions, medicines, goals, and family history.
 - Supplement products, daily schedules, intake history, symptoms, and exposure tags.
 - Biomarker catalog with German lab prices, manual results, reviewed PDF extraction, trends, and lab-reference status.
-- Exploratory daily Pearson correlations with 0–2 day exposure lags and explicit non-causality labeling.
-- AI-generated Core, Advanced, and Comprehensive lab checklists. Tiers are cumulative and totals use only stored EUR prices.
+- Exploratory daily Pearson and Spearman correlations with 0–2 day exposure lags, Benjamini–Hochberg adjustment, and explicit non-causality labeling.
+- AI-generated Core, Advanced, and Comprehensive lab checklists with a mandatory independent second-pass review. Tiers are cumulative and totals use only stored EUR prices.
 - Saved lab plans plus PDF, CSV, and JSON export.
 - Direct BYOK integrations for OpenAI, Anthropic, and Gemini, with live model discovery and conservative per-model reasoning/tool controls.
 - Separate model configuration for PDF parsing and the main advisor.
@@ -21,7 +21,7 @@ SuperHealth is a private, Android-first personal health companion combining supp
 - SQLite is local-first and every health row is profile-scoped.
 - API keys and OneDrive tokens use Android secure storage and are never synchronized, exported, or placed in AI context.
 - The advisor receives a serialized, read-only active-profile snapshot. No AI service is given a database or repository handle.
-- Complete health context is never silently truncated. The app asks for a larger-context model when a known model limit is insufficient.
+- Complete health context is never silently truncated. The app uses a hashed, section-receipted provider file when inline context would not fit and rejects a response that cannot prove complete coverage.
 - Private OneDrive mode requests only `Files.ReadWrite.AppFolder`. Shared-family mode requests delegated `Files.ReadWrite`, lists folders solely for explicit selection, and constrains all app file operations to a `SuperHealth` subfolder beneath the selected folder.
 - Provider-hosted web search and code execution are exposed only for models whose support is registered from provider documentation.
 - Recommendations distinguish guideline-supported, longevity-oriented, experimental, and unclassified evidence. The app is planning support, not diagnosis or emergency care.
