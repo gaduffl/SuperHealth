@@ -516,7 +516,7 @@ class AppLocalizations {
       .replaceFirst('{strength}', correlationStrength(strength))
       .replaceFirst(
         '{spearman}',
-        spearman == null ? this.spearmanUnavailable : spearmanValue(spearman),
+        spearman == null ? spearmanUnavailable : spearmanValue(spearman),
       )
       .replaceFirst(
         '{q}',
