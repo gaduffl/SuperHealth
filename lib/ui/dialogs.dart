@@ -4,93 +4,292 @@
 import 'package:flutter/material.dart';
 
 import '../app/app_controller.dart';
+import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
+
+String _dialogText(BuildContext context, String english, String german) =>
+    AppLocalizations.of(context).pick(english, german);
 
 Future<void> showAddProfileDialog(
   BuildContext context,
   AppController controller,
-) async {
-  final name = TextEditingController();
-  final weight = TextEditingController();
-  final notes = TextEditingController();
-  DateTime? birthDate;
-  String? sex;
+) => showProfileDialog(context, controller);
+
+Future<void> showEditProfileDialog(
+  BuildContext context,
+  AppController controller,
+  Profile profile,
+) => showProfileDialog(context, controller, existing: profile);
+
+/// Creates or updates a profile using only fields persisted by [Profile].
+Future<void> showProfileDialog(
+  BuildContext context,
+  AppController controller, {
+  Profile? existing,
+}) async {
+  final formKey = GlobalKey<FormState>();
+  final name = TextEditingController(text: existing?.displayName ?? '');
+  final weight = TextEditingController(
+    text: existing?.weightKg?.toString() ?? '',
+  );
+  final height = TextEditingController(
+    text: existing?.heightCm?.toString() ?? '',
+  );
+  final notes = TextEditingController(text: existing?.notes ?? '');
+  DateTime? birthDate = existing?.dateOfBirth;
+  String? sex = existing?.sex;
+  String? birthDateError;
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: const Text('New profile'),
+        title: Text(
+          existing == null
+              ? _dialogText(context, 'New profile', 'Neues Profil')
+              : _dialogText(context, 'Edit profile', 'Profil bearbeiten'),
+        ),
         content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: name,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Display name *'),
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: sex,
-                decoration: const InputDecoration(labelText: 'Sex (optional)'),
-                items: const [
-                  DropdownMenuItem(value: 'female', child: Text('Female')),
-                  DropdownMenuItem(value: 'male', child: Text('Male')),
-                  DropdownMenuItem(value: 'intersex', child: Text('Intersex')),
-                  DropdownMenuItem(
-                    value: 'other',
-                    child: Text('Other / self-described'),
+          child: SizedBox(
+            width: 520,
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: name,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.words,
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Display name *',
+                        'Anzeigename *',
+                      ),
+                    ),
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? _dialogText(
+                            context,
+                            'Enter a display name.',
+                            'Gib einen Anzeigenamen ein.',
+                          )
+                        : null,
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    key: ValueKey(sex),
+                    initialValue: sex,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Sex (optional)',
+                        'Geschlecht (optional)',
+                      ),
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: 'female',
+                        child: Text(_dialogText(context, 'Female', 'Weiblich')),
+                      ),
+                      DropdownMenuItem(
+                        value: 'male',
+                        child: Text(_dialogText(context, 'Male', 'Männlich')),
+                      ),
+                      DropdownMenuItem(
+                        value: 'intersex',
+                        child: Text(
+                          _dialogText(
+                            context,
+                            'Intersex',
+                            'Intergeschlechtlich',
+                          ),
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 'other',
+                        child: Text(
+                          _dialogText(
+                            context,
+                            'Other / self-described',
+                            'Andere / selbst beschrieben',
+                          ),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) => setState(() => sex = value),
+                  ),
+                  if (sex != null)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () => setState(() => sex = null),
+                        icon: const Icon(Icons.clear),
+                        label: Text(
+                          _dialogText(
+                            context,
+                            'Clear sex',
+                            'Geschlecht löschen',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      _dialogText(context, 'Date of birth', 'Geburtsdatum'),
+                    ),
+                    subtitle: Text(
+                      birthDate == null
+                          ? _dialogText(context, 'Not set', 'Nicht festgelegt')
+                          : '${_formatProfileDate(birthDate!)} · ${_profileAgeLabel(context, birthDate!)}',
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (birthDate != null)
+                          IconButton(
+                            tooltip: _dialogText(
+                              context,
+                              'Clear date of birth',
+                              'Geburtsdatum löschen',
+                            ),
+                            onPressed: () => setState(() => birthDate = null),
+                            icon: const Icon(Icons.clear),
+                          ),
+                        const Icon(Icons.calendar_today_outlined),
+                      ],
+                    ),
+                    onTap: () async {
+                      final now = DateTime.now();
+                      final selected = await showDatePicker(
+                        context: context,
+                        firstDate: DateTime(1900),
+                        lastDate: now,
+                        initialDate: _profilePickerDate(birthDate, now),
+                      );
+                      if (selected != null) {
+                        setState(() {
+                          birthDate = selected;
+                          birthDateError = null;
+                        });
+                      }
+                    },
+                  ),
+                  if (birthDateError != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        birthDateError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  TextFormField(
+                    controller: height,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Height (cm)',
+                        'Größe (cm)',
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) return null;
+                      final parsed = parseOptionalDouble(value);
+                      if (parsed == null || parsed < 30 || parsed > 250) {
+                        return _dialogText(
+                          context,
+                          'Enter a height from 30 to 250 cm.',
+                          'Gib eine Größe von 30 bis 250 cm ein.',
+                        );
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: weight,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Weight (kg)',
+                        'Gewicht (kg)',
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) return null;
+                      final parsed = parseOptionalDouble(value);
+                      if (parsed == null || parsed <= 0 || parsed > 500) {
+                        return _dialogText(
+                          context,
+                          'Enter a weight from 0 to 500 kg.',
+                          'Gib ein Gewicht über 0 bis 500 kg ein.',
+                        );
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: notes,
+                    maxLines: 3,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Notes / goals',
+                        'Notizen / Ziele',
+                      ),
+                    ),
                   ),
                 ],
-                onChanged: (value) => setState(() => sex = value),
               ),
-              const SizedBox(height: 10),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Date of birth'),
-                subtitle: Text(
-                  birthDate == null
-                      ? 'Not set'
-                      : birthDate!.toIso8601String().split('T').first,
-                ),
-                trailing: const Icon(Icons.calendar_today_outlined),
-                onTap: () async {
-                  final selected = await showDatePicker(
-                    context: context,
-                    firstDate: DateTime(1900),
-                    lastDate: DateTime.now(),
-                    initialDate: birthDate ?? DateTime(1990),
-                  );
-                  if (selected != null) setState(() => birthDate = selected);
-                },
-              ),
-              TextField(
-                controller: weight,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(labelText: 'Weight (kg)'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: notes,
-                maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Notes'),
-              ),
-            ],
+            ),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
-            onPressed: name.text.trim().isEmpty
-                ? null
-                : () => Navigator.pop(dialogContext, true),
-            child: const Text('Create'),
+            onPressed: () {
+              final today = DateTime.now();
+              final dateIsValid =
+                  birthDate == null || !birthDate!.isAfter(today);
+              setState(() {
+                birthDateError = dateIsValid
+                    ? null
+                    : _dialogText(
+                        context,
+                        'Date of birth cannot be in the future.',
+                        'Das Geburtsdatum darf nicht in der Zukunft liegen.',
+                      );
+              });
+              if (formKey.currentState!.validate() && dateIsValid) {
+                Navigator.pop(dialogContext, true);
+              }
+            },
+            child: Text(
+              existing == null
+                  ? _dialogText(context, 'Create', 'Erstellen')
+                  : _dialogText(
+                      context,
+                      'Save changes',
+                      'Änderungen speichern',
+                    ),
+            ),
           ),
         ],
       ),
@@ -98,20 +297,62 @@ Future<void> showAddProfileDialog(
   );
   if (result == true && context.mounted) {
     try {
-      await controller.createProfile(
-        name: name.text,
-        dateOfBirth: birthDate,
-        sex: sex,
-        weightKg: parseOptionalDouble(weight.text),
-        notes: notes.text,
-      );
+      if (existing == null) {
+        await controller.createProfile(
+          name: name.text,
+          dateOfBirth: birthDate,
+          sex: sex,
+          heightCm: parseOptionalDouble(height.text),
+          weightKg: parseOptionalDouble(weight.text),
+          notes: notes.text,
+        );
+      } else {
+        await controller.updateProfile(
+          Profile(
+            id: existing.id,
+            displayName: name.text,
+            dateOfBirth: birthDate,
+            sex: sex,
+            heightCm: parseOptionalDouble(height.text),
+            weightKg: parseOptionalDouble(weight.text),
+            notes: notes.text,
+            createdAt: existing.createdAt,
+            updatedAt: existing.updatedAt,
+            deleted: existing.deleted,
+          ),
+        );
+      }
     } on Object catch (error) {
       await showAppError(context, error);
     }
   }
   name.dispose();
+  height.dispose();
   weight.dispose();
   notes.dispose();
+}
+
+DateTime _profilePickerDate(DateTime? date, DateTime today) {
+  final fallback = DateTime(today.year - 35, today.month, today.day);
+  if (date == null) return fallback;
+  if (date.isAfter(today)) return today;
+  if (date.isBefore(DateTime(1900))) return DateTime(1900);
+  return date;
+}
+
+String _formatProfileDate(DateTime date) =>
+    date.toIso8601String().split('T').first;
+
+String _profileAgeLabel(BuildContext context, DateTime date) {
+  final today = DateTime.now();
+  var age = today.year - date.year;
+  if (today.month < date.month ||
+      (today.month == date.month && today.day < date.day)) {
+    age--;
+  }
+  return age < 0
+      ? _dialogText(context, 'Future date', 'Zukünftiges Datum')
+      : _dialogText(context, 'Age $age', 'Alter $age');
 }
 
 Future<void> showAddSupplementDialog(
@@ -151,7 +392,19 @@ Future<void> showAddSupplementDialog(
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text(existing == null ? 'Add supplement' : 'Edit supplement'),
+      title: Text(
+        existing == null
+            ? _dialogText(
+                context,
+                'Add supplement',
+                'Nahrungsergänzung hinzufügen',
+              )
+            : _dialogText(
+                context,
+                'Edit supplement',
+                'Nahrungsergänzung bearbeiten',
+              ),
+      ),
       content: SingleChildScrollView(
         child: SizedBox(
           width: 560,
@@ -162,7 +415,13 @@ Future<void> showAddSupplementDialog(
                 controller: name,
                 autofocus: true,
                 textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(labelText: 'Product name *'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(
+                    context,
+                    'Product name *',
+                    'Produktname *',
+                  ),
+                ),
               ),
               const SizedBox(height: 10),
               Row(
@@ -170,15 +429,21 @@ Future<void> showAddSupplementDialog(
                   Expanded(
                     child: TextField(
                       controller: brand,
-                      decoration: const InputDecoration(labelText: 'Brand'),
+                      decoration: InputDecoration(
+                        labelText: _dialogText(context, 'Brand', 'Marke'),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
                       controller: form,
-                      decoration: const InputDecoration(
-                        labelText: 'Form (capsule, powder…)',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Form (capsule, powder…)',
+                          'Form (Kapsel, Pulver …)',
+                        ),
                       ),
                     ),
                   ),
@@ -189,10 +454,18 @@ Future<void> showAddSupplementDialog(
                 controller: ingredients,
                 minLines: 3,
                 maxLines: 6,
-                decoration: const InputDecoration(
-                  labelText: 'Ingredients — one per line',
+                decoration: InputDecoration(
+                  labelText: _dialogText(
+                    context,
+                    'Ingredients — one per line',
+                    'Inhaltsstoffe — einer pro Zeile',
+                  ),
                   hintText: 'Magnesium glycinate | 100 | mg',
-                  helperText: 'Format: name | amount per stock unit | unit',
+                  helperText: _dialogText(
+                    context,
+                    'Format: name | amount per stock unit | unit',
+                    'Format: Name | Menge je Bestandseinheit | Einheit',
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -202,8 +475,12 @@ Future<void> showAddSupplementDialog(
                     child: TextField(
                       controller: unitsPerContainer,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Units / container',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Units / container',
+                          'Einheiten / Behälter',
+                        ),
                       ),
                     ),
                   ),
@@ -211,8 +488,12 @@ Future<void> showAddSupplementDialog(
                   Expanded(
                     child: TextField(
                       controller: stockUnit,
-                      decoration: const InputDecoration(
-                        labelText: 'Stock unit *',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Stock unit *',
+                          'Bestandseinheit *',
+                        ),
                       ),
                     ),
                   ),
@@ -225,8 +506,12 @@ Future<void> showAddSupplementDialog(
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  decoration: const InputDecoration(
-                    labelText: 'Current containers (initial stock)',
+                  decoration: InputDecoration(
+                    labelText: _dialogText(
+                      context,
+                      'Current containers (initial stock)',
+                      'Aktuelle Behälter (Anfangsbestand)',
+                    ),
                   ),
                 ),
               ],
@@ -239,8 +524,12 @@ Future<void> showAddSupplementDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Price / container (EUR)',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Price / container (EUR)',
+                          'Preis / Behälter (EUR)',
+                        ),
                       ),
                     ),
                   ),
@@ -251,8 +540,12 @@ Future<void> showAddSupplementDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Low-stock threshold',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Low-stock threshold',
+                          'Grenze für niedrigen Bestand',
+                        ),
                       ),
                     ),
                   ),
@@ -261,15 +554,21 @@ Future<void> showAddSupplementDialog(
               const SizedBox(height: 10),
               TextField(
                 controller: bioavailability,
-                decoration: const InputDecoration(
-                  labelText: 'Form / bioavailability notes',
+                decoration: InputDecoration(
+                  labelText: _dialogText(
+                    context,
+                    'Form / bioavailability notes',
+                    'Hinweise zu Form / Bioverfügbarkeit',
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: notes,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Notes'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Notes', 'Notizen'),
+                ),
               ),
             ],
           ),
@@ -278,11 +577,15 @@ Future<void> showAddSupplementDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Cancel'),
+          child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(existing == null ? 'Add' : 'Save'),
+          child: Text(
+            existing == null
+                ? _dialogText(context, 'Add', 'Hinzufügen')
+                : _dialogText(context, 'Save', 'Speichern'),
+          ),
         ),
       ],
     ),
@@ -295,7 +598,11 @@ Future<void> showAddSupplementDialog(
           (units != null && units <= 0) ||
           parsedIngredients == null) {
         throw StateError(
-          'Check the stock unit, container size, and ingredient lines.',
+          _dialogText(
+            context,
+            'Check the stock unit, container size, and ingredient lines.',
+            'Prüfe Bestandseinheit, Behältergröße und Inhaltsstoffzeilen.',
+          ),
         );
       }
       if (existing == null) {
@@ -369,7 +676,7 @@ List<Map<String, Object?>>? _parseIngredients(String source) {
     if (parts.length > 1 && parts[1].isNotEmpty && amount == null) return null;
     result.add({
       'name': parts.first,
-      if (amount != null) 'amount': amount,
+      'amount': ?amount,
       if (parts.length > 2 && parts[2].isNotEmpty) 'unit': parts[2],
     });
   }
@@ -390,7 +697,11 @@ Future<void> showAdjustStockDialog(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: Text(purchase ? 'Record purchase' : 'Adjust stock'),
+        title: Text(
+          purchase
+              ? _dialogText(context, 'Record purchase', 'Einkauf erfassen')
+              : _dialogText(context, 'Adjust stock', 'Bestand anpassen'),
+        ),
         content: SizedBox(
           width: 420,
           child: Column(
@@ -400,15 +711,30 @@ Future<void> showAdjustStockDialog(
                 contentPadding: EdgeInsets.zero,
                 title: Text(supplement.name),
                 subtitle: Text(
-                  '${current.toStringAsFixed(1)} ${supplement.stockUnit} on hand',
+                  _dialogText(
+                    context,
+                    '${current.toStringAsFixed(1)} ${supplement.stockUnit} on hand',
+                    '${current.toStringAsFixed(1)} ${supplement.stockUnit} vorhanden',
+                  ),
                 ),
               ),
               if (!purchase)
                 SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'set', label: Text('Set total')),
-                    ButtonSegment(value: 'add', label: Text('Add')),
-                    ButtonSegment(value: 'remove', label: Text('Remove')),
+                  segments: [
+                    ButtonSegment(
+                      value: 'set',
+                      label: Text(
+                        _dialogText(context, 'Set total', 'Gesamt setzen'),
+                      ),
+                    ),
+                    ButtonSegment(
+                      value: 'add',
+                      label: Text(_dialogText(context, 'Add', 'Hinzufügen')),
+                    ),
+                    ButtonSegment(
+                      value: 'remove',
+                      label: Text(_dialogText(context, 'Remove', 'Entfernen')),
+                    ),
                   ],
                   selected: {direction},
                   onSelectionChanged: (value) =>
@@ -423,15 +749,27 @@ Future<void> showAdjustStockDialog(
                 ),
                 decoration: InputDecoration(
                   labelText: direction == 'set'
-                      ? 'New total (${supplement.stockUnit})'
-                      : 'Quantity (${supplement.stockUnit})',
+                      ? _dialogText(
+                          context,
+                          'New total (${supplement.stockUnit})',
+                          'Neuer Gesamtbestand (${supplement.stockUnit})',
+                        )
+                      : _dialogText(
+                          context,
+                          'Quantity (${supplement.stockUnit})',
+                          'Menge (${supplement.stockUnit})',
+                        ),
                 ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: notes,
-                decoration: const InputDecoration(
-                  labelText: 'Note / order reference',
+                decoration: InputDecoration(
+                  labelText: _dialogText(
+                    context,
+                    'Note / order reference',
+                    'Notiz / Bestellreferenz',
+                  ),
                 ),
               ),
             ],
@@ -440,11 +778,11 @@ Future<void> showAdjustStockDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Save'),
+            child: Text(_dialogText(context, 'Save', 'Speichern')),
           ),
         ],
       ),
@@ -453,7 +791,14 @@ Future<void> showAdjustStockDialog(
   if (result == true && context.mounted) {
     final parsed = parseOptionalDouble(amount.text);
     if (parsed == null || parsed < 0) {
-      await showAppError(context, 'Enter a non-negative quantity.');
+      await showAppError(
+        context,
+        _dialogText(
+          context,
+          'Enter a non-negative quantity.',
+          'Gib eine nichtnegative Menge ein.',
+        ),
+      );
     } else {
       final delta = switch (direction) {
         'set' => parsed - current,
@@ -483,7 +828,9 @@ Future<void> showLogIntakeDialog(
 ) async {
   final dose = TextEditingController(text: '1');
   final unit = TextEditingController(
-    text: supplement.form.isEmpty ? 'unit' : supplement.form,
+    text: supplement.stockUnit.trim().isNotEmpty
+        ? supplement.stockUnit
+        : (supplement.form.trim().isNotEmpty ? supplement.form : 'unit'),
   );
   final notes = TextEditingController();
   DateTime takenAt = DateTime.now();
@@ -491,7 +838,13 @@ Future<void> showLogIntakeDialog(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: Text('Log ${supplement.name}'),
+        title: Text(
+          _dialogText(
+            context,
+            'Log ${supplement.name}',
+            '${supplement.name} erfassen',
+          ),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -503,21 +856,25 @@ Future<void> showLogIntakeDialog(
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
-                    decoration: const InputDecoration(labelText: 'Dose *'),
+                    decoration: InputDecoration(
+                      labelText: _dialogText(context, 'Dose *', 'Dosis *'),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: unit,
-                    decoration: const InputDecoration(labelText: 'Unit *'),
+                    decoration: InputDecoration(
+                      labelText: _dialogText(context, 'Unit *', 'Einheit *'),
+                    ),
                   ),
                 ),
               ],
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Time'),
+              title: Text(_dialogText(context, 'Time', 'Zeit')),
               subtitle: Text(TimeOfDay.fromDateTime(takenAt).format(context)),
               trailing: const Icon(Icons.schedule),
               onTap: () async {
@@ -540,18 +897,22 @@ Future<void> showLogIntakeDialog(
             ),
             TextField(
               controller: notes,
-              decoration: const InputDecoration(labelText: 'Notes'),
+              decoration: InputDecoration(
+                labelText: _dialogText(context, 'Notes', 'Notizen'),
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Log intake'),
+            child: Text(
+              _dialogText(context, 'Log intake', 'Einnahme erfassen'),
+            ),
           ),
         ],
       ),
@@ -560,7 +921,14 @@ Future<void> showLogIntakeDialog(
   if (result == true && context.mounted) {
     final parsedDose = parseOptionalDouble(dose.text);
     if (parsedDose == null || unit.text.trim().isEmpty) {
-      await showAppError(context, 'Enter a valid dose and unit.');
+      await showAppError(
+        context,
+        _dialogText(
+          context,
+          'Enter a valid dose and unit.',
+          'Gib eine gültige Dosis und Einheit ein.',
+        ),
+      );
     } else {
       try {
         await controller.logIntake(
@@ -594,6 +962,7 @@ Future<void> showAddScheduleDialog(
   );
   final instructions = TextEditingController(text: existing?.instructions);
   var time = existing?.timeOfDay ?? 'Morning';
+  var selectedNamedTime = _namedTimeChoice(time);
   var weekdays = {
     ...(existing?.weekdays ??
         const [
@@ -610,23 +979,31 @@ Future<void> showAddScheduleDialog(
   var active = existing?.active ?? true;
   var startDate = existing?.startDate;
   var endDate = existing?.endDate;
-  const dayLabels = {
-    'monday': 'M',
-    'tuesday': 'T',
-    'wednesday': 'W',
-    'thursday': 'T',
-    'friday': 'F',
-    'saturday': 'S',
-    'sunday': 'S',
-  };
+  const days = [
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday',
+  ];
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: Text(
           existing == null
-              ? 'Schedule ${supplement.name}'
-              : 'Edit ${supplement.name} schedule',
+              ? _dialogText(
+                  context,
+                  'Schedule ${supplement.name}',
+                  '${supplement.name} planen',
+                )
+              : _dialogText(
+                  context,
+                  'Edit ${supplement.name} schedule',
+                  'Plan für ${supplement.name} bearbeiten',
+                ),
         ),
         content: SingleChildScrollView(
           child: SizedBox(
@@ -642,35 +1019,98 @@ Future<void> showAddScheduleDialog(
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
                         ),
-                        decoration: const InputDecoration(labelText: 'Dose'),
+                        decoration: InputDecoration(
+                          labelText: _dialogText(context, 'Dose', 'Dosis'),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: TextField(
                         controller: unit,
-                        decoration: const InputDecoration(labelText: 'Unit'),
+                        decoration: InputDecoration(
+                          labelText: _dialogText(context, 'Unit', 'Einheit'),
+                        ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
-                  initialValue: time,
-                  decoration: const InputDecoration(labelText: 'Time of day'),
-                  items: const [
-                    DropdownMenuItem(value: 'Morning', child: Text('Morning')),
-                    DropdownMenuItem(value: 'Midday', child: Text('Midday')),
-                    DropdownMenuItem(value: 'Evening', child: Text('Evening')),
-                    DropdownMenuItem(value: 'Bedtime', child: Text('Bedtime')),
+                  key: ValueKey(selectedNamedTime),
+                  initialValue: selectedNamedTime,
+                  decoration: InputDecoration(
+                    labelText: _dialogText(context, 'Time of day', 'Tageszeit'),
+                    hintText: selectedNamedTime == null
+                        ? _dialogText(
+                            context,
+                            'Custom exact time',
+                            'Benutzerdefinierte Uhrzeit',
+                          )
+                        : null,
+                  ),
+                  items: [
+                    for (final value in const [
+                      'Morning',
+                      'Midday',
+                      'Evening',
+                      'Bedtime',
+                    ])
+                      DropdownMenuItem(
+                        value: value,
+                        child: Text(_namedTimeLabel(context, value)),
+                      ),
                   ],
-                  onChanged: (value) => setState(() => time = value ?? time),
+                  onChanged: (value) => setState(() {
+                    if (value == null) return;
+                    selectedNamedTime = value;
+                    time = value;
+                  }),
+                ),
+                const SizedBox(height: 4),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.schedule_outlined),
+                  title: Text(
+                    _dialogText(
+                      context,
+                      'Choose exact time',
+                      'Genaue Uhrzeit wählen',
+                    ),
+                  ),
+                  subtitle: Text(
+                    selectedNamedTime == null
+                        ? _exactTimeDescription(context, time)
+                        : _dialogText(
+                            context,
+                            '${selectedNamedTime!} uses ${_namedTimeDescription(selectedNamedTime!)}',
+                            '${_namedTimeLabel(context, selectedNamedTime!)} verwendet ${_namedTimeDescription(selectedNamedTime!)}',
+                          ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    final initial = _timeOfDayForPicker(time);
+                    final selected = await showTimePicker(
+                      context: context,
+                      initialTime: initial,
+                      helpText: _dialogText(
+                        context,
+                        'Choose reminder time',
+                        'Erinnerungszeit wählen',
+                      ),
+                    );
+                    if (selected == null) return;
+                    setState(() {
+                      time = _formatTimeOfDay(selected);
+                      selectedNamedTime = null;
+                    });
+                  },
                 ),
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Days',
+                    _dialogText(context, 'Days', 'Tage'),
                     style: Theme.of(context).textTheme.labelLarge,
                   ),
                 ),
@@ -678,16 +1118,16 @@ Future<void> showAddScheduleDialog(
                 Wrap(
                   spacing: 6,
                   children: [
-                    for (final day in dayLabels.entries)
+                    for (final day in days)
                       FilterChip(
-                        label: Text(day.value),
-                        tooltip: day.key,
-                        selected: weekdays.contains(day.key),
+                        label: Text(_weekdayShort(context, day)),
+                        tooltip: _weekdayLabel(context, day),
+                        selected: weekdays.contains(day),
                         onSelected: (selected) => setState(() {
                           if (selected) {
-                            weekdays.add(day.key);
+                            weekdays.add(day);
                           } else {
-                            weekdays.remove(day.key);
+                            weekdays.remove(day);
                           }
                         }),
                       ),
@@ -699,10 +1139,10 @@ Future<void> showAddScheduleDialog(
                     Expanded(
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Starts'),
+                        title: Text(_dialogText(context, 'Starts', 'Beginnt')),
                         subtitle: Text(
                           startDate?.toIso8601String().split('T').first ??
-                              'Immediately',
+                              _dialogText(context, 'Immediately', 'Sofort'),
                         ),
                         onTap: () async {
                           final value = await showDatePicker(
@@ -718,10 +1158,14 @@ Future<void> showAddScheduleDialog(
                     Expanded(
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Ends'),
+                        title: Text(_dialogText(context, 'Ends', 'Endet')),
                         subtitle: Text(
                           endDate?.toIso8601String().split('T').first ??
-                              'No end date',
+                              _dialogText(
+                                context,
+                                'No end date',
+                                'Kein Enddatum',
+                              ),
                         ),
                         onTap: () async {
                           final value = await showDatePicker(
@@ -742,21 +1186,37 @@ Future<void> showAddScheduleDialog(
                 TextField(
                   controller: instructions,
                   maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Instructions',
-                    hintText: 'With food, separated from medication…',
+                  decoration: InputDecoration(
+                    labelText: _dialogText(
+                      context,
+                      'Instructions',
+                      'Anweisungen',
+                    ),
+                    hintText: _dialogText(
+                      context,
+                      'With food, separated from medication…',
+                      'Mit Essen, zeitlich getrennt von Medikamenten …',
+                    ),
                   ),
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Reminder notification'),
+                  title: Text(
+                    _dialogText(
+                      context,
+                      'Reminder notification',
+                      'Erinnerungsbenachrichtigung',
+                    ),
+                  ),
                   value: reminderEnabled,
                   onChanged: (value) => setState(() => reminderEnabled = value),
                 ),
                 if (existing != null)
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Active schedule'),
+                    title: Text(
+                      _dialogText(context, 'Active schedule', 'Aktiver Plan'),
+                    ),
                     value: active,
                     onChanged: (value) => setState(() => active = value),
                   ),
@@ -767,11 +1227,11 @@ Future<void> showAddScheduleDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Save'),
+            child: Text(_dialogText(context, 'Save', 'Speichern')),
           ),
         ],
       ),
@@ -779,14 +1239,30 @@ Future<void> showAddScheduleDialog(
   );
   if (result == true && context.mounted) {
     final parsedDose = parseOptionalDouble(dose.text);
-    if (parsedDose == null ||
+    if (!_isValidScheduleTime(time)) {
+      await showAppError(
+        context,
+        _dialogText(
+          context,
+          'Choose a named time or an exact time from the time picker to repair this schedule.',
+          'Wähle eine benannte Zeit oder eine genaue Uhrzeit, um diesen Plan zu reparieren.',
+        ),
+      );
+    } else if (parsedDose == null ||
         parsedDose < 0 ||
         unit.text.trim().isEmpty ||
         weekdays.isEmpty ||
         (startDate != null &&
             endDate != null &&
             endDate!.isBefore(startDate!))) {
-      await showAppError(context, 'Check dose, unit, days, and date range.');
+      await showAppError(
+        context,
+        _dialogText(
+          context,
+          'Check dose, unit, days, and date range.',
+          'Prüfe Dosis, Einheit, Tage und Datumsbereich.',
+        ),
+      );
     } else {
       try {
         if (existing == null) {
@@ -831,6 +1307,96 @@ Future<void> showAddScheduleDialog(
   instructions.dispose();
 }
 
+TimeOfDay _timeOfDayForPicker(String value) {
+  switch (value.trim().toLowerCase()) {
+    case 'morning':
+      return const TimeOfDay(hour: 8, minute: 0);
+    case 'midday':
+      return const TimeOfDay(hour: 12, minute: 0);
+    case 'evening':
+      return const TimeOfDay(hour: 18, minute: 0);
+    case 'bedtime':
+      return const TimeOfDay(hour: 22, minute: 0);
+  }
+  final match = _exact24HourTime.firstMatch(value.trim());
+  if (match == null) return TimeOfDay.now();
+  return TimeOfDay(
+    hour: int.parse(match.group(1)!),
+    minute: int.parse(match.group(2)!),
+  );
+}
+
+String _formatTimeOfDay(TimeOfDay value) =>
+    '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+String _exactTimeDescription(BuildContext context, String value) {
+  final match = _exact24HourTime.firstMatch(value.trim());
+  if (match == null) {
+    return _dialogText(
+      context,
+      'Invalid saved value “$value”; choose a time to repair it.',
+      'Ungültiger gespeicherter Wert „$value“; wähle eine Uhrzeit zur Reparatur.',
+    );
+  }
+  return _dialogText(
+    context,
+    'Exact time: ${_formatTimeOfDay(_timeOfDayForPicker(value))}',
+    'Genaue Uhrzeit: ${_formatTimeOfDay(_timeOfDayForPicker(value))}',
+  );
+}
+
+String _namedTimeLabel(BuildContext context, String value) => switch (value) {
+  'Morning' => _dialogText(context, 'Morning', 'Morgens'),
+  'Midday' => _dialogText(context, 'Midday', 'Mittags'),
+  'Evening' => _dialogText(context, 'Evening', 'Abends'),
+  'Bedtime' => _dialogText(context, 'Bedtime', 'Vor dem Schlafen'),
+  _ => value,
+};
+
+String _weekdayShort(BuildContext context, String day) => switch (day) {
+  'monday' => _dialogText(context, 'M', 'Mo'),
+  'tuesday' => _dialogText(context, 'T', 'Di'),
+  'wednesday' => _dialogText(context, 'W', 'Mi'),
+  'thursday' => _dialogText(context, 'T', 'Do'),
+  'friday' => _dialogText(context, 'F', 'Fr'),
+  'saturday' => _dialogText(context, 'S', 'Sa'),
+  'sunday' => _dialogText(context, 'S', 'So'),
+  _ => day,
+};
+
+String _weekdayLabel(BuildContext context, String day) => switch (day) {
+  'monday' => _dialogText(context, 'Monday', 'Montag'),
+  'tuesday' => _dialogText(context, 'Tuesday', 'Dienstag'),
+  'wednesday' => _dialogText(context, 'Wednesday', 'Mittwoch'),
+  'thursday' => _dialogText(context, 'Thursday', 'Donnerstag'),
+  'friday' => _dialogText(context, 'Friday', 'Freitag'),
+  'saturday' => _dialogText(context, 'Saturday', 'Samstag'),
+  'sunday' => _dialogText(context, 'Sunday', 'Sonntag'),
+  _ => day,
+};
+
+String _namedTimeDescription(String value) => switch (value) {
+  'Morning' => '08:00',
+  'Midday' => '12:00',
+  'Evening' => '18:00',
+  'Bedtime' => '22:00',
+  _ => value,
+};
+
+String? _namedTimeChoice(String value) => switch (value.trim().toLowerCase()) {
+  'morning' => 'Morning',
+  'midday' => 'Midday',
+  'evening' => 'Evening',
+  'bedtime' => 'Bedtime',
+  _ => null,
+};
+
+final RegExp _exact24HourTime = RegExp(r'^([01]\d|2[0-3]):([0-5]\d)$');
+
+/// A schedule is either a built-in slot or an exact, zero-padded 24-hour time.
+bool _isValidScheduleTime(String value) =>
+    _namedTimeChoice(value) != null || _exact24HourTime.hasMatch(value.trim());
+
 Future<void> showAddEventDialog(
   BuildContext context,
   AppController controller, {
@@ -853,18 +1419,29 @@ Future<void> showAddEventDialog(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: Text(existing == null ? 'Track health event' : 'Edit event'),
+        title: Text(
+          existing == null
+              ? _dialogText(
+                  context,
+                  'Track health event',
+                  'Gesundheitsereignis erfassen',
+                )
+              : _dialogText(context, 'Edit event', 'Ereignis bearbeiten'),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               SegmentedButton<EventKind>(
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: EventKind.symptom,
-                    label: Text('Symptom'),
+                    label: Text(_dialogText(context, 'Symptom', 'Symptom')),
                   ),
-                  ButtonSegment(value: EventKind.tag, label: Text('Tag')),
+                  ButtonSegment(
+                    value: EventKind.tag,
+                    label: Text(_dialogText(context, 'Tag', 'Markierung')),
+                  ),
                 ],
                 selected: {kind},
                 onSelectionChanged: (value) =>
@@ -876,8 +1453,12 @@ Future<void> showAddEventDialog(
                 autofocus: true,
                 decoration: InputDecoration(
                   labelText: kind == EventKind.symptom
-                      ? 'Symptom name *'
-                      : 'Tag name *',
+                      ? _dialogText(context, 'Symptom name *', 'Symptomname *')
+                      : _dialogText(
+                          context,
+                          'Tag name *',
+                          'Name der Markierung *',
+                        ),
                 ),
               ),
               const SizedBox(height: 4),
@@ -907,8 +1488,12 @@ Future<void> showAddEventDialog(
                     child: TextField(
                       controller: score,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Score (0–10)',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Score (0–10)',
+                          'Bewertung (0–10)',
+                        ),
                       ),
                     ),
                   ),
@@ -919,8 +1504,12 @@ Future<void> showAddEventDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Numeric value',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Numeric value',
+                          'Zahlenwert',
+                        ),
                       ),
                     ),
                   ),
@@ -929,19 +1518,27 @@ Future<void> showAddEventDialog(
               const SizedBox(height: 10),
               TextField(
                 controller: unit,
-                decoration: const InputDecoration(labelText: 'Unit'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Unit', 'Einheit'),
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: duration,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Duration (minutes)',
+                decoration: InputDecoration(
+                  labelText: _dialogText(
+                    context,
+                    'Duration (minutes)',
+                    'Dauer (Minuten)',
+                  ),
                 ),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Observed at'),
+                title: Text(
+                  _dialogText(context, 'Observed at', 'Beobachtet am'),
+                ),
                 subtitle: Text(
                   '${observedAt.toIso8601String().split('T').first} · '
                   '${TimeOfDay.fromDateTime(observedAt).format(context)}',
@@ -975,7 +1572,9 @@ Future<void> showAddEventDialog(
               TextField(
                 controller: notes,
                 maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Notes'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Notes', 'Notizen'),
+                ),
               ),
             ],
           ),
@@ -983,11 +1582,11 @@ Future<void> showAddEventDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Save'),
+            child: Text(_dialogText(context, 'Save', 'Speichern')),
           ),
         ],
       ),
@@ -997,7 +1596,13 @@ Future<void> showAddEventDialog(
     try {
       final parsedScore = parseOptionalInt(score.text);
       if (parsedScore != null && (parsedScore < 0 || parsedScore > 10)) {
-        throw StateError('Symptom score must be between 0 and 10.');
+        throw StateError(
+          _dialogText(
+            context,
+            'Symptom score must be between 0 and 10.',
+            'Die Symptombewertung muss zwischen 0 und 10 liegen.',
+          ),
+        );
       }
       if (existing == null) {
         await controller.addEvent(
@@ -1057,24 +1662,38 @@ Future<void> showAddBiomarkerDialog(
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text(existing == null ? 'Add biomarker' : 'Edit biomarker'),
+      title: Text(
+        existing == null
+            ? _dialogText(context, 'Add biomarker', 'Biomarker hinzufügen')
+            : _dialogText(context, 'Edit biomarker', 'Biomarker bearbeiten'),
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: name,
-              decoration: const InputDecoration(labelText: 'Name *'),
+              decoration: InputDecoration(
+                labelText: _dialogText(context, 'Name *', 'Name *'),
+              ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: category,
-              decoration: const InputDecoration(labelText: 'Category'),
+              decoration: InputDecoration(
+                labelText: _dialogText(context, 'Category', 'Kategorie'),
+              ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: unit,
-              decoration: const InputDecoration(labelText: 'Default unit'),
+              decoration: InputDecoration(
+                labelText: _dialogText(
+                  context,
+                  'Default unit',
+                  'Standardeinheit',
+                ),
+              ),
             ),
             const SizedBox(height: 10),
             TextField(
@@ -1082,26 +1701,40 @@ Future<void> showAddBiomarkerDialog(
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
-              decoration: const InputDecoration(labelText: 'Lab price (EUR)'),
+              decoration: InputDecoration(
+                labelText: _dialogText(
+                  context,
+                  'Lab price (EUR)',
+                  'Laborpreis (EUR)',
+                ),
+              ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: lab,
-              decoration: const InputDecoration(labelText: 'Lab name'),
+              decoration: InputDecoration(
+                labelText: _dialogText(context, 'Lab name', 'Laborname'),
+              ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: synonyms,
-              decoration: const InputDecoration(
-                labelText: 'Synonyms',
-                hintText: 'Comma-separated names used on lab reports',
+              decoration: InputDecoration(
+                labelText: _dialogText(context, 'Synonyms', 'Synonyme'),
+                hintText: _dialogText(
+                  context,
+                  'Comma-separated names used on lab reports',
+                  'Kommagetrennte Namen aus Laborberichten',
+                ),
               ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: description,
               maxLines: 3,
-              decoration: const InputDecoration(labelText: 'Description'),
+              decoration: InputDecoration(
+                labelText: _dialogText(context, 'Description', 'Beschreibung'),
+              ),
             ),
           ],
         ),
@@ -1109,11 +1742,15 @@ Future<void> showAddBiomarkerDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Cancel'),
+          child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(existing == null ? 'Add' : 'Save'),
+          child: Text(
+            existing == null
+                ? _dialogText(context, 'Add', 'Hinzufügen')
+                : _dialogText(context, 'Save', 'Speichern'),
+          ),
         ),
       ],
     ),
@@ -1194,8 +1831,16 @@ Future<void> showAddMeasurementDialog(
       builder: (context, setState) => AlertDialog(
         title: Text(
           existing == null
-              ? 'Record ${biomarker.displayName}'
-              : 'Edit ${biomarker.displayName}',
+              ? _dialogText(
+                  context,
+                  'Record ${biomarker.displayName}',
+                  '${biomarker.displayName} erfassen',
+                )
+              : _dialogText(
+                  context,
+                  'Edit ${biomarker.displayName}',
+                  '${biomarker.displayName} bearbeiten',
+                ),
         ),
         content: SingleChildScrollView(
           child: Column(
@@ -1210,21 +1855,25 @@ Future<void> showAddMeasurementDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(labelText: 'Value *'),
+                      decoration: InputDecoration(
+                        labelText: _dialogText(context, 'Value *', 'Wert *'),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
                       controller: unit,
-                      decoration: const InputDecoration(labelText: 'Unit *'),
+                      decoration: InputDecoration(
+                        labelText: _dialogText(context, 'Unit *', 'Einheit *'),
+                      ),
                     ),
                   ),
                 ],
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Sample date'),
+                title: Text(_dialogText(context, 'Sample date', 'Probendatum')),
                 subtitle: Text(date.toIso8601String().split('T').first),
                 trailing: const Icon(Icons.calendar_today_outlined),
                 onTap: () async {
@@ -1245,8 +1894,12 @@ Future<void> showAddMeasurementDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Lab ref. low',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Lab ref. low',
+                          'Laborreferenz unten',
+                        ),
                       ),
                     ),
                   ),
@@ -1257,8 +1910,12 @@ Future<void> showAddMeasurementDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Lab ref. high',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Lab ref. high',
+                          'Laborreferenz oben',
+                        ),
                       ),
                     ),
                   ),
@@ -1267,7 +1924,9 @@ Future<void> showAddMeasurementDialog(
               const SizedBox(height: 10),
               TextField(
                 controller: notes,
-                decoration: const InputDecoration(labelText: 'Notes'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Notes', 'Notizen'),
+                ),
               ),
             ],
           ),
@@ -1275,11 +1934,15 @@ Future<void> showAddMeasurementDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(existing == null ? 'Add result' : 'Save'),
+            child: Text(
+              existing == null
+                  ? _dialogText(context, 'Add result', 'Ergebnis hinzufügen')
+                  : _dialogText(context, 'Save', 'Speichern'),
+            ),
           ),
         ],
       ),
@@ -1288,7 +1951,14 @@ Future<void> showAddMeasurementDialog(
   if (result == true && context.mounted) {
     final parsed = parseOptionalDouble(value.text);
     if (parsed == null || unit.text.trim().isEmpty) {
-      await showAppError(context, 'Enter a valid value and unit.');
+      await showAppError(
+        context,
+        _dialogText(
+          context,
+          'Enter a valid value and unit.',
+          'Gib einen gültigen Wert und eine Einheit ein.',
+        ),
+      );
     } else {
       try {
         if (existing == null) {
@@ -1355,19 +2025,32 @@ Future<void> showProfileTargetDialog(
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text('Personal target · ${biomarker.displayName}'),
+      title: Text(
+        '${_dialogText(context, 'Personal target', 'Persönlicher Zielbereich')} · '
+        '${biomarker.displayName}',
+      ),
       content: SizedBox(
         width: 520,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Card(
+              Card(
                 child: ListTile(
-                  leading: Icon(Icons.person_outline),
-                  title: Text('This target belongs only to the active profile'),
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(
+                    _dialogText(
+                      context,
+                      'This target belongs only to the active profile',
+                      'Dieses Ziel gehört nur zum aktiven Profil',
+                    ),
+                  ),
                   subtitle: Text(
-                    'It does not overwrite lab reference ranges or another profile’s longevity target.',
+                    _dialogText(
+                      context,
+                      'It does not overwrite lab reference ranges or another profile’s longevity target.',
+                      'Es überschreibt weder Laborreferenzbereiche noch Langlebigkeitsziele anderer Profile.',
+                    ),
                   ),
                 ),
               ),
@@ -1379,8 +2062,12 @@ Future<void> showProfileTargetDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Target low',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Target low',
+                          'Ziel unten',
+                        ),
                       ),
                     ),
                   ),
@@ -1391,8 +2078,12 @@ Future<void> showProfileTargetDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Target high',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Target high',
+                          'Ziel oben',
+                        ),
                       ),
                     ),
                   ),
@@ -1407,8 +2098,12 @@ Future<void> showProfileTargetDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Borderline low',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Borderline low',
+                          'Grenzbereich unten',
+                        ),
                       ),
                     ),
                   ),
@@ -1419,8 +2114,12 @@ Future<void> showProfileTargetDialog(
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Borderline high',
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Borderline high',
+                          'Grenzbereich oben',
+                        ),
                       ),
                     ),
                   ),
@@ -1429,20 +2128,28 @@ Future<void> showProfileTargetDialog(
               const SizedBox(height: 10),
               TextField(
                 controller: unit,
-                decoration: const InputDecoration(labelText: 'Unit *'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Unit *', 'Einheit *'),
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: source,
-                decoration: const InputDecoration(
-                  labelText: 'Source / rationale',
+                decoration: InputDecoration(
+                  labelText: _dialogText(
+                    context,
+                    'Source / rationale',
+                    'Quelle / Begründung',
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: notes,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Notes'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Notes', 'Notizen'),
+                ),
               ),
             ],
           ),
@@ -1452,16 +2159,16 @@ Future<void> showProfileTargetDialog(
         if (existing != null)
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, null),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           )
         else
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: const Text('Save target'),
+          child: Text(_dialogText(context, 'Save target', 'Ziel speichern')),
         ),
       ],
     ),
@@ -1471,7 +2178,14 @@ Future<void> showProfileTargetDialog(
     final parsedHigh = parseOptionalDouble(high.text);
     if (unit.text.trim().isEmpty ||
         (parsedLow != null && parsedHigh != null && parsedLow > parsedHigh)) {
-      await showAppError(context, 'Check the target range and unit.');
+      await showAppError(
+        context,
+        _dialogText(
+          context,
+          'Check the target range and unit.',
+          'Prüfe Zielbereich und Einheit.',
+        ),
+      );
     } else {
       final now = DateTime.now();
       try {
@@ -1528,27 +2242,50 @@ Future<void> showAddNamedRecordDialog(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: Text(existing == null ? 'Add health context' : 'Edit context'),
+        title: Text(
+          existing == null
+              ? _dialogText(
+                  context,
+                  'Add health context',
+                  'Gesundheitskontext hinzufügen',
+                )
+              : _dialogText(context, 'Edit context', 'Kontext bearbeiten'),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
                 initialValue: kind,
-                decoration: const InputDecoration(labelText: 'Type'),
-                items: const [
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Type', 'Typ'),
+                ),
+                items: [
                   DropdownMenuItem(
                     value: 'condition',
-                    child: Text('Condition'),
+                    child: Text(
+                      _dialogText(context, 'Condition', 'Erkrankung'),
+                    ),
                   ),
                   DropdownMenuItem(
                     value: 'medication',
-                    child: Text('Medication'),
+                    child: Text(
+                      _dialogText(context, 'Medication', 'Medikament'),
+                    ),
                   ),
-                  DropdownMenuItem(value: 'goal', child: Text('Goal')),
+                  DropdownMenuItem(
+                    value: 'goal',
+                    child: Text(_dialogText(context, 'Goal', 'Ziel')),
+                  ),
                   DropdownMenuItem(
                     value: 'family_history',
-                    child: Text('Family history'),
+                    child: Text(
+                      _dialogText(
+                        context,
+                        'Family history',
+                        'Familienanamnese',
+                      ),
+                    ),
                   ),
                 ],
                 onChanged: (value) => setState(() => kind = value ?? kind),
@@ -1556,22 +2293,39 @@ Future<void> showAddNamedRecordDialog(
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
                 initialValue: status,
-                decoration: const InputDecoration(labelText: 'Status'),
-                items: const [
-                  DropdownMenuItem(value: 'active', child: Text('Active')),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Status', 'Status'),
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: 'active',
+                    child: Text(_dialogText(context, 'Active', 'Aktiv')),
+                  ),
                   DropdownMenuItem(
                     value: 'monitoring',
-                    child: Text('Monitoring'),
+                    child: Text(
+                      _dialogText(context, 'Monitoring', 'Beobachtung'),
+                    ),
                   ),
-                  DropdownMenuItem(value: 'resolved', child: Text('Resolved')),
-                  DropdownMenuItem(value: 'paused', child: Text('Paused')),
+                  DropdownMenuItem(
+                    value: 'resolved',
+                    child: Text(
+                      _dialogText(context, 'Resolved', 'Abgeschlossen'),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'paused',
+                    child: Text(_dialogText(context, 'Paused', 'Pausiert')),
+                  ),
                 ],
                 onChanged: (value) => setState(() => status = value ?? status),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: name,
-                decoration: const InputDecoration(labelText: 'Name *'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Name *', 'Name *'),
+                ),
               ),
               if (kind == 'medication') ...[
                 const SizedBox(height: 10),
@@ -1583,14 +2337,18 @@ Future<void> showAddNamedRecordDialog(
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
                         ),
-                        decoration: const InputDecoration(labelText: 'Dose'),
+                        decoration: InputDecoration(
+                          labelText: _dialogText(context, 'Dose', 'Dosis'),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: TextField(
                         controller: unit,
-                        decoration: const InputDecoration(labelText: 'Unit'),
+                        decoration: InputDecoration(
+                          labelText: _dialogText(context, 'Unit', 'Einheit'),
+                        ),
                       ),
                     ),
                   ],
@@ -1598,7 +2356,9 @@ Future<void> showAddNamedRecordDialog(
                 const SizedBox(height: 10),
                 TextField(
                   controller: schedule,
-                  decoration: const InputDecoration(labelText: 'Schedule'),
+                  decoration: InputDecoration(
+                    labelText: _dialogText(context, 'Schedule', 'Einnahmeplan'),
+                  ),
                 ),
               ],
               if (kind == 'goal') ...[
@@ -1606,8 +2366,12 @@ Future<void> showAddNamedRecordDialog(
                 TextField(
                   controller: priority,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Priority (1–5)',
+                  decoration: InputDecoration(
+                    labelText: _dialogText(
+                      context,
+                      'Priority (1–5)',
+                      'Priorität (1–5)',
+                    ),
                   ),
                 ),
               ],
@@ -1615,7 +2379,9 @@ Future<void> showAddNamedRecordDialog(
               TextField(
                 controller: notes,
                 maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Notes'),
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Notes', 'Notizen'),
+                ),
               ),
             ],
           ),
@@ -1623,11 +2389,11 @@ Future<void> showAddNamedRecordDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Save'),
+            child: Text(_dialogText(context, 'Save', 'Speichern')),
           ),
         ],
       ),
