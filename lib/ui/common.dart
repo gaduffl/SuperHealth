@@ -29,7 +29,7 @@ String sanitizeAppErrorMessage(String rawMessage) {
   );
   message = message.replaceAllMapped(
     RegExp(
-      r'''(\b(?:x-api-key|x-goog-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization[_-]?code)\b\s*[:=]\s*["']?)([^"'\s,;}&\r\n]+)''',
+      r'''(\b(?:x-api-key|x-goog-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization[_-]?code)\b["']?\s*[:=]\s*["']?)([^"'\s,;}&\r\n]+)''',
       caseSensitive: false,
     ),
     (match) => '${match.group(1)}$_redactedErrorValue',
