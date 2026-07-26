@@ -227,10 +227,7 @@ void main() {
       expect(biomarkers, hasLength(1));
       expect(biomarkers.single.canonicalName, '1_25_dihydroxy_vitamin_d');
       final db = await database.database;
-      final measurements = await db.query(
-        'measurements',
-        orderBy: 'value ASC',
-      );
+      final measurements = await db.query('measurements', orderBy: 'value ASC');
       expect(measurements, hasLength(2));
       expect(
         measurements.map((row) => row['biomarker_id']).toSet(),
