@@ -371,7 +371,7 @@ class HealthContextBuilder {
     }
     for (final entry in counts.entries) {
       if (entry.key is! String || entry.value is! num) {
-        throw const StateError(
+        throw StateError(
           'Context completeness check failed: a declared count is invalid.',
         );
       }
