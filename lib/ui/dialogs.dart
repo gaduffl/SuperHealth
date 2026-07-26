@@ -40,8 +40,10 @@ Future<void> showProfileDialog(
   DateTime? birthDate = existing?.dateOfBirth;
   String? sex = existing?.sex;
   String? birthDateError;
-  final result = await showDialog<bool>(
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final route = DialogRoute<bool>(
     context: context,
+    themes: InheritedTheme.capture(from: context, to: navigator.context),
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: Text(
@@ -295,6 +297,7 @@ Future<void> showProfileDialog(
       ),
     ),
   );
+  final result = await navigator.push(route);
   if (result == true && context.mounted) {
     try {
       if (existing == null) {
@@ -326,6 +329,7 @@ Future<void> showProfileDialog(
       await showAppError(context, error);
     }
   }
+  await route.completed;
   name.dispose();
   height.dispose();
   weight.dispose();
