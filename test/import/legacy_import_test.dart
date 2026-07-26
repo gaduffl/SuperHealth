@@ -229,10 +229,9 @@ void main() {
       final db = await database.database;
       final measurements = await db.query('measurements', orderBy: 'value ASC');
       expect(measurements, hasLength(2));
-      expect(
-        measurements.map((row) => row['biomarker_id']).toSet(),
-        {biomarkers.single.id},
-      );
+      expect(measurements.map((row) => row['biomarker_id']).toSet(), {
+        biomarkers.single.id,
+      });
       await database.close();
     },
   );
