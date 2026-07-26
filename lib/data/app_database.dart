@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 5;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -83,6 +83,7 @@ class AppDatabase {
           display_name TEXT NOT NULL,
           date_of_birth TEXT,
           sex TEXT,
+          height_cm REAL,
           weight_kg REAL,
           notes TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL,
@@ -380,6 +381,10 @@ class AppDatabase {
           provider TEXT,
           model TEXT,
           status TEXT NOT NULL DEFAULT 'draft',
+          verification_summary TEXT NOT NULL DEFAULT '',
+          verification_warnings_json TEXT NOT NULL DEFAULT '[]',
+          verification_citations_json TEXT NOT NULL DEFAULT '[]',
+          verified_at TEXT,
           deleted INTEGER NOT NULL DEFAULT 0
         )
       ''');
@@ -493,12 +498,25 @@ class AppDatabase {
   ];
 
   Future<void> _upgrade(Database db, int oldVersion, int newVersion) async {
-    // This callback is retained for future production migrations. Schema 3 is
-    // stored in a new file and therefore never upgrades the prototype schema.
-    if (oldVersion != newVersion) {
+    if (oldVersion < 3 || newVersion != schemaVersion) {
       throw StateError(
         'Unsupported SuperHealth database upgrade $oldVersion → $newVersion.',
       );
+    }
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE profiles ADD COLUMN height_cm REAL');
+    }
+    if (oldVersion < 5) {
+      await db.execute(
+        "ALTER TABLE lab_plans ADD COLUMN verification_summary TEXT NOT NULL DEFAULT ''",
+      );
+      await db.execute(
+        "ALTER TABLE lab_plans ADD COLUMN verification_warnings_json TEXT NOT NULL DEFAULT '[]'",
+      );
+      await db.execute(
+        "ALTER TABLE lab_plans ADD COLUMN verification_citations_json TEXT NOT NULL DEFAULT '[]'",
+      );
+      await db.execute('ALTER TABLE lab_plans ADD COLUMN verified_at TEXT');
     }
   }
 
