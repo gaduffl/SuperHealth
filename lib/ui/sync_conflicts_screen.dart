@@ -256,7 +256,7 @@ class _VersionSummary extends StatelessWidget {
                 'Aktualisiert: nicht verfügbar',
               )
             : '${_syncText(context, 'Updated', 'Aktualisiert')}: '
-                  '${timestamp.toLocal().toIso8601String().replaceFirst('T', ' ').split('.').first}',
+                  '${timestamp!.toLocal().toIso8601String().replaceFirst('T', ' ').split('.').first}',
         style: Theme.of(context).textTheme.bodySmall,
       ),
     ],
