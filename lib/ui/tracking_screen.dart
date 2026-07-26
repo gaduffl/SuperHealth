@@ -1,10 +1,11 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../analysis/supplement_insights.dart';
 import '../app/app_controller.dart';
+import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
 import 'dialogs.dart';
@@ -19,33 +20,53 @@ class TrackingScreen extends StatefulWidget {
 class _TrackingScreenState extends State<TrackingScreen> {
   final _insights = const SupplementInsights();
   final _search = TextEditingController();
+  final _historySearch = TextEditingController();
   var _selectedDay = DateTime.now();
   var _catalogFilter = 'active';
+  var _historyRange = '30';
+  var _historyVisible = 50;
+  String? _historyPinsProfileId;
+  bool _historyPinsLoading = false;
+  Set<String> _historyPins = <String>{};
 
   @override
   void dispose() {
     _search.dispose();
+    _historySearch.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final strings = AppLocalizations.of(context);
     return DefaultTabController(
       length: 4,
       child: PageBody(
         child: Column(
           children: [
-            const Material(
+            Material(
               color: Colors.transparent,
               child: TabBar(
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
                 tabs: [
-                  Tab(icon: Icon(Icons.today_outlined), text: 'Today'),
-                  Tab(icon: Icon(Icons.medication_outlined), text: 'Catalog'),
-                  Tab(icon: Icon(Icons.inventory_2_outlined), text: 'Stock'),
-                  Tab(icon: Icon(Icons.analytics_outlined), text: 'History'),
+                  Tab(
+                    icon: const Icon(Icons.today_outlined),
+                    text: strings.today,
+                  ),
+                  Tab(
+                    icon: const Icon(Icons.medication_outlined),
+                    text: strings.catalog,
+                  ),
+                  Tab(
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    text: strings.stock,
+                  ),
+                  Tab(
+                    icon: const Icon(Icons.analytics_outlined),
+                    text: strings.history,
+                  ),
                 ],
               ),
             ),
@@ -66,6 +87,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   Widget _today(BuildContext context, AppController controller) {
+    final strings = AppLocalizations.of(context);
     final doses = _insights.dosesForDay(
       day: _selectedDay,
       schedules: controller.schedules,
@@ -87,25 +109,28 @@ class _TrackingScreenState extends State<TrackingScreen> {
         children: [
           _dayStrip(context),
           SectionHeader(
-            title: DateFormat('EEEE, d MMMM').format(_selectedDay),
+            title: strings.formatTrackingDate(_selectedDay),
             subtitle: doses.isEmpty
-                ? 'Nothing scheduled'
-                : '${doses.where((item) => item.taken).length} of ${doses.length} taken',
+                ? strings.nothingScheduled
+                : strings.trackingProgress(
+                    doses.where((item) => item.taken).length,
+                    doses.length,
+                  ),
             action: TextButton.icon(
               onPressed: controller.supplements.isEmpty
                   ? () => showAddSupplementDialog(context, controller)
                   : () => _chooseManualIntake(context, controller),
               icon: const Icon(Icons.add),
-              label: const Text('Manual'),
+              label: Text(strings.manual),
             ),
           ),
           if (doses.isEmpty)
             EmptyState(
               icon: Icons.event_available_outlined,
-              title: 'No doses for this day',
+              title: strings.noDosesForThisDay,
               message: controller.schedules.isEmpty
-                  ? 'Add a schedule from the supplement catalog.'
-                  : 'This is a schedule-free day.',
+                  ? strings.addScheduleFromCatalog
+                  : strings.scheduleFreeDay,
             )
           else
             Card(
@@ -117,9 +142,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 ],
               ),
             ),
-          const SectionHeader(
-            title: '30-day adherence',
-            subtitle: 'Scheduled doses through the current time',
+          SectionHeader(
+            title: strings.adherence30Day,
+            subtitle: strings.scheduledThroughCurrentTime,
           ),
           _adherenceCard(context, adherence),
         ],
@@ -128,6 +153,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   Widget _dayStrip(BuildContext context) {
+    final strings = AppLocalizations.of(context);
     final today = DateTime.now();
     return SizedBox(
       height: 74,
@@ -144,7 +170,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           final selected = _sameDay(day, _selectedDay);
           return Semantics(
             selected: selected,
-            label: DateFormat('EEEE d MMMM').format(day),
+            label: strings.formatTrackingDate(day),
             child: ChoiceChip(
               selected: selected,
               onSelected: (_) => setState(() => _selectedDay = day),
@@ -153,9 +179,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(DateFormat.E().format(day).substring(0, 2)),
+                    Text(strings.formatTrackingWeekday(day).substring(0, 2)),
                     Text(
-                      '${day.day}',
+                      strings.formatNumber(
+                        day.day.toDouble(),
+                        decimalDigits: 0,
+                      ),
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ],
@@ -173,6 +202,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     AppController controller,
     ScheduledDoseStatus status,
   ) {
+    final strings = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
     final icon = status.taken
         ? Icons.check_circle
@@ -195,7 +225,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           title: Text(status.supplement.name),
           subtitle: Text(
             [
-              '${status.schedule.dose} ${status.schedule.unit}',
+              '${strings.formatNumber(status.schedule.dose)} ${status.schedule.unit}',
               status.schedule.timeOfDay,
               if (status.schedule.instructions.isNotEmpty)
                 status.schedule.instructions,
@@ -203,7 +233,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           ),
           trailing: status.intake != null
               ? IconButton(
-                  tooltip: 'Undo check-in',
+                  tooltip: strings.undoCheckIn,
                   onPressed: controller.busy
                       ? null
                       : () => _undoIntake(context, controller, status.intake!),
@@ -213,7 +243,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   spacing: 4,
                   children: [
                     IconButton.outlined(
-                      tooltip: 'Skip this dose',
+                      tooltip: strings.skipDose,
                       onPressed: controller.busy
                           ? null
                           : () => _recordScheduled(
@@ -225,7 +255,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                       icon: const Icon(Icons.close),
                     ),
                     IconButton.filled(
-                      tooltip: 'Mark as taken',
+                      tooltip: strings.markTaken,
                       onPressed: controller.busy
                           ? null
                           : () => _recordScheduled(
@@ -277,6 +307,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   Widget _adherenceCard(BuildContext context, AdherenceSummary value) {
+    final strings = AppLocalizations.of(context);
     final rate = value.rate;
     return Card(
       child: Padding(
@@ -300,7 +331,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                       ),
                       Center(
                         child: Text(
-                          rate == null ? '—' : '${(rate * 100).round()}%',
+                          rate == null ? '—' : strings.formatPercent(rate),
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -313,10 +344,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
                     spacing: 18,
                     runSpacing: 8,
                     children: [
-                      _count('Taken', value.taken),
-                      _count('Skipped', value.skipped),
-                      _count('Missed', value.missed),
-                      _count('Scheduled', value.scheduled),
+                      _count(strings, strings.taken, value.taken),
+                      _count(strings, strings.skipped, value.skipped),
+                      _count(strings, strings.missed, value.missed),
+                      _count(strings, strings.scheduled, value.scheduled),
                     ],
                   ),
                 ),
@@ -328,15 +359,19 @@ class _TrackingScreenState extends State<TrackingScreen> {
     );
   }
 
-  Widget _count(String label, int value) => Column(
+  Widget _count(AppLocalizations strings, String label, int value) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text('$value', style: const TextStyle(fontWeight: FontWeight.bold)),
+      Text(
+        strings.formatNumber(value.toDouble(), decimalDigits: 0),
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
       Text(label),
     ],
   );
 
   Widget _catalog(BuildContext context, AppController controller) {
+    final strings = AppLocalizations.of(context);
     final query = _search.text.trim().toLowerCase();
     final products = controller.supplements.where((item) {
       final matchesQuery =
@@ -360,11 +395,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
           onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search),
-            labelText: 'Search products or ingredients',
+            labelText: strings.searchProductsOrIngredients,
             suffixIcon: _search.text.isEmpty
                 ? null
                 : IconButton(
-                    tooltip: 'Clear search',
+                    tooltip: strings.clearSearch,
                     onPressed: () => setState(_search.clear),
                     icon: const Icon(Icons.clear),
                   ),
@@ -374,10 +409,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
         Row(
           children: [
             SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'active', label: Text('Active')),
-                ButtonSegment(value: 'inactive', label: Text('Paused')),
-                ButtonSegment(value: 'all', label: Text('All')),
+              segments: [
+                ButtonSegment(value: 'active', label: Text(strings.active)),
+                ButtonSegment(value: 'inactive', label: Text(strings.paused)),
+                ButtonSegment(value: 'all', label: Text(strings.all)),
               ],
               selected: {_catalogFilter},
               onSelectionChanged: (value) =>
@@ -385,7 +420,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
             ),
             const Spacer(),
             IconButton.filled(
-              tooltip: 'Add supplement',
+              tooltip: strings.addSupplement,
               onPressed: () => showAddSupplementDialog(context, controller),
               icon: const Icon(Icons.add),
             ),
@@ -393,10 +428,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
         ),
         const SizedBox(height: 10),
         if (products.isEmpty)
-          const EmptyState(
+          EmptyState(
             icon: Icons.search_off,
-            title: 'No matching supplements',
-            message: 'Change the filter or add a new product.',
+            title: strings.noMatchingSupplements,
+            message: strings.changeFilterOrAddProduct,
           )
         else
           for (final product in products)
@@ -410,6 +445,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     AppController controller,
     Supplement product,
   ) {
+    final strings = AppLocalizations.of(context);
     final stock = controller.stockLevels[product.id] ?? 0;
     final productSchedules = controller.schedules
         .where((item) => item.supplementId == product.id)
@@ -425,24 +461,26 @@ class _TrackingScreenState extends State<TrackingScreen> {
         subtitle: Text(
           [
             if (product.brand.isNotEmpty) product.brand,
-            '${stock.toStringAsFixed(1)} ${product.stockUnit}',
-            '${productSchedules.length} schedule${productSchedules.length == 1 ? '' : 's'}',
+            '${strings.formatNumber(stock)} ${product.stockUnit}',
+            strings.scheduleCount(productSchedules.length),
           ].join(' · '),
         ),
         trailing: PopupMenuButton<String>(
           onSelected: (value) =>
               _productAction(context, controller, product, value),
           itemBuilder: (_) => [
-            const PopupMenuItem(value: 'log', child: Text('Log intake')),
-            const PopupMenuItem(value: 'schedule', child: Text('Add schedule')),
-            const PopupMenuItem(value: 'stock', child: Text('Adjust stock')),
-            const PopupMenuItem(value: 'edit', child: Text('Edit product')),
+            PopupMenuItem(value: 'log', child: Text(strings.logIntake)),
+            PopupMenuItem(value: 'schedule', child: Text(strings.addSchedule)),
+            PopupMenuItem(value: 'stock', child: Text(strings.adjustStock)),
+            PopupMenuItem(value: 'edit', child: Text(strings.editProduct)),
             PopupMenuItem(
               value: 'toggle',
-              child: Text(product.active ? 'Pause product' : 'Reactivate'),
+              child: Text(
+                product.active ? strings.pauseProduct : strings.reactivate,
+              ),
             ),
             const PopupMenuDivider(),
-            const PopupMenuItem(value: 'delete', child: Text('Delete')),
+            PopupMenuItem(value: 'delete', child: Text(strings.delete)),
           ],
         ),
         children: [
@@ -479,10 +517,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 schedule.active ? Icons.schedule : Icons.pause_circle_outline,
               ),
               title: Text(
-                '${schedule.dose} ${schedule.unit} · ${schedule.timeOfDay}',
+                '${strings.formatNumber(schedule.dose)} ${schedule.unit} · ${schedule.timeOfDay}',
               ),
               subtitle: Text(
-                '${schedule.weekdays.length} days/week'
+                '${strings.daysPerWeek(schedule.weekdays.length)}'
                 '${schedule.instructions.isEmpty ? '' : ' · ${schedule.instructions}'}',
               ),
               onTap: () => showAddScheduleDialog(
@@ -492,7 +530,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 existing: schedule,
               ),
               trailing: IconButton(
-                tooltip: 'Delete schedule',
+                tooltip: strings.deleteSchedule,
                 onPressed: () => _deleteSchedule(context, controller, schedule),
                 icon: const Icon(Icons.delete_outline),
               ),
@@ -533,12 +571,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
         return;
       case 'delete':
         if (!context.mounted) return;
+        final strings = AppLocalizations.of(context);
         final confirmed = await showConfirmAction(
           context,
-          title: 'Delete ${product.name}?',
-          message:
-              'The product and its active schedules will be removed. Historical intakes remain as evidence.',
-          confirmLabel: 'Delete',
+          title: strings.deleteProductTitle(product.name),
+          message: strings.deleteProductDescription,
+          confirmLabel: strings.delete,
           destructive: true,
         );
         if (confirmed) await controller.deleteSupplement(product);
@@ -571,17 +609,19 @@ class _TrackingScreenState extends State<TrackingScreen> {
     AppController controller,
     SupplementSchedule schedule,
   ) async {
+    final strings = AppLocalizations.of(context);
     final confirmed = await showConfirmAction(
       context,
-      title: 'Delete schedule?',
-      message: 'Past intake records will be kept.',
-      confirmLabel: 'Delete',
+      title: strings.deleteScheduleTitle,
+      message: strings.pastIntakeRecordsKept,
+      confirmLabel: strings.delete,
       destructive: true,
     );
     if (confirmed) await controller.deleteSchedule(schedule);
   }
 
   Widget _stock(BuildContext context, AppController controller) {
+    final strings = AppLocalizations.of(context);
     final projections = _insights.stockProjections(
       supplements: controller.supplements,
       householdSchedules: controller.householdSchedules,
@@ -598,32 +638,35 @@ class _TrackingScreenState extends State<TrackingScreen> {
           children: [
             Expanded(
               child: MetricCard(
-                label: 'Low stock',
-                value: '${projections.where((item) => item.low).length}',
+                label: strings.lowStock,
+                value: strings.formatNumber(
+                  projections.where((item) => item.low).length.toDouble(),
+                  decimalDigits: 0,
+                ),
                 icon: Icons.inventory_outlined,
-                detail: 'Household catalog',
+                detail: strings.householdCatalog,
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: MetricCard(
-                label: 'Planned monthly cost',
-                value: '${monthlyCost.toStringAsFixed(0)} €',
+                label: strings.plannedMonthlyCost,
+                value: strings.formatEur(monthlyCost, decimalDigits: 0),
                 icon: Icons.euro_outlined,
-                detail: 'Known package prices',
+                detail: strings.knownPackagePrices,
               ),
             ),
           ],
         ),
-        const SectionHeader(
-          title: 'Household stock',
-          subtitle: 'Consumption projection includes every profile schedule',
+        SectionHeader(
+          title: strings.householdStock,
+          subtitle: strings.stockProjectionDescription,
         ),
         if (projections.isEmpty)
-          const EmptyState(
+          EmptyState(
             icon: Icons.inventory_2_outlined,
-            title: 'No stock to manage',
-            message: 'Add a supplement and its current container count.',
+            title: strings.noStockToManage,
+            message: strings.addSupplementAndContainerCount,
           )
         else
           for (final projection in projections)
@@ -642,13 +685,18 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 title: Text(projection.supplement.name),
                 subtitle: Text(
                   [
-                    '${projection.unitsOnHand.toStringAsFixed(1)} ${projection.supplement.stockUnit}',
+                    '${strings.formatNumber(projection.unitsOnHand)} ${projection.supplement.stockUnit}',
                     if (projection.daysRemaining != null)
-                      '${projection.daysRemaining!.clamp(0, 9999).toStringAsFixed(0)} days projected'
+                      strings.daysProjected(
+                        projection.daysRemaining!.clamp(0, 9999).round(),
+                      )
                     else
-                      'No compatible household schedule',
+                      strings.noCompatibleHouseholdSchedule,
                     if (projection.low && projection.suggestedPurchaseUnits > 0)
-                      'Buy ~${projection.suggestedPurchaseUnits.toStringAsFixed(0)} for 12 weeks',
+                      strings.buyForWeeks(
+                        projection.suggestedPurchaseUnits.round(),
+                        12,
+                      ),
                   ].join(' · '),
                 ),
                 trailing: FilledButton.tonal(
@@ -658,7 +706,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                     projection.supplement,
                     purchase: true,
                   ),
-                  child: const Text('Purchase'),
+                  child: Text(strings.purchase),
                 ),
                 onTap: () => showAdjustStockDialog(
                   context,
@@ -672,56 +720,284 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   Widget _history(BuildContext context, AppController controller) {
-    final now = DateTime.now();
+    final strings = AppLocalizations.of(context);
+    final profileId = controller.activeProfile?.id;
+    if (profileId != null && profileId != _historyPinsProfileId) {
+      _loadHistoryPins(profileId);
+    }
+    final window = _historyWindow(controller);
+    final weekly = _insights.weeklyAdherence(
+      from: window.$1,
+      through: window.$2,
+      schedules: controller.schedules,
+      supplements: controller.supplements,
+      intakes: controller.intakes,
+    );
+    final exposures = _insights.supplementExposure(
+      intakes: controller.intakes,
+      supplements: controller.supplements,
+      from: window.$1,
+      through: window.$2,
+    );
     final ingredients = _insights.ingredientExposure(
       intakes: controller.intakes,
-      from: now.subtract(const Duration(days: 30)),
-      to: now.add(const Duration(days: 1)),
+      from: window.$1,
+      to: window.$2,
     );
+    final cost = _insights.actualIntakeCost(
+      intakes: controller.intakes,
+      supplements: controller.supplements,
+      from: window.$1,
+      through: window.$2,
+    );
+    final query = _historySearch.text.trim().toLowerCase();
+    final filteredExposures =
+        exposures
+            .where(
+              (item) =>
+                  query.isEmpty ||
+                  item.name.toLowerCase().contains(query) ||
+                  item.unit.toLowerCase().contains(query),
+            )
+            .toList()
+          ..sort(
+            (a, b) => _comparePinned(
+              _supplementPinKey(a),
+              _supplementPinKey(b),
+              a.name,
+              b.name,
+            ),
+          );
+    final filteredIngredients =
+        ingredients
+            .where(
+              (item) =>
+                  query.isEmpty ||
+                  item.name.toLowerCase().contains(query) ||
+                  item.unit.toLowerCase().contains(query),
+            )
+            .toList()
+          ..sort(
+            (a, b) => _comparePinned(
+              _ingredientPinKey(a),
+              _ingredientPinKey(b),
+              a.name,
+              b.name,
+            ),
+          );
+    if (profileId != null && _historyPinsProfileId == profileId) {
+      final allRange = _insights.historyRange(
+        selection: 'all',
+        now: DateTime.now(),
+        historyDates: controller.intakes
+            .where((item) => !item.deleted)
+            .map((item) => item.takenAt),
+      );
+      final existingPins = <String>{
+        for (final item in _insights.supplementExposure(
+          intakes: controller.intakes,
+          supplements: controller.supplements,
+          from: allRange.from,
+          through: allRange.through,
+        ))
+          _supplementPinKey(item),
+        for (final item in _insights.ingredientExposure(
+          intakes: controller.intakes,
+          from: allRange.from,
+          to: allRange.through,
+        ))
+          _ingredientPinKey(item),
+      };
+      if (_historyPins.any((item) => !existingPins.contains(item))) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _pruneHistoryPins(profileId, existingPins),
+        );
+      }
+    }
+    final history =
+        controller.intakes
+            .where(
+              (item) =>
+                  !item.deleted &&
+                  _withinWindow(item.takenAt, window.$1, window.$2) &&
+                  (query.isEmpty ||
+                      item.unit.toLowerCase().contains(query) ||
+                      (controller.supplements
+                              .firstWhereOrNull(
+                                (product) => product.id == item.supplementId,
+                              )
+                              ?.name
+                              .toLowerCase()
+                              .contains(query) ??
+                          false)),
+            )
+            .toList()
+          ..sort((a, b) => b.takenAt.compareTo(a.takenAt));
+    final eventContext =
+        controller.events
+            .where(
+              (item) =>
+                  !item.deleted &&
+                  _withinWindow(item.observedAt, window.$1, window.$2),
+            )
+            .toList()
+          ..sort((a, b) => b.observedAt.compareTo(a.observedAt));
+    final visibleHistory = history.take(_historyVisible).toList();
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
       children: [
-        const SectionHeader(
-          title: '30-day ingredient exposure',
-          subtitle: 'Calculated from the ingredient snapshot saved per intake',
+        SectionHeader(
+          title: strings.historyAnalytics,
+          subtitle:
+              '${strings.formatHistoryDate(window.$1)} – ${strings.formatHistoryDate(window.$2)}',
         ),
-        if (ingredients.isEmpty)
-          const EmptyState(
-            icon: Icons.science_outlined,
-            title: 'No ingredient totals yet',
-            message:
-                'Add ingredient amounts to products and log intakes to see totals.',
+        SegmentedButton<String>(
+          segments: [
+            ButtonSegment(
+              value: '30',
+              label: Text(strings.historyRangeDays(30)),
+            ),
+            ButtonSegment(
+              value: '90',
+              label: Text(strings.historyRangeDays(90)),
+            ),
+            ButtonSegment(
+              value: '365',
+              label: Text(strings.historyRangeDays(365)),
+            ),
+            ButtonSegment(value: 'all', label: Text(strings.all)),
+          ],
+          selected: {_historyRange},
+          showSelectedIcon: false,
+          onSelectionChanged: (value) => setState(() {
+            _historyRange = value.first;
+            _historyVisible = 50;
+          }),
+        ),
+        SectionHeader(
+          title: strings.weeklyAdherence,
+          subtitle: strings.weeklyAdherenceDescription,
+        ),
+        _weeklyAdherenceCard(context, weekly),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _historySearch,
+          onChanged: (_) => setState(() => _historyVisible = 50),
+          decoration: InputDecoration(
+            labelText: strings.filterSupplementsAndIngredients,
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: _historySearch.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: strings.clearFilter,
+                    onPressed: () => setState(() {
+                      _historySearch.clear();
+                      _historyVisible = 50;
+                    }),
+                    icon: const Icon(Icons.clear),
+                  ),
+          ),
+        ),
+        SectionHeader(
+          title: strings.supplementExposure,
+          subtitle: strings.supplementExposureDescription,
+        ),
+        if (filteredExposures.isEmpty)
+          EmptyState(
+            icon: Icons.medication_outlined,
+            title: strings.noSupplementExposure,
+            message: strings.logNonSkippedIntake,
           )
         else
           Card(
             child: Column(
               children: [
-                for (final item in ingredients.take(20))
-                  ListTile(
-                    title: Text(item.name),
-                    trailing: Text(
-                      '${item.total.toStringAsFixed(1)} ${item.unit}',
-                    ),
+                for (final item in filteredExposures)
+                  _exposureTile(
+                    context,
+                    title: item.name,
+                    total: item.total,
+                    unit: item.unit,
+                    detail: strings.intakeCount(item.intakeCount),
+                    pinKey: _supplementPinKey(item),
                   ),
               ],
             ),
           ),
-        const SectionHeader(
-          title: 'Intake history',
-          subtitle: 'Tap an entry to edit or remove it',
+        SectionHeader(
+          title: strings.ingredientExposure,
+          subtitle: strings.ingredientExposureDescription,
         ),
-        if (controller.intakes.isEmpty)
-          const EmptyState(
+        if (filteredIngredients.isEmpty)
+          EmptyState(
+            icon: Icons.science_outlined,
+            title: strings.noIngredientTotals,
+            message: strings.addIngredientsAndIntakes,
+          )
+        else
+          Card(
+            child: Column(
+              children: [
+                for (final item in filteredIngredients)
+                  _exposureTile(
+                    context,
+                    title: item.name,
+                    total: item.total,
+                    unit: item.unit,
+                    detail: strings.ingredientSnapshot,
+                    pinKey: _ingredientPinKey(item),
+                  ),
+              ],
+            ),
+          ),
+        SectionHeader(
+          title: strings.knownIntakeCost,
+          subtitle: strings.knownIntakeCostDescription,
+        ),
+        _costCard(context, cost),
+        SectionHeader(
+          title: strings.temporalContext,
+          subtitle: strings.temporalContextDescription,
+        ),
+        if (eventContext.isEmpty)
+          EmptyState(
+            icon: Icons.event_note_outlined,
+            title: strings.noSymptomOrTagEvents,
+            message: strings.eventsShownAlongsideHistory,
+          )
+        else
+          Card(
+            child: Column(
+              children: [
+                for (final event in eventContext)
+                  ListTile(
+                    leading: Icon(
+                      event.kind == EventKind.symptom
+                          ? Icons.monitor_heart_outlined
+                          : Icons.sell_outlined,
+                    ),
+                    title: Text(event.name),
+                    subtitle: Text(_eventLabel(event, strings)),
+                  ),
+              ],
+            ),
+          ),
+        SectionHeader(
+          title: strings.intakeHistory,
+          subtitle: strings.intakeHistoryDescription,
+        ),
+        if (history.isEmpty)
+          EmptyState(
             icon: Icons.history,
-            title: 'No intake history',
-            message: 'Scheduled and manual check-ins appear here.',
+            title: strings.noIntakeHistory,
+            message: strings.intakeHistoryEmptyDescription,
           )
         else
           Card(
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
-                for (final intake in controller.intakes.take(100))
+                for (final intake in visibleHistory)
                   ListTile(
                     leading: Icon(
                       intake.skipped ? Icons.close : Icons.check,
@@ -735,18 +1011,31 @@ class _TrackingScreenState extends State<TrackingScreen> {
                                 (item) => item.id == intake.supplementId,
                               )
                               ?.name ??
-                          'Deleted supplement',
+                          strings.deletedSupplement,
                     ),
                     subtitle: Text(
-                      '${intake.dose} ${intake.unit} · '
-                      '${DateFormat('dd.MM.yyyy HH:mm').format(intake.takenAt)}'
+                      '${strings.formatNumber(intake.dose)} ${intake.unit} · '
+                      '${strings.formatTrackingDateTime(intake.takenAt)}'
                       '${intake.notes.isEmpty ? '' : ' · ${intake.notes}'}',
                     ),
                     trailing: IconButton(
-                      tooltip: 'Delete intake',
+                      tooltip: strings.delete,
                       onPressed: () =>
                           _deleteHistoryIntake(context, controller, intake),
                       icon: const Icon(Icons.delete_outline),
+                    ),
+                  ),
+                if (visibleHistory.length < history.length)
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: OutlinedButton.icon(
+                      onPressed: () => setState(() => _historyVisible += 50),
+                      icon: const Icon(Icons.expand_more),
+                      label: Text(
+                        strings.showMoreHistory(
+                          history.length - visibleHistory.length,
+                        ),
+                      ),
                     ),
                   ),
               ],
@@ -756,16 +1045,311 @@ class _TrackingScreenState extends State<TrackingScreen> {
     );
   }
 
+  (DateTime, DateTime) _historyWindow(AppController controller) {
+    final now = DateTime.now();
+    final dates = [
+      ...controller.intakes
+          .where((item) => !item.deleted)
+          .map((item) => item.takenAt),
+      ...controller.events
+          .where((item) => !item.deleted)
+          .map((item) => item.observedAt),
+    ];
+    final range = _insights.historyRange(
+      selection: _historyRange,
+      now: now,
+      historyDates: dates,
+    );
+    return (range.from, range.through);
+  }
+
+  Widget _weeklyAdherenceCard(
+    BuildContext context,
+    List<WeeklyAdherence> values,
+  ) {
+    final strings = AppLocalizations.of(context);
+    if (values.isEmpty || values.every((item) => item.scheduled == 0)) {
+      return EmptyState(
+        icon: Icons.calendar_today_outlined,
+        title: strings.noDueScheduledDoses,
+        message: strings.futureDosesExcluded,
+      );
+    }
+    final maximum = values.fold<int>(
+      1,
+      (value, item) => item.scheduled > value ? item.scheduled : value,
+    );
+    return Card(
+      child: Column(
+        children: [
+          for (final value in values)
+            Semantics(
+              label: strings.weeklyAdherenceSemantic(
+                value.weekStarting,
+                value.taken,
+                value.skipped,
+                value.missed,
+                value.scheduled,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 84,
+                          child: Text(
+                            strings.formatShortDate(value.weekStarting),
+                          ),
+                        ),
+                        Expanded(
+                          child: _stackedAdherenceBar(context, value, maximum),
+                        ),
+                      ],
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 84, top: 4),
+                      child: Text(
+                        strings.weeklyAdherenceSummary(
+                          value.taken,
+                          value.skipped,
+                          value.missed,
+                          value.scheduled,
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stackedAdherenceBar(
+    BuildContext context,
+    WeeklyAdherence value,
+    int maximum,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    Widget segment(int count, Color color) => count == 0
+        ? const SizedBox.shrink()
+        : Expanded(
+            flex: count,
+            child: Container(height: 12, color: color),
+          );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Row(
+        children: [
+          segment(value.taken, colors.primary),
+          segment(value.skipped, colors.outline),
+          segment(value.missed, colors.error),
+          segment(maximum - value.scheduled, colors.surfaceContainerHighest),
+        ],
+      ),
+    );
+  }
+
+  Widget _exposureTile(
+    BuildContext context, {
+    required String title,
+    required double total,
+    required String unit,
+    required String detail,
+    required String pinKey,
+  }) {
+    final strings = AppLocalizations.of(context);
+    final pinned =
+        _historyPinsProfileId ==
+            context.read<AppController>().activeProfile?.id &&
+        _historyPins.contains(pinKey);
+    return ListTile(
+      leading: Icon(pinned ? Icons.push_pin : Icons.medication_outlined),
+      title: Text(title),
+      subtitle: Text(detail),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('${strings.formatNumber(total)} $unit'),
+          IconButton(
+            tooltip: pinned
+                ? strings.unpinComparisonSeries
+                : strings.pinComparisonSeries,
+            onPressed: () => _toggleHistoryPin(pinKey),
+            icon: Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _costCard(BuildContext context, IntakeCostInsight value) {
+    final strings = AppLocalizations.of(context);
+    final color = Theme.of(context).colorScheme;
+    final maximum = value.daily.fold<double>(
+      0,
+      (total, item) => item.knownEur > total ? item.knownEur : total,
+    );
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              strings.knownSubtotal(value.knownEur),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              strings.knownCostCoverage(
+                value.knownIntakes,
+                value.eligibleIntakes,
+              ),
+            ),
+            if (!value.completeCoverage) ...[
+              const SizedBox(height: 6),
+              Text(
+                strings.unknownCostDescription(value.unknownIntakes),
+                style: TextStyle(color: color.error),
+              ),
+            ],
+            if (value.daily.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Semantics(
+                label: strings.dailyKnownCostsSemantic(
+                  value.daily.map((item) => (item.day, item.knownEur)),
+                ),
+                child: SizedBox(
+                  height: 52,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      for (final item in value.daily)
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 1),
+                            child: Tooltip(
+                              message: strings.dailyKnownCostTooltip(
+                                item.day,
+                                item.knownEur,
+                              ),
+                              child: Container(
+                                height: maximum == 0
+                                    ? 0
+                                    : 48 * item.knownEur / maximum,
+                                color: color.primary,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _loadHistoryPins(String profileId) async {
+    if (_historyPinsLoading) return;
+    _historyPinsLoading = true;
+    final preferences = await SharedPreferences.getInstance();
+    final stored = preferences.getStringList(
+      _historyPinPreferenceKey(profileId),
+    );
+    if (!mounted) return;
+    setState(() {
+      _historyPinsProfileId = profileId;
+      _historyPins = {...?stored};
+      _historyPinsLoading = false;
+    });
+  }
+
+  Future<void> _toggleHistoryPin(String pinKey) async {
+    final profileId = context.read<AppController>().activeProfile?.id;
+    if (profileId == null) return;
+    final next = {..._historyPins};
+    if (!next.add(pinKey)) next.remove(pinKey);
+    setState(() {
+      _historyPinsProfileId = profileId;
+      _historyPins = next;
+    });
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(
+      _historyPinPreferenceKey(profileId),
+      next.toList()..sort(),
+    );
+  }
+
+  Future<void> _pruneHistoryPins(
+    String profileId,
+    Set<String> existingPins,
+  ) async {
+    if (!mounted || _historyPinsProfileId != profileId) return;
+    final next = _historyPins.intersection(existingPins);
+    if (next.length == _historyPins.length) return;
+    setState(() => _historyPins = next);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(
+      _historyPinPreferenceKey(profileId),
+      next.toList()..sort(),
+    );
+  }
+
+  String _historyPinPreferenceKey(String profileId) =>
+      'supplement_history_pins_v1_$profileId';
+
+  String _supplementPinKey(SupplementExposure item) =>
+      'supplement|${item.seriesKey}';
+
+  String _ingredientPinKey(IngredientExposure item) =>
+      'ingredient|${item.name.trim().toLowerCase()}|${item.unit.trim().toLowerCase()}';
+
+  int _comparePinned(String aKey, String bKey, String aName, String bName) {
+    final aPinned = _historyPins.contains(aKey);
+    final bPinned = _historyPins.contains(bKey);
+    if (aPinned != bPinned) return aPinned ? -1 : 1;
+    return aName.toLowerCase().compareTo(bName.toLowerCase());
+  }
+
+  String _eventLabel(HealthEvent event, AppLocalizations strings) {
+    final details = <String>[
+      strings.formatTrackingDateTime(event.observedAt),
+      if (event.score != null) strings.eventScore(event.score!),
+      if (event.numericValue != null)
+        '${strings.formatNumber(event.numericValue!)} ${event.unit ?? ''}'
+            .trim(),
+      if (event.notes.isNotEmpty) event.notes,
+    ];
+    return details.join(' · ');
+  }
+
+  bool _withinWindow(DateTime value, DateTime from, DateTime through) {
+    final day = DateTime(value.year, value.month, value.day);
+    return !day.isBefore(DateTime(from.year, from.month, from.day)) &&
+        !day.isAfter(DateTime(through.year, through.month, through.day));
+  }
+
   Future<void> _deleteHistoryIntake(
     BuildContext context,
     AppController controller,
     SupplementIntake intake,
   ) async {
+    final strings = AppLocalizations.of(context);
     final confirmed = await showConfirmAction(
       context,
-      title: 'Delete intake?',
-      message: 'The linked stock deduction will also be reversed.',
-      confirmLabel: 'Delete',
+      title: strings.deleteIntakeTitle,
+      message: strings.deleteIntakeDescription,
+      confirmLabel: strings.delete,
       destructive: true,
     );
     if (confirmed) await controller.deleteIntake(intake);
@@ -782,7 +1366,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
         child: ListView(
           shrinkWrap: true,
           children: [
-            const ListTile(title: Text('Choose supplement')),
+            ListTile(
+              title: Text(AppLocalizations.of(context).chooseSupplement),
+            ),
             for (final item in controller.supplements.where(
               (value) => value.active,
             ))
