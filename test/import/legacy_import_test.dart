@@ -27,10 +27,18 @@ void main() {
             'name': 'Magnesium',
             'brand': 'Example',
             'form': 'capsule',
+            'units_per_container': 60,
+            'num_containers': 2,
             'price': 12.5,
             'ingredients': [
               {'name': 'Magnesium glycinate', 'amount': 100, 'unit': 'mg'},
             ],
+          },
+          {
+            'name': 'Zinc',
+            'brand': 'Example',
+            'form': 'tablet',
+            'units_per_container': 30,
           },
         ],
         'schedules': <String, Object?>{},
@@ -43,11 +51,15 @@ void main() {
         ImportSourceFile(name: 'supplement_sync.json', bytes: bytes),
       ], fallbackProfile: profile);
       expect(preview.sourceKinds, contains('Supplement Manager'));
-      expect(preview.counts['supplements'], 1);
+      expect(preview.counts['supplements'], 2);
       expect(preview.canImport, isTrue);
 
       final result = await service.commit(preview);
-      expect(await repository.supplements(profile.id), hasLength(1));
+      expect(await repository.supplements(profile.id), hasLength(2));
+      final db = await database.database;
+      final movements = await db.query('inventory_movements');
+      expect(movements, hasLength(1));
+      expect(movements.single['quantity_units'], 120.0);
 
       final duplicatePreview = await service.preview([
         ImportSourceFile(name: 'supplement_sync.json', bytes: bytes),
@@ -150,6 +162,105 @@ void main() {
     await database.close();
   });
 
+  test(
+    'Biomarkers profile metadata imports numeric legacy height into a new profile',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final fallback = await repository.createProfile(displayName: 'Fallback');
+      final service = LegacyImportService(database, repository);
+      final bytes = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'profiles': [
+              {
+                'id': 'legacy-alex',
+                'displayName': 'Alex',
+                'date_of_birth': '1988-02-03',
+                'sex': 'male',
+                'heightCm': 181.5,
+                'weight_kg': 79.2,
+              },
+            ],
+            'rows': [
+              {'id': 'apo_b', 'display_name': 'ApoB', 'unit_primary': 'mg/dL'},
+            ],
+          }),
+        ),
+      );
+
+      final preview = await service.preview([
+        ImportSourceFile(name: 'biomarkers.json', bytes: bytes),
+      ], fallbackProfile: fallback);
+      await service.commit(preview);
+
+      final imported = (await repository.profiles()).singleWhere(
+        (profile) => profile.displayName == 'Alex',
+      );
+      expect(imported.heightCm, 181.5);
+      expect(imported.weightKg, 79.2);
+      expect(imported.sex, 'male');
+      await database.close();
+    },
+  );
+
+  test(
+    'Biomarkers profile metadata fills only missing same-name local fields',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final local = await repository.createProfile(
+        displayName: 'Alex',
+        notes: 'Keep this local note.',
+      );
+      final service = LegacyImportService(database, repository);
+      final bytes = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'profiles': [
+              {
+                'id': 'old-alex',
+                'display_name': 'Alex',
+                'date_of_birth': '1980-01-02',
+                'sex': 'female',
+                'height_cm': 169,
+                'weight': 62.5,
+                'notes': 'Legacy notes must not replace local notes.',
+              },
+            ],
+            'rows': [
+              {'id': 'ldl', 'display_name': 'LDL'},
+            ],
+          }),
+        ),
+      );
+
+      final preview = await service.preview([
+        ImportSourceFile(name: 'biomarkers.json', bytes: bytes),
+      ], fallbackProfile: local);
+      expect(preview.duplicates, isNotEmpty);
+      await service.commit(preview);
+
+      final merged = (await repository.profiles()).single;
+      expect(merged.id, local.id);
+      expect(merged.displayName, 'Alex');
+      expect(merged.notes, 'Keep this local note.');
+      expect(merged.dateOfBirth, DateTime(1980, 1, 2));
+      expect(merged.sex, 'female');
+      expect(merged.heightCm, 169);
+      expect(merged.weightKg, 62.5);
+      await database.close();
+    },
+  );
+
   test('Biomarkers PDFs are hash-matched and attached idempotently', () async {
     sqfliteFfiInit();
     final temporaryDirectory = await Directory.systemTemp.createTemp(
@@ -215,4 +326,271 @@ void main() {
     await database.close();
     await temporaryDirectory.delete(recursive: true);
   });
+
+  test(
+    'legacy import excludes non-finite required values and omits optionals',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Me');
+      final service = LegacyImportService(database, repository);
+      Uint8List jsonBytes(Object value) =>
+          Uint8List.fromList(utf8.encode(jsonEncode(value)));
+
+      final preview = await service.preview([
+        ImportSourceFile(
+          name: 'biomarkers.json',
+          bytes: jsonBytes([
+            {
+              'id': 'apob',
+              'display_name': 'ApoB',
+              'unit_primary': 'mg/dL',
+              'price': 'Infinity',
+            },
+          ]),
+        ),
+        ImportSourceFile(
+          name: 'supplement_sync.json',
+          bytes: jsonBytes({
+            'products': [
+              {
+                'name': 'Example',
+                'units_per_container': -30,
+                'num_containers': -2,
+                'price': -5,
+              },
+            ],
+            'schedules': {
+              'Me': {
+                'Example': {
+                  'Monday': {'AM': 0},
+                },
+              },
+            },
+            'intakeHistory': [
+              {
+                'productName': 'Example',
+                'userName': 'Me',
+                'timestamp': '2026-01-01T08:00:00Z',
+                'amount': -1,
+              },
+              {
+                'productName': 'Example',
+                'userName': 'Me',
+                'timestamp': '2026-01-02T08:00:00Z',
+              },
+            ],
+            'profiles': [
+              {'displayName': 'Invalid profile', 'heightCm': 301, 'weight': 0},
+            ],
+          }),
+        ),
+        ImportSourceFile(
+          name: 'measurements.json',
+          bytes: jsonBytes([
+            {
+              'id': 'nan',
+              'biomarker_id': 'apob',
+              'value': 'NaN',
+              'unit': 'mg/dL',
+            },
+            {
+              'id': 'infinite',
+              'biomarker_id': 'apob',
+              'value': '-Infinity',
+              'unit': 'mg/dL',
+            },
+            {
+              'id': 'negative-finite',
+              'biomarker_id': 'apob',
+              'value': '-4.5',
+              'unit': 'mg/dL',
+              'lab_ref_low': 'NaN',
+              'lab_ref_high': 'Infinity',
+              'extraction_confidence': 'NaN',
+              'page': 'Infinity',
+            },
+            {
+              'id': 'unordered',
+              'biomarker_id': 'apob',
+              'value': -3,
+              'unit': 'mg/dL',
+              'lab_ref_low': 10,
+              'lab_ref_high': 5,
+              'extraction_confidence': 2,
+              'page': 0,
+            },
+          ]),
+        ),
+        ImportSourceFile(
+          name: 'ranges.json',
+          bytes: jsonBytes([
+            {
+              'id': 'apob-range',
+              'biomarker_id': 'apob',
+              'low': 'NaN',
+              'high': 'Infinity',
+              'optimal_low': -10,
+              'age_min': 'Infinity',
+              'evidence_url': 'file:///not-allowed',
+            },
+          ]),
+        ),
+        ImportSourceFile(
+          name: 'biomarker_lists.json',
+          bytes: jsonBytes([
+            {'id': 'legacy-list', 'name': 'Retest', 'due_duration': 0},
+          ]),
+        ),
+        ImportSourceFile(
+          name: 'biomarker_list_entries.json',
+          bytes: jsonBytes([
+            {
+              'list_id': 'legacy-list',
+              'biomarker_id': 'apob',
+              'due_duration': -14,
+            },
+          ]),
+        ),
+      ], fallbackProfile: profile);
+
+      expect(preview.counts['measurements'], 2);
+      expect(
+        preview.warnings.join('\n'),
+        contains('non-finite measurement value'),
+      );
+      expect(
+        preview.warnings.join('\n'),
+        contains('non-finite biomarker price'),
+      );
+      expect(preview.warnings.join('\n'), contains('non-finite range low'));
+      expect(
+        preview.warnings.join('\n'),
+        contains('Ignored negative supplement price'),
+      );
+      expect(preview.warnings.join('\n'), contains('profile height outside'));
+      expect(
+        preview.warnings.join('\n'),
+        contains('Skipped invalid intake dose'),
+      );
+      expect(
+        preview.warnings.join('\n'),
+        contains('Ignored unordered lab reference bounds'),
+      );
+      expect(preview.warnings.join('\n'), contains('invalid retest interval'));
+
+      await service.commit(preview);
+      final db = await database.database;
+      final measurements = await db.query('measurements', orderBy: 'value');
+      expect(measurements, hasLength(2));
+      final measurement = measurements.first;
+      expect(measurement['value'], -4.5);
+      expect(measurement['lab_ref_low'], isNull);
+      expect(measurement['lab_ref_high'], isNull);
+      expect(measurement['extraction_confidence'], isNull);
+      expect(measurement['page'], isNull);
+      final unordered = measurements.last;
+      expect(unordered['lab_ref_low'], isNull);
+      expect(unordered['lab_ref_high'], isNull);
+      expect(unordered['extraction_confidence'], isNull);
+      expect(unordered['page'], isNull);
+      final range = (await db.query('biomarker_ranges')).single;
+      expect(range['low'], isNull);
+      expect(range['high'], isNull);
+      expect(range['optimal_low'], -10.0);
+      expect(range['age_min'], isNull);
+      expect(range['evidence_url'], isNull);
+      final supplement = (await db.query('supplements')).single;
+      expect(supplement['units_per_container'], isNull);
+      expect(supplement['container_count'], isNull);
+      expect(supplement['price_eur'], isNull);
+      final intakes = await db.query('supplement_intakes');
+      expect(intakes, hasLength(1));
+      expect(intakes.single['dose'], 1.0);
+      final importedProfile = (await db.query(
+        'profiles',
+        where: 'display_name = ?',
+        whereArgs: ['Invalid profile'],
+      )).single;
+      expect(importedProfile['height_cm'], isNull);
+      expect(importedProfile['weight_kg'], isNull);
+      final listItem = (await db.query('biomarker_list_items')).single;
+      expect(listItem['due_interval_days'], isNull);
+      await database.close();
+    },
+  );
+
+  test(
+    'legacy ingredient amounts are finite positive doubles or omitted',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Me');
+      final service = LegacyImportService(database, repository);
+      final bytes = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'products': [
+              {
+                'name': 'Compound',
+                'ingredients': [
+                  {'name': 'Valid', 'amount': '12,5', 'unit': 'mg'},
+                  {'name': 'Infinite', 'amount': 'Infinity', 'unit': 'mg'},
+                  {'name': 'Zero', 'amount': 0, 'unit': 'mg'},
+                  {'name': 'Negative', 'amount': -1, 'unit': 'mg'},
+                  {'name': 'Missing', 'unit': 'mg'},
+                ],
+              },
+            ],
+            'intakeHistory': [
+              {
+                'productName': 'Compound',
+                'timestamp': '2026-01-01T08:00:00Z',
+                'ingredientsSnapshot': [
+                  {'name': 'Intake valid', 'amount': '1,25', 'unit': 'g'},
+                  {'name': 'Intake invalid', 'amount': 'NaN', 'unit': 'g'},
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+
+      final preview = await service.preview([
+        ImportSourceFile(name: 'supplement_sync.json', bytes: bytes),
+      ], fallbackProfile: profile);
+      expect(
+        preview.warnings.where(
+          (warning) =>
+              warning == 'Ignored invalid ingredient amount for Compound.',
+        ),
+        hasLength(1),
+      );
+
+      await service.commit(preview);
+      final db = await database.database;
+      final supplement = (await db.query('supplements')).single;
+      final ingredients =
+          jsonDecode(supplement['ingredients_json']! as String)
+              as List<dynamic>;
+      expect((ingredients.first as Map)['amount'], 12.5);
+      for (final ingredient in ingredients.skip(1)) {
+        expect((ingredient as Map).containsKey('amount'), isFalse);
+      }
+      final intake = (await db.query('supplement_intakes')).single;
+      final snapshot =
+          jsonDecode(intake['ingredients_json']! as String) as List<dynamic>;
+      expect((snapshot.first as Map)['amount'], 1.25);
+      expect((snapshot.last as Map).containsKey('amount'), isFalse);
+      await database.close();
+    },
+  );
 }
