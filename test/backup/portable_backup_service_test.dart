@@ -115,7 +115,7 @@ void main() {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
     final bundle = _bundle(await fixture.service.createJson());
-    _object(bundle['tables']).remove('profiles');
+    (bundle['tables'] as Map).remove('profiles');
     _refreshCoreChecksum(bundle);
 
     await expectLater(
