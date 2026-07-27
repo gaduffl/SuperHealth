@@ -75,12 +75,12 @@ void main() {
           child: const MaterialApp(home: Scaffold(body: TrackingScreen())),
         ),
       );
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
 
       await tester.tap(find.byType(ChoiceChip).first);
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
       await tester.tap(find.byTooltip('Mark taken'));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
 
       expect(fixture.controller.intakes, hasLength(1));
       final logged = fixture.controller.intakes.single;
@@ -92,29 +92,35 @@ void main() {
       expect(find.byTooltip('Undo check-in'), findsOneWidget);
 
       await tester.tap(find.text('History'));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
       expect(find.text('Magnesium'), findsOneWidget);
       expect(find.byTooltip('Edit'), findsOneWidget);
       expect(find.byTooltip('Delete'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Edit'));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
       final dialog = find.byType(AlertDialog);
       await tester.enterText(
         find.descendant(of: dialog, matching: find.byType(TextField)).first,
         '3',
       );
       await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
       expect(fixture.controller.intakes.single.dose, 3);
 
       await tester.tap(find.byTooltip('Delete'));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
       await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
       expect(fixture.controller.intakes, isEmpty);
     },
   );
+}
+
+Future<void> _pumpFrames(WidgetTester tester) async {
+  for (var index = 0; index < 20; index++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
 }
 
 const _weekdays = [
