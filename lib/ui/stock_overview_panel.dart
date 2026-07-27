@@ -168,8 +168,12 @@ class _StockRow extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             [
-              '${strings.formatNumber(projection.unitsOnHand)} '
-                  '${projection.supplement.stockUnit}',
+              formatAmountWithUnit(
+                strings,
+                amount: projection.unitsOnHand,
+                unit: projection.supplement.stockUnit,
+                form: projection.supplement.form,
+              ),
               if (days != null)
                 strings.daysProjected(days.clamp(0, 9999).round())
               else

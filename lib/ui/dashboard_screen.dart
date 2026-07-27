@@ -425,7 +425,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ? strings.pick('recorded', 'erfasst')
         : strings.pick('planned', 'geplant');
     return '- ${supplement.name} '
-        '${strings.formatNumber(dose)} $unit ($status)'
+        '${formatAmountWithUnit(strings, amount: dose, unit: unit, form: supplement.form)} ($status)'
         '${components.isEmpty ? '' : ' — ${components.join(', ')}'}';
   }
 
@@ -931,8 +931,12 @@ class _DoseTile extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   [
-                    '${strings.formatNumber(dose.schedule.dose)} '
-                        '${dose.schedule.unit}',
+                    formatAmountWithUnit(
+                      strings,
+                      amount: dose.schedule.dose,
+                      unit: dose.schedule.unit,
+                      form: dose.supplement.form,
+                    ),
                     dose.schedule.timeOfDay,
                     if (dose.schedule.instructions.isNotEmpty)
                       dose.schedule.instructions,
@@ -1104,7 +1108,7 @@ class _ExtraIntakeTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${strings.formatNumber(intake.dose)} ${intake.unit} · '
+                  '${formatAmountWithUnit(strings, amount: intake.dose, unit: intake.unit, form: supplement?.form)} · '
                   '${strings.formatTime(intake.takenAt)} · '
                   '${strings.pick('unplanned', 'ungeplant')}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -1223,7 +1227,11 @@ class _NeedsAttention extends StatelessWidget {
                   subtitle: Text(
                     strings.remaining(
                       item.unitsOnHand,
-                      item.supplement.stockUnit,
+                      unitLabel(
+                        strings,
+                        unit: item.supplement.stockUnit,
+                        form: item.supplement.form,
+                      ),
                     ),
                   ),
                   trailing: TextButton(
