@@ -15,6 +15,16 @@ The advisor and parser never receive `AppDatabase`, a SQLite connection, or `Hea
 
 API keys and OneDrive tokens live in Android secure storage and are outside every snapshot and export allowlist.
 
+## Interface
+
+`lib/ui/design.dart` holds the shared visual vocabulary — surface cards, the progress ring, the day strip, stat tiles, and the qualitative series palette. Nothing there hardcodes a brightness-specific colour, so light, dark, high-contrast, and the deuteranomaly-friendly palette all work without per-screen special cases. `seriesColors` sorts its keys before assigning, so a chart series keeps its colour when an unrelated series is added or filtered out.
+
+`lib/ui/charts.dart` wraps `fl_chart` behind the four shapes the app needs: a multi-series weekly line chart, a stacked adherence bar chart, a daily value chart, and a single-series trend. Each carries a `semanticLabel`, because the numbers behind a chart have to remain reachable without sight of it.
+
+`ShellNavigation` routes deep links. The Today screen's overview tiles are shortcuts, so a tile issues a `SectionRequest` naming a section, an optional filter, and a monotonically increasing token; the shell switches tab and the owning screen applies the request and marks the token handled. The token is what lets a repeated tap on the same tile re-apply a filter the user has since changed by hand. The same channel carries a prompt to the advisor, so the Today screen's day analysis reuses the one BYOK code path instead of adding a second.
+
+`SupplementInsights` remains the only place that derives numbers from records: adherence, stock projection, exposure, weekly chartable series, purchase planning, and cost. Screens read it and render; they do not compute.
+
 ## AI providers
 
 OpenAI uses the Responses API, Anthropic uses Messages, and Gemini uses Interactions. Models are fetched from each provider at runtime. A versioned capability registry exposes only documented reasoning levels and hosted tools; unknown models receive no speculative switches.

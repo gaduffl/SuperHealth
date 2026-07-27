@@ -7,6 +7,7 @@ import '../ui/common.dart';
 import '../ui/dashboard_screen.dart';
 import '../ui/dialogs.dart';
 import '../ui/health_screen.dart';
+import '../ui/design.dart';
 import '../ui/settings_screen.dart';
 import '../ui/stock_overview_panel.dart';
 import '../ui/tracking_screen.dart';
@@ -56,10 +57,13 @@ class _AppGate extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.health_and_safety_outlined, size: 56),
-              SizedBox(height: 18),
-              CircularProgressIndicator(),
-              SizedBox(height: 12),
+              const AppMark(size: 92),
+              const SizedBox(height: 24),
+              const SizedBox(
+                width: 120,
+                child: LinearProgressIndicator(minHeight: 3),
+              ),
+              const SizedBox(height: 14),
               Text(strings.openingRecord),
             ],
           ),
@@ -103,17 +107,7 @@ class _ProfileOnboarding extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 520),
               child: Column(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.health_and_safety_outlined,
-                      size: 58,
-                    ),
-                  ),
+                  const AppMark(size: 104),
                   const SizedBox(height: 24),
                   Text(
                     strings.welcome,

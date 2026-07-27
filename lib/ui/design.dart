@@ -742,3 +742,32 @@ DateTime _startOfDay(DateTime value) =>
 
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
+
+/// The SuperHealth mark, shown while the record opens and during onboarding.
+class AppMark extends StatelessWidget {
+  const AppMark({this.size = 96, super.key});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'SuperHealth',
+    image: true,
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.24),
+      child: Image.asset(
+        'assets/branding/app_icon.png',
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        // The mark is decorative; a missing asset must never keep the health
+        // record from opening.
+        errorBuilder: (context, _, _) => Icon(
+          Icons.health_and_safety_outlined,
+          size: size * 0.6,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      ),
+    ),
+  );
+}

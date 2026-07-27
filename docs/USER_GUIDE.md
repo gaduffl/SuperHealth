@@ -32,7 +32,27 @@ Restoring a portable backup pauses ordinary OneDrive sync. Choose **Resume and m
 
 ## Daily use
 
-- Add supplement products and schedules under Track. Tap a product to log an intake.
+Today opens with the overview tiles. Each one is a shortcut: tapping it opens the screen that owns its number, already filtered — low stock opens the stock list limited to what is running out, biomarkers due opens the catalog limited to overdue markers.
+
+Below the tiles, the day strip selects which day you are working on; the bar under each number shows how much of that day is recorded. The day's doses are grouped into morning, midday, evening, and bedtime:
+
+- Swipe a dose right to record it, or left to skip it. Both actions can be undone from the snack bar.
+- **Quick actions** records everything still open in one part of the day at once.
+- **Log extra** records an unplanned dose for the selected day. It stays visible in the block it belongs to, marked as unplanned.
+- **Check in** scores every tracked symptom for the day in one dialog, and takes a free-text note. New symptoms can be added from inside the dialog. Clearing a score removes that entry rather than storing a zero.
+- **Analyze** hands the day's products and their components to the advisor as a question about interactions, duplicated actives, and upper limits.
+
+The Supplements screen has four tabs:
+
+- **Catalog** — products, their ingredients, and their schedules. Ingredients are edited as rows with separate name, amount, and unit fields; the amount is per one stock unit.
+- **Plan** — the weekly pillbox: dose per weekday and part of the day. Tap a filled cell to edit the schedule behind it. Below the grid, the components the active plan is designed to deliver each week, independent of adherence.
+- **Stock** — days of cover per product, the shopping list for a 1, 3, 6, or 12 month horizon rounded up to whole packages, and the planned monthly cost per product.
+- **History** — weekly adherence, product intake, and component exposure charts, the known intake cost trend, and CSV export. Pin a product or component to choose which lines the charts draw; with nothing pinned they show the six largest.
+
+The stock button in the app bar opens a drawer with days of cover for every product, from any screen.
+
+Elsewhere:
+
 - Log scored symptoms and numeric or scored tags such as caffeine, exercise, or sleep.
 - Store conditions, current medicines, goals, and family history. These materially improve advisor and lab-plan context.
 - Run exploratory correlations after at least seven overlapping symptom days. Correlation is hypothesis-generating and does not establish causation.
