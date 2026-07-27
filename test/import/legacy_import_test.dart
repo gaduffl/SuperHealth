@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
+import 'package:super_health/domain/entities.dart';
 import 'package:super_health/import/legacy_import_service.dart';
 
 void main() {
@@ -41,7 +42,26 @@ void main() {
             'units_per_container': 30,
           },
         ],
-        'schedules': <String, Object?>{},
+        'schedules': {
+          'Me': {
+            'Magnesium': {
+              'Monday': {'AM': 1},
+              'monday': {'AM': 1},
+              'Tuesday': {'AM': 1},
+              'tuesday': {'AM': 1},
+              'Wednesday': {'AM': 1},
+              'wednesday': {'AM': 1},
+              'Thursday': {'AM': 1},
+              'thursday': {'AM': 1},
+              'Friday': {'AM': 1},
+              'friday': {'AM': 1},
+              'Saturday': {'AM': 1},
+              'saturday': {'AM': 1},
+              'Sunday': {'AM': 1},
+              'sunday': {'AM': 1},
+            },
+          },
+        },
         'intakeHistory': <Object?>[],
         'symptomEntries': <Object?>[],
         'symptomTags': <Object?>[],
@@ -56,19 +76,61 @@ void main() {
 
       final result = await service.commit(preview);
       expect(await repository.supplements(profile.id), hasLength(2));
+      final schedules = await repository.schedules(profile.id);
+      expect(schedules, hasLength(1));
+      expect(schedules.single.weekdays, [
+        'monday',
+        'tuesday',
+        'wednesday',
+        'thursday',
+        'friday',
+        'saturday',
+        'sunday',
+      ]);
       final db = await database.database;
       final movements = await db.query('inventory_movements');
       expect(movements, hasLength(1));
       expect(movements.single['quantity_units'], 120.0);
 
+      final now = DateTime.now();
+      await repository.saveSupplement(
+        Supplement(
+          id: 'local-only',
+          name: 'Local-only supplement',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
       final duplicatePreview = await service.preview([
         ImportSourceFile(name: 'supplement_sync.json', bytes: bytes),
       ], fallbackProfile: profile);
-      expect(duplicatePreview.alreadyImported, isTrue);
-      expect(duplicatePreview.canImport, isFalse);
+      expect(duplicatePreview.authoritativeSupplementImport, isTrue);
+      expect(duplicatePreview.alreadyImported, isFalse);
+      expect(duplicatePreview.canImport, isTrue);
+
+      final replacement = await service.commit(duplicatePreview);
+      expect(
+        (await repository.supplements(profile.id)).map((item) => item.name),
+        containsAll(['Magnesium', 'Zinc']),
+      );
+      expect(
+        (await repository.supplements(profile.id)).map((item) => item.name),
+        isNot(contains('Local-only supplement')),
+      );
+      expect(await repository.schedules(profile.id), hasLength(1));
+      expect(await db.query('import_runs'), hasLength(2));
+
+      await service.rollback(replacement.importId);
+      expect(
+        (await repository.supplements(profile.id)).map((item) => item.name),
+        contains('Local-only supplement'),
+      );
 
       await service.rollback(result.importId);
-      expect(await repository.supplements(profile.id), isEmpty);
+      expect(
+        (await repository.supplements(profile.id)).map((item) => item.name),
+        ['Local-only supplement'],
+      );
       await database.close();
     },
   );
