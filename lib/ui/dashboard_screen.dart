@@ -30,7 +30,22 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   static const _insights = SupplementInsights();
 
+  /// Anchors the "today's doses" tile, which sits on the screen it links to and
+  /// so has to scroll rather than navigate.
+  final _dayPlanKey = GlobalKey();
+
   var _selectedDay = DateTime.now();
+
+  Future<void> _scrollToDayPlan() async {
+    final target = _dayPlanKey.currentContext;
+    if (target == null) return;
+    await Scrollable.ensureVisible(
+      target,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      alignment: 0.05,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,8 +103,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
             const SizedBox(height: 16),
-            _OverviewTiles(controller: controller, navigation: navigation),
+            _OverviewTiles(
+              controller: controller,
+              navigation: navigation,
+              onShowDayPlan: _scrollToDayPlan,
+            ),
             SectionHeader(
+              key: _dayPlanKey,
               title: strings.pick('Your day', 'Dein Tag'),
               subtitle: strings.pick(
                 'Pick a day to review or complete its doses.',
@@ -483,10 +503,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 /// The overview tiles. Each one opens the screen that owns its number, with
 /// the matching filter already applied where one exists.
 class _OverviewTiles extends StatelessWidget {
-  const _OverviewTiles({required this.controller, required this.navigation});
+  const _OverviewTiles({
+    required this.controller,
+    required this.navigation,
+    required this.onShowDayPlan,
+  });
 
   final AppController controller;
   final ShellNavigation navigation;
+  final VoidCallback onShowDayPlan;
 
   @override
   Widget build(BuildContext context) {
@@ -550,7 +575,7 @@ class _OverviewTiles extends StatelessWidget {
         ),
         icon: Icons.medication_outlined,
         detail: strings.activeProducts(activeSupplements),
-        onTap: () => navigation.go(AppSection.todayDoses),
+        onTap: onShowDayPlan,
       ),
       StatTile(
         label: strings.biomarkersDue,

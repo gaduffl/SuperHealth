@@ -101,6 +101,13 @@ void main() {
 
     await _pumpToday(tester, controller, navigation);
 
+    // The day's doses are on this screen already, so that tile scrolls
+    // instead of navigating and leaves the shell where it is.
+    await tester.tap(find.text('Today\u2019s doses'));
+    await tester.pumpAndSettle();
+    expect(navigation.tabIndex, 0);
+    expect(navigation.request, isNull);
+
     await tester.tap(find.text('Low stock'));
     await tester.pumpAndSettle();
     expect(navigation.tabIndex, 1);

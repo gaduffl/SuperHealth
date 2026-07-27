@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 /// the screen that owns the number they show — and, where it matters, to arrive
 /// with the right filter already applied.
 enum AppSection {
-  todayDoses,
   catalog,
   weeklyPlan,
   stock,
@@ -39,10 +38,9 @@ enum SectionFilter {
 
 /// Which shell tab owns a section.
 ///
-/// The day's doses live on the Today screen itself, so that section stays on
-/// tab 0 rather than duplicating the workflow inside the supplements screen.
+/// There is no entry for the day's doses: they live on the Today screen that
+/// hosts the shortcuts, so that tile scrolls the page rather than navigating.
 int tabIndexForSection(AppSection section) => switch (section) {
-  AppSection.todayDoses => 0,
   AppSection.catalog ||
   AppSection.weeklyPlan ||
   AppSection.stock ||
