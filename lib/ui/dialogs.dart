@@ -828,26 +828,36 @@ Future<void> showAdjustStockDialog(
 Future<void> showLogIntakeDialog(
   BuildContext context,
   AppController controller,
-  Supplement supplement,
-) async {
-  final dose = TextEditingController(text: '1');
+  Supplement supplement, {
+  SupplementIntake? existing,
+  DateTime? initialTakenAt,
+}) async {
+  final dose = TextEditingController(text: existing?.dose.toString() ?? '1');
   final unit = TextEditingController(
-    text: supplement.stockUnit.trim().isNotEmpty
-        ? supplement.stockUnit
-        : (supplement.form.trim().isNotEmpty ? supplement.form : 'unit'),
+    text: existing?.unit ??
+        (supplement.stockUnit.trim().isNotEmpty
+            ? supplement.stockUnit
+            : (supplement.form.trim().isNotEmpty ? supplement.form : 'unit')),
   );
-  final notes = TextEditingController();
-  DateTime takenAt = DateTime.now();
+  final notes = TextEditingController(text: existing?.notes ?? '');
+  DateTime takenAt = existing?.takenAt ?? initialTakenAt ?? DateTime.now();
+  var skipped = existing?.skipped ?? false;
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: Text(
-          _dialogText(
-            context,
-            'Log ${supplement.name}',
-            '${supplement.name} erfassen',
-          ),
+          existing == null
+              ? _dialogText(
+                  context,
+                  'Log ${supplement.name}',
+                  '${supplement.name} erfassen',
+                )
+              : _dialogText(
+                  context,
+                  'Edit ${supplement.name} intake',
+                  'Einnahme von ${supplement.name} bearbeiten',
+                ),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -878,6 +888,33 @@ Future<void> showLogIntakeDialog(
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
+              title: Text(_dialogText(context, 'Date', 'Datum')),
+              subtitle: Text(
+                MaterialLocalizations.of(context).formatMediumDate(takenAt),
+              ),
+              trailing: const Icon(Icons.calendar_today_outlined),
+              onTap: () async {
+                final value = await showDatePicker(
+                  context: context,
+                  firstDate: DateTime(1900),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                  initialDate: takenAt,
+                );
+                if (value != null) {
+                  setState(() {
+                    takenAt = DateTime(
+                      value.year,
+                      value.month,
+                      value.day,
+                      takenAt.hour,
+                      takenAt.minute,
+                    );
+                  });
+                }
+              },
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
               title: Text(_dialogText(context, 'Time', 'Zeit')),
               subtitle: Text(TimeOfDay.fromDateTime(takenAt).format(context)),
               trailing: const Icon(Icons.schedule),
@@ -905,6 +942,13 @@ Future<void> showLogIntakeDialog(
                 labelText: _dialogText(context, 'Notes', 'Notizen'),
               ),
             ),
+            if (existing != null)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_dialogText(context, 'Skipped', 'Übersprungen')),
+                value: skipped,
+                onChanged: (value) => setState(() => skipped = value),
+              ),
           ],
         ),
         actions: [
@@ -915,7 +959,9 @@ Future<void> showLogIntakeDialog(
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             child: Text(
-              _dialogText(context, 'Log intake', 'Einnahme erfassen'),
+              existing == null
+                  ? _dialogText(context, 'Log intake', 'Einnahme erfassen')
+                  : _dialogText(context, 'Save changes', 'Änderungen speichern'),
             ),
           ),
         ],
@@ -924,7 +970,7 @@ Future<void> showLogIntakeDialog(
   );
   if (result == true && context.mounted) {
     final parsedDose = parseOptionalDouble(dose.text);
-    if (parsedDose == null || unit.text.trim().isEmpty) {
+    if (parsedDose == null || parsedDose <= 0 || unit.text.trim().isEmpty) {
       await showAppError(
         context,
         _dialogText(
@@ -935,13 +981,33 @@ Future<void> showLogIntakeDialog(
       );
     } else {
       try {
-        await controller.logIntake(
-          supplement: supplement,
-          dose: parsedDose,
-          unit: unit.text,
-          takenAt: takenAt,
-          notes: notes.text,
-        );
+        if (existing == null) {
+          await controller.logIntake(
+            supplement: supplement,
+            dose: parsedDose,
+            unit: unit.text,
+            takenAt: takenAt,
+            notes: notes.text,
+          );
+        } else {
+          await controller.updateIntake(
+            SupplementIntake(
+              id: existing.id,
+              profileId: existing.profileId,
+              supplementId: existing.supplementId,
+              scheduleId: existing.scheduleId,
+              takenAt: takenAt,
+              dose: parsedDose,
+              unit: unit.text,
+              skipped: skipped,
+              notes: notes.text,
+              ingredientSnapshot: existing.ingredientSnapshot,
+              createdAt: existing.createdAt,
+              updatedAt: existing.updatedAt,
+              deleted: existing.deleted,
+            ),
+          );
+        }
       } on Object catch (error) {
         await showAppError(context, error);
       }
