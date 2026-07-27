@@ -53,7 +53,7 @@ The stock button in the app bar opens a drawer with days of cover for every prod
 
 Elsewhere:
 
-- Log scored symptoms and numeric or scored tags such as caffeine, exercise, or sleep.
+- Log scored symptoms and numeric or scored tags such as caffeine, exercise, or sleep. Under Health, the tune button next to the quick check-ins renames, archives, or switches a symptom to a tag and back. Tags are intake proxies used only as predictors in correlations; symptoms are the outcomes. Renaming carries through the recorded history so the journal does not show the same thing under two names, and archiving hides a symptom from future check-ins without removing what was already recorded.
 - Store conditions, current medicines, goals, and family history. These materially improve advisor and lab-plan context.
 - Run exploratory correlations after at least seven overlapping symptom days. Correlation is hypothesis-generating and does not establish causation.
 

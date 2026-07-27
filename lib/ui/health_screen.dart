@@ -12,6 +12,7 @@ import 'common.dart';
 import 'design.dart';
 import 'dialogs.dart';
 import 'labs_screen.dart';
+import 'manage_check_ins_dialog.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -140,10 +141,25 @@ class _JournalPaneState extends State<_JournalPane> {
             SectionHeader(
               title: strings.quickCheckIn,
               subtitle: strings.quickCheckInDescription,
-              action: IconButton.filled(
-                tooltip: strings.trackHealthEvent,
-                onPressed: () => showAddEventDialog(context, controller),
-                icon: const Icon(Icons.add),
+              action: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton.outlined(
+                    tooltip: strings.pick(
+                      'Manage symptoms and tags',
+                      'Symptome und Tags verwalten',
+                    ),
+                    onPressed: () =>
+                        showManageCheckInsDialog(context, controller),
+                    icon: const Icon(Icons.tune),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton.filled(
+                    tooltip: strings.trackHealthEvent,
+                    onPressed: () => showAddEventDialog(context, controller),
+                    icon: const Icon(Icons.add),
+                  ),
+                ],
               ),
             ),
             SurfaceCard(
@@ -188,12 +204,17 @@ class _JournalPaneState extends State<_JournalPane> {
               ),
             ),
             const SizedBox(height: 8),
-            if (controller.eventDefinitions.isNotEmpty)
+            if (controller.eventDefinitions.any(
+              (item) => !item.archived && !item.deleted,
+            ))
               Wrap(
                 spacing: 7,
                 runSpacing: 7,
                 children: [
-                  for (final definition in controller.eventDefinitions.take(16))
+                  for (final definition
+                      in controller.eventDefinitions
+                          .where((item) => !item.archived && !item.deleted)
+                          .take(16))
                     ActionChip(
                       avatar: Icon(
                         definition.kind == EventKind.symptom
