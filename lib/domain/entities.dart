@@ -21,6 +21,53 @@ List<String> _strings(Object? value) {
   return decoded is List ? decoded.map((item) => '$item').toList() : const [];
 }
 
+const _canonicalWeekdays = <String>[
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+];
+
+/// Canonicalizes legacy English/German weekday labels and removes duplicates.
+///
+/// Supplement Manager exports have existed with both title-case and lower-case
+/// weekday keys in the same schedule. Keeping both made a seven-day schedule
+/// appear as fourteen days and prevented title-case-only plans from matching.
+List<String> normalizeWeekdays(Iterable<String> values) {
+  final selected = <String>{};
+  for (final value in values) {
+    final normalized = value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-zäöü]+'), '');
+    final canonical = switch (normalized) {
+      'monday' || 'mon' || 'mo' || 'montag' => 'monday',
+      'tuesday' || 'tue' || 'tues' || 'tu' || 'di' || 'dienstag' =>
+        'tuesday',
+      'wednesday' || 'wed' || 'we' || 'mi' || 'mittwoch' => 'wednesday',
+      'thursday' ||
+      'thu' ||
+      'thur' ||
+      'thurs' ||
+      'th' ||
+      'do' ||
+      'donnerstag' => 'thursday',
+      'friday' || 'fri' || 'fr' || 'freitag' => 'friday',
+      'saturday' || 'sat' || 'sa' || 'samstag' => 'saturday',
+      'sunday' || 'sun' || 'so' || 'sonntag' => 'sunday',
+      _ => null,
+    };
+    if (canonical != null) selected.add(canonical);
+  }
+  return [
+    for (final weekday in _canonicalWeekdays)
+      if (selected.contains(weekday)) weekday,
+  ];
+}
+
 class Profile {
   const Profile({
     required this.id,
@@ -279,7 +326,7 @@ class SupplementSchedule {
     'dose': dose,
     'unit': unit,
     'time_of_day': timeOfDay,
-    'weekdays_json': jsonEncode(weekdays),
+    'weekdays_json': jsonEncode(normalizeWeekdays(weekdays)),
     'instructions': instructions,
     'start_date': startDate?.toIso8601String().split('T').first,
     'end_date': endDate?.toIso8601String().split('T').first,
@@ -298,7 +345,7 @@ class SupplementSchedule {
         dose: (map['dose'] as num).toDouble(),
         unit: '${map['unit']}',
         timeOfDay: '${map['time_of_day']}',
-        weekdays: _strings(map['weekdays_json']),
+        weekdays: normalizeWeekdays(_strings(map['weekdays_json'])),
         instructions: map['instructions']?.toString() ?? '',
         startDate: map['start_date'] == null
             ? null
