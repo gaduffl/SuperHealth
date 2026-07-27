@@ -14,6 +14,7 @@ import '../ai/api_key_store.dart';
 import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
 import '../ai/provider_clients.dart';
+import '../ai/supplement_label_service.dart';
 import '../analysis/correlation_service.dart';
 import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
@@ -45,6 +46,7 @@ class AppController extends ChangeNotifier {
     required SafeWorkspaceService workspaceService,
     required LabPlanExportService exportService,
     required AiProviderClientFactory clientFactory,
+    SupplementLabelService? supplementLabelService,
     ProviderCapabilityRegistry? capabilityRegistry,
     ReminderService? reminderService,
     PortableBackupService? portableBackupService,
@@ -65,6 +67,13 @@ class AppController extends ChangeNotifier {
        workspaceService = workspaceService,
        exportService = exportService,
        _clientFactory = clientFactory,
+       _supplementLabelService =
+           supplementLabelService ??
+           SupplementLabelService(
+             keyStore: keyStore,
+             clientFactory: clientFactory,
+             capabilities: capabilityRegistry,
+           ),
        capabilityRegistry = capabilityRegistry ?? ProviderCapabilityRegistry(),
        _reminderService = reminderService ?? ReminderService(),
        _portableBackupService = portableBackupService,
@@ -88,6 +97,7 @@ class AppController extends ChangeNotifier {
   final SafeWorkspaceService workspaceService;
   final LabPlanExportService exportService;
   final AiProviderClientFactory _clientFactory;
+  final SupplementLabelService _supplementLabelService;
   final ProviderCapabilityRegistry capabilityRegistry;
   final ReminderService _reminderService;
   final PortableBackupService? _portableBackupService;
@@ -1167,6 +1177,30 @@ class AppController extends ChangeNotifier {
       await repository.softDelete('biomarker_list_items', item.id);
     }
     await refreshActiveData();
+  }
+
+  /// Reads a pasted product label into ingredient rows for review.
+  ///
+  /// Nothing is written: the rows are handed back so a person can correct them
+  /// in the editor and save the product themselves, the same review-before-save
+  /// rule the lab-document parser follows.
+  Future<ParsedSupplementLabel> parseSupplementLabel({
+    required String labelText,
+    required int servingSize,
+    String stockUnit = 'unit',
+  }) {
+    final settings = parsingSettings;
+    if (settings == null) {
+      throw StateError('Configure the lab document parser model first.');
+    }
+    return _withBusy(
+      () => _supplementLabelService.parse(
+        labelText: labelText,
+        servingSize: servingSize,
+        settings: settings,
+        stockUnit: stockUnit,
+      ),
+    );
   }
 
   Future<void> analyzeCorrelations() async {

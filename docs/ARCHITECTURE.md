@@ -31,6 +31,8 @@ OpenAI uses the Responses API, Anthropic uses Messages, and Gemini uses Interact
 
 The main advisor may use provider-hosted web search and isolated code execution. Provider sandbox files are not treated as app files. Persistent file changes use the `superhealth-file-proposal` protocol and require a second, app-side approval.
 
+`SupplementLabelService` reads a pasted product label with the same configured parsing model. It sends only the packaging text — never the health context envelope — and does the division by serving size locally rather than asking the model for it, so an arithmetic slip cannot silently store a dose several times too high. The result populates the editable ingredient rows; persistence still requires the user to save the product.
+
 PDF parsing ports the useful extraction contract from the former Biomarkers backend while removing Firebase authentication, credits, billing, app-owned API keys, and PC linking. Parsing supports inline or temporary provider file input, validates JSON locally, and requires row mapping review before save.
 
 ## Synchronization
