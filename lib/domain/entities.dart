@@ -39,14 +39,13 @@ const _canonicalWeekdays = <String>[
 List<String> normalizeWeekdays(Iterable<String> values) {
   final selected = <String>{};
   for (final value in values) {
-    final normalized = value
-        .trim()
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-zäöü]+'), '');
+    final normalized = value.trim().toLowerCase().replaceAll(
+      RegExp(r'[^a-zäöü]+'),
+      '',
+    );
     final canonical = switch (normalized) {
       'monday' || 'mon' || 'mo' || 'montag' => 'monday',
-      'tuesday' || 'tue' || 'tues' || 'tu' || 'di' || 'dienstag' =>
-        'tuesday',
+      'tuesday' || 'tue' || 'tues' || 'tu' || 'di' || 'dienstag' => 'tuesday',
       'wednesday' || 'wed' || 'we' || 'mi' || 'mittwoch' => 'wednesday',
       'thursday' ||
       'thu' ||
