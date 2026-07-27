@@ -1093,8 +1093,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           ),
           IconButton(
             tooltip: strings.delete,
-            onPressed: () =>
-                _deleteHistoryIntake(context, controller, intake),
+            onPressed: () => _deleteHistoryIntake(context, controller, intake),
             icon: const Icon(Icons.delete_outline),
           ),
         ],
