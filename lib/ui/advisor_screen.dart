@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
 import '../workspace/safe_workspace_service.dart';
 import 'common.dart';
@@ -20,6 +21,29 @@ class AdvisorScreen extends StatefulWidget {
 class _AdvisorScreenState extends State<AdvisorScreen> {
   final _message = TextEditingController();
   final _scroll = ScrollController();
+  int? _handledRequestToken;
+
+  /// Picks up a question handed over from another screen and asks it.
+  ///
+  /// The advisor needs a configured model, so an unconfigured app leaves the
+  /// text in the box rather than dropping the question.
+  void _applyRequest(ShellNavigation navigation, {required bool canAsk}) {
+    final request = navigation.request;
+    final prompt = request?.prompt;
+    if (request == null ||
+        prompt == null ||
+        request.section != AppSection.advisor ||
+        request.token == _handledRequestToken) {
+      return;
+    }
+    _handledRequestToken = request.token;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      navigation.completeRequest(request.token);
+      _usePrompt(prompt);
+      if (canAsk) await _send();
+    });
+  }
 
   @override
   void dispose() {
@@ -33,6 +57,10 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
     final controller = context.watch<AppController>();
     final strings = AppLocalizations.of(context);
     final settings = controller.advisorSettings;
+    _applyRequest(
+      context.watch<ShellNavigation>(),
+      canAsk: settings != null && !controller.busy,
+    );
     if (settings == null) {
       return PageBody(
         child: Padding(

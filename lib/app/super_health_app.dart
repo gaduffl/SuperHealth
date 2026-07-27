@@ -7,11 +7,14 @@ import '../ui/common.dart';
 import '../ui/dashboard_screen.dart';
 import '../ui/dialogs.dart';
 import '../ui/health_screen.dart';
+import '../ui/design.dart';
 import '../ui/settings_screen.dart';
+import '../ui/stock_overview_panel.dart';
 import '../ui/tracking_screen.dart';
 import 'app_controller.dart';
 import 'app_localizations.dart';
 import 'app_theme.dart';
+import 'shell_navigation.dart';
 
 class SuperHealthApp extends StatelessWidget {
   const SuperHealthApp({super.key});
@@ -54,10 +57,13 @@ class _AppGate extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.health_and_safety_outlined, size: 56),
-              SizedBox(height: 18),
-              CircularProgressIndicator(),
-              SizedBox(height: 12),
+              const AppMark(size: 92),
+              const SizedBox(height: 24),
+              const SizedBox(
+                width: 120,
+                child: LinearProgressIndicator(minHeight: 3),
+              ),
+              const SizedBox(height: 14),
               Text(strings.openingRecord),
             ],
           ),
@@ -101,17 +107,7 @@ class _ProfileOnboarding extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 520),
               child: Column(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.health_and_safety_outlined,
-                      size: 58,
-                    ),
-                  ),
+                  const AppMark(size: 104),
                   const SizedBox(height: 24),
                   Text(
                     strings.welcome,
@@ -193,15 +189,18 @@ class _ProfileOnboarding extends StatelessWidget {
   }
 }
 
-class _HomeShell extends StatefulWidget {
+class _HomeShell extends StatelessWidget {
   const _HomeShell();
 
   @override
-  State<_HomeShell> createState() => _HomeShellState();
+  Widget build(BuildContext context) => ChangeNotifierProvider(
+    create: (_) => ShellNavigation(),
+    child: const _HomeShellBody(),
+  );
 }
 
-class _HomeShellState extends State<_HomeShell> {
-  var _index = 0;
+class _HomeShellBody extends StatelessWidget {
+  const _HomeShellBody();
 
   static const _screens = [
     DashboardScreen(),
@@ -214,7 +213,9 @@ class _HomeShellState extends State<_HomeShell> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final navigation = context.watch<ShellNavigation>();
     final strings = AppLocalizations.of(context);
+    final index = navigation.tabIndex;
     final titles = [
       strings.today,
       strings.supplements,
@@ -223,11 +224,14 @@ class _HomeShellState extends State<_HomeShell> {
       strings.settings,
     ];
     return Scaffold(
+      endDrawer: const Drawer(child: SafeArea(child: StockOverviewPanel())),
       appBar: AppBar(
+        titleSpacing: 20,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(titles[_index]),
+            Text(titles[index]),
             Text(
               controller.activeProfile!.displayName,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -237,13 +241,25 @@ class _HomeShellState extends State<_HomeShell> {
           ],
         ),
         actions: [
+          Builder(
+            builder: (scaffoldContext) => IconButton(
+              tooltip: strings.pick('Stock overview', 'Bestandsübersicht'),
+              onPressed: () => Scaffold.of(scaffoldContext).openEndDrawer(),
+              icon: const Icon(Icons.inventory_2_outlined),
+            ),
+          ),
           PopupMenuButton<String>(
             tooltip: strings.switchProfile,
             icon: CircleAvatar(
               radius: 17,
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
               child: Text(
                 controller.activeProfile!.displayName.characters.first
                     .toUpperCase(),
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
               ),
             ),
             onSelected: (value) {
@@ -290,14 +306,14 @@ class _HomeShellState extends State<_HomeShell> {
               )
             : null,
       ),
-      body: IndexedStack(index: _index, children: _screens),
+      body: IndexedStack(index: index, children: _screens),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
+        selectedIndex: index,
+        onDestinationSelected: navigation.selectTab,
         destinations: [
           NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
+            icon: Icon(Icons.today_outlined),
+            selectedIcon: Icon(Icons.today),
             label: strings.today,
           ),
           NavigationDestination(

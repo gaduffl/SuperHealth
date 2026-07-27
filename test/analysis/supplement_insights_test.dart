@@ -482,4 +482,189 @@ void main() {
       expect(value.daily.single.knownEur, closeTo(0.4, 0.0001));
     },
   );
+
+  test('maps named schedule slots and clock hours onto day blocks', () {
+    expect(service.periodOfSlot('Morning'), DosePeriod.morning);
+    expect(service.periodOfSlot('bedtime'), DosePeriod.bedtime);
+    expect(service.periodOfSlot('PM'), DosePeriod.evening);
+    // An exact time is not a named block, so callers fall back to the hour.
+    expect(service.periodOfSlot('08:30'), isNull);
+    expect(service.periodOfHour(9), DosePeriod.morning);
+    expect(service.periodOfHour(13), DosePeriod.midday);
+    expect(service.periodOfHour(19), DosePeriod.evening);
+    expect(service.periodOfHour(23), DosePeriod.bedtime);
+  });
+
+  test('weekly series buckets intakes into Monday-anchored weeks', () {
+    final nextMonday = monday.add(const Duration(days: 7));
+    final intakes = [
+      for (final day in [monday, monday.add(const Duration(days: 3))])
+        SupplementIntake(
+          id: 'a-${day.day}',
+          profileId: 'profile',
+          supplementId: supplement.id,
+          takenAt: day,
+          dose: 2,
+          unit: 'capsules',
+          ingredientSnapshot: const [
+            {'name': 'Magnesium', 'amount': 100, 'unit': 'mg'},
+          ],
+          createdAt: day,
+          updatedAt: day,
+        ),
+      SupplementIntake(
+        id: 'b',
+        profileId: 'profile',
+        supplementId: supplement.id,
+        takenAt: nextMonday,
+        dose: 1,
+        unit: 'capsules',
+        ingredientSnapshot: const [
+          {'name': 'Magnesium', 'amount': 100, 'unit': 'mg'},
+        ],
+        createdAt: nextMonday,
+        updatedAt: nextMonday,
+      ),
+    ];
+
+    final weeks = service.weeksIn(from: monday, through: nextMonday);
+    expect(weeks, [monday, nextMonday]);
+
+    final products = service.weeklySupplementSeries(
+      intakes: intakes,
+      supplements: [supplement],
+      from: monday,
+      through: nextMonday,
+    );
+    expect(products, hasLength(1));
+    expect(products.single.weeklyTotals[monday], 4);
+    expect(products.single.weeklyTotals[nextMonday], 1);
+    expect(products.single.total, 5);
+
+    final components = service.weeklyIngredientSeries(
+      intakes: intakes,
+      from: monday,
+      through: nextMonday,
+    );
+    expect(components.single.label, 'Magnesium (mg)');
+    expect(components.single.weeklyTotals[monday], 400);
+    expect(components.single.weeklyTotals[nextMonday], 100);
+  });
+
+  test('purchase plan rounds up to whole packages and flags unknown sizes', () {
+    final noPackageSize = Supplement(
+      id: 'vitamin-d',
+      name: 'Vitamin D',
+      stockUnit: 'capsule',
+      createdAt: monday,
+      updatedAt: monday,
+    );
+    final noPackageSchedule = SupplementSchedule(
+      id: 'vitamin-d-schedule',
+      profileId: 'profile',
+      supplementId: noPackageSize.id,
+      dose: 1,
+      unit: 'capsule',
+      timeOfDay: 'Morning',
+      weekdays: const ['monday'],
+      createdAt: monday,
+      updatedAt: monday,
+    );
+
+    final plan = service.purchasePlan(
+      supplements: [supplement, noPackageSize],
+      householdSchedules: [schedule, noPackageSchedule],
+      stockLevels: {supplement.id: 10},
+      months: 1,
+    );
+
+    final magnesium = plan.firstWhere(
+      (item) => item.supplement.id == supplement.id,
+    );
+    // 2 capsules on all seven days is 14 a week, so 14 * 52 / 12 a month.
+    expect(magnesium.requiredUnits, closeTo(60.667, 0.01));
+    expect(magnesium.missingUnits, closeTo(50.667, 0.01));
+    expect(magnesium.containersToBuy, 1);
+    expect(magnesium.estimatedCostEur, closeTo(12, 0.0001));
+    expect(magnesium.covered, isFalse);
+
+    final vitaminD = plan.firstWhere(
+      (item) => item.supplement.id == noPackageSize.id,
+    );
+    expect(vitaminD.containersToBuy, isNull);
+    expect(vitaminD.estimatedCostEur, isNull);
+  });
+
+  test('purchase plan reports full cover without asking for a purchase', () {
+    final plan = service.purchasePlan(
+      supplements: [supplement],
+      householdSchedules: [schedule],
+      stockLevels: {supplement.id: 500},
+      months: 1,
+    );
+    expect(plan.single.covered, isTrue);
+    expect(plan.single.missingUnits, 0);
+    expect(plan.single.containersToBuy, 0);
+  });
+
+  test('planned weekly components read the schedule, not adherence', () {
+    final values = service.plannedWeeklyIngredients(
+      supplements: [
+        Supplement(
+          id: supplement.id,
+          name: supplement.name,
+          stockUnit: supplement.stockUnit,
+          unitsPerContainer: supplement.unitsPerContainer,
+          priceEur: supplement.priceEur,
+          ingredients: const [
+            {'name': 'Magnesium', 'amount': 100, 'unit': 'mg'},
+          ],
+          createdAt: monday,
+          updatedAt: monday,
+        ),
+      ],
+      schedules: [schedule],
+    );
+    // 2 capsules on seven days, each carrying 100 mg.
+    expect(values.single.name, 'Magnesium');
+    expect(values.single.unit, 'mg');
+    expect(values.single.total, 1400);
+  });
+
+  test('monthly cost breaks down per product and omits unpriced ones', () {
+    final unpriced = Supplement(
+      id: 'zinc',
+      name: 'Zinc',
+      stockUnit: 'capsule',
+      createdAt: monday,
+      updatedAt: monday,
+    );
+    final unpricedSchedule = SupplementSchedule(
+      id: 'zinc-schedule',
+      profileId: 'profile',
+      supplementId: unpriced.id,
+      dose: 1,
+      unit: 'capsule',
+      timeOfDay: 'Morning',
+      weekdays: const ['monday'],
+      createdAt: monday,
+      updatedAt: monday,
+    );
+
+    final values = service.monthlyCostByProduct(
+      supplements: [supplement, unpriced],
+      householdSchedules: [schedule, unpricedSchedule],
+    );
+
+    expect(values, hasLength(1));
+    expect(values.single.supplement.id, supplement.id);
+    expect(values.single.eur, closeTo(14 * 52 / 12 * 12 / 60, 0.0001));
+    expect(
+      service.monthlyCostEstimate(
+        supplements: [supplement, unpriced],
+        householdSchedules: [schedule, unpricedSchedule],
+      ),
+      closeTo(values.single.eur, 0.0001),
+    );
+  });
 }

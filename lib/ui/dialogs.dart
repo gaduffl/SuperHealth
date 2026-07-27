@@ -7,6 +7,7 @@ import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
+import 'ingredient_editor.dart';
 
 String _dialogText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
@@ -382,17 +383,7 @@ Future<void> showAddSupplementDialog(
     text: existing?.bioavailability,
   );
   final notes = TextEditingController(text: existing?.notes);
-  final ingredients = TextEditingController(
-    text: existing?.ingredients
-        .map(
-          (item) => [
-            item['name'] ?? '',
-            item['amount'] ?? '',
-            item['unit'] ?? '',
-          ].join(' | '),
-        )
-        .join('\n'),
-  );
+  final ingredients = IngredientRows.from(existing?.ingredients ?? const []);
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -453,26 +444,12 @@ Future<void> showAddSupplementDialog(
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: ingredients,
-                minLines: 3,
-                maxLines: 6,
-                decoration: InputDecoration(
-                  labelText: _dialogText(
-                    context,
-                    'Ingredients — one per line',
-                    'Inhaltsstoffe — einer pro Zeile',
-                  ),
-                  hintText: 'Magnesium glycinate | 100 | mg',
-                  helperText: _dialogText(
-                    context,
-                    'Format: name | amount per stock unit | unit',
-                    'Format: Name | Menge je Bestandseinheit | Einheit',
-                  ),
-                ),
+              const SizedBox(height: 14),
+              IngredientEditor(
+                rows: ingredients,
+                stockUnitLabel: existing?.stockUnit,
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
@@ -596,7 +573,7 @@ Future<void> showAddSupplementDialog(
   );
   if (result == true && name.text.trim().isNotEmpty && context.mounted) {
     try {
-      final parsedIngredients = _parseIngredients(ingredients.text);
+      final parsedIngredients = ingredients.parse();
       final units = parseOptionalInt(unitsPerContainer.text);
       if (stockUnit.text.trim().isEmpty ||
           (units != null && units <= 0) ||
@@ -604,8 +581,11 @@ Future<void> showAddSupplementDialog(
         throw StateError(
           _dialogText(
             context,
-            'Check the stock unit, container size, and ingredient lines.',
-            'Prüfe Bestandseinheit, Behältergröße und Inhaltsstoffzeilen.',
+            'Check the stock unit, container size, and ingredient rows. '
+                'Every ingredient needs a name, and an amount must be a number.',
+            'Prüfe Bestandseinheit, Behältergröße und Inhaltsstoffzeilen. '
+                'Jeder Inhaltsstoff braucht einen Namen, und eine Menge muss '
+                'eine Zahl sein.',
           ),
         );
       }
@@ -650,12 +630,12 @@ Future<void> showAddSupplementDialog(
       await showAppError(context, error);
     }
   }
+  ingredients.dispose();
   for (final item in [
     name,
     brand,
     form,
     price,
-    ingredients,
     unitsPerContainer,
     initialContainers,
     stockUnit,
@@ -665,26 +645,6 @@ Future<void> showAddSupplementDialog(
   ]) {
     item.dispose();
   }
-}
-
-List<Map<String, Object?>>? _parseIngredients(String source) {
-  final result = <Map<String, Object?>>[];
-  for (final raw in source.split('\n')) {
-    final line = raw.trim();
-    if (line.isEmpty) continue;
-    final parts = line.split('|').map((item) => item.trim()).toList();
-    if (parts.first.isEmpty || parts.length > 3) return null;
-    final amount = parts.length > 1 && parts[1].isNotEmpty
-        ? parseOptionalDouble(parts[1])
-        : null;
-    if (parts.length > 1 && parts[1].isNotEmpty && amount == null) return null;
-    result.add({
-      'name': parts.first,
-      'amount': ?amount,
-      if (parts.length > 2 && parts[2].isNotEmpty) 'unit': parts[2],
-    });
-  }
-  return result;
 }
 
 Future<void> showAdjustStockDialog(
