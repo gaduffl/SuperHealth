@@ -128,6 +128,20 @@ jobs:
           asset="superhealth-${version/+/-}.apk"
           cp build/app/outputs/flutter-apk/app-release.apk "$asset"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A release for this version already exists. Re-running the same
+            # commit may refresh its asset, but a *new* commit under the same
+            # version would silently replace the APK inside a release that is
+            # dated, titled, and targeted at the older build — and ship it with
+            # an unchanged versionCode, which Android refuses to install as an
+            # update. Fail loudly instead.
+            existing="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+              --json targetCommitish -q .targetCommitish)"
+            if [ "$existing" != "$GITHUB_SHA" ]; then
+              printf 'Release %s already exists and points at %s.\n' \
+                "$tag" "$existing" >&2
+              printf 'Bump "version:" in pubspec.yaml before merging: a new build needs a new versionCode, or it cannot be installed over the previous one.\n' >&2
+              exit 1
+            fi
             gh release upload "$tag" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
           else
             gh release create "$tag" "$asset" \
