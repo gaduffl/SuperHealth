@@ -114,14 +114,17 @@ class WeeklySeriesChart extends StatelessWidget {
                 getTooltipColor: (_) => scheme.inverseSurface,
                 getTooltipItems: (spots) => [
                   for (final spot in spots)
-                    LineTooltipItem(
-                      '${series[spot.barIndex].label}: '
-                      '${valueLabel(spot.y)}',
-                      TextStyle(
-                        color: scheme.onInverseSurface,
-                        fontWeight: FontWeight.w600,
+                    if (spot.barIndex < 0 || spot.barIndex >= series.length)
+                      null
+                    else
+                      LineTooltipItem(
+                        '${series[spot.barIndex].label}: '
+                        '${valueLabel(spot.y)}',
+                        TextStyle(
+                          color: scheme.onInverseSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
                 ],
               ),
             ),
@@ -199,14 +202,18 @@ class AdherenceChart extends StatelessWidget {
             barTouchData: BarTouchData(
               touchTooltipData: BarTouchTooltipData(
                 getTooltipColor: (_) => scheme.inverseSurface,
-                getTooltipItem: (group, _, rod, _) => BarTooltipItem(
-                  '${weekLabel(values[group.x].weekStarting)}\n'
-                  '${values[group.x].taken} / ${values[group.x].scheduled}',
-                  TextStyle(
-                    color: scheme.onInverseSurface,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                getTooltipItem: (group, _, rod, _) =>
+                    group.x < 0 || group.x >= values.length
+                    ? null
+                    : BarTooltipItem(
+                        '${weekLabel(values[group.x].weekStarting)}\n'
+                        '${values[group.x].taken} / '
+                        '${values[group.x].scheduled}',
+                        TextStyle(
+                          color: scheme.onInverseSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
               ),
             ),
             titlesData: FlTitlesData(
@@ -333,13 +340,17 @@ class DailyValueChart extends StatelessWidget {
             barTouchData: BarTouchData(
               touchTooltipData: BarTouchTooltipData(
                 getTooltipColor: (_) => scheme.inverseSurface,
-                getTooltipItem: (group, _, rod, _) => BarTooltipItem(
-                  '${dayLabel(points[group.x].day)}\n${valueLabel(rod.toY)}',
-                  TextStyle(
-                    color: scheme.onInverseSurface,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                getTooltipItem: (group, _, rod, _) =>
+                    group.x < 0 || group.x >= points.length
+                    ? null
+                    : BarTooltipItem(
+                        '${dayLabel(points[group.x].day)}\n'
+                        '${valueLabel(rod.toY)}',
+                        TextStyle(
+                          color: scheme.onInverseSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
               ),
             ),
             titlesData: FlTitlesData(
@@ -488,14 +499,17 @@ class TrendChart extends StatelessWidget {
                 getTooltipColor: (_) => scheme.inverseSurface,
                 getTooltipItems: (spots) => [
                   for (final spot in spots)
-                    LineTooltipItem(
-                      '${dayLabel(points[spot.x.round()].day)}: '
-                      '${spot.y.toStringAsFixed(1)}',
-                      TextStyle(
-                        color: scheme.onInverseSurface,
-                        fontWeight: FontWeight.w600,
+                    if (spot.x.round() < 0 || spot.x.round() >= points.length)
+                      null
+                    else
+                      LineTooltipItem(
+                        '${dayLabel(points[spot.x.round()].day)}: '
+                        '${spot.y.toStringAsFixed(1)}',
+                        TextStyle(
+                          color: scheme.onInverseSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
                 ],
               ),
             ),

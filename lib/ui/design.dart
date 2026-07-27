@@ -9,6 +9,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../app/app_theme.dart';
 import '../app/appearance_settings.dart';
 
 /// Corner radii used across the refreshed surfaces.
@@ -60,23 +61,75 @@ const standardSeries = <Color>[
   Color(0xFFEF6C00),
 ];
 
-/// Assigns a stable colour to every key.
+/// The base hues plus a darker and a lighter variant of each.
 ///
-/// Ordering the keys first means a series keeps its colour when an unrelated
-/// series is added or filtered out, which matters for charts a person compares
-/// across sessions.
+/// A chart draws at most a handful of series, so eight slots leave the hash
+/// assignment below crowded enough that most keys get bumped off their own
+/// slot. Widening to twenty-four keeps the base hues first — those are the ones
+/// a short list actually gets — while leaving enough room that a collision is
+/// the exception.
+List<Color> _extendedPalette(List<Color> base) => [
+  ...base,
+  for (final color in base) _shifted(color, -0.12),
+  for (final color in base) _shifted(color, 0.12),
+];
+
+/// The same hue at a different lightness, clamped to a band that stays legible
+/// on both the light and the dark surface.
+Color _shifted(Color color, double delta) {
+  final hsl = HSLColor.fromColor(color);
+  return hsl.withLightness((hsl.lightness + delta).clamp(0.28, 0.66)).toColor();
+}
+
+final _standardExtended = _extendedPalette(standardSeries);
+final _deuteranomalyExtended = _extendedPalette(deuteranomalySafeSeries);
+
+/// Assigns each key a colour, distinct within the set it is called with.
+///
+/// Two lines the same colour are unreadable, so distinctness inside one chart
+/// is the property that has to hold. Handing out palette entries by position
+/// would satisfy it but would recolour every series after the one a person
+/// unpins. Instead each key claims the slot its own hash points at and only
+/// moves when something else already holds it, which over the widened palette
+/// leaves the great majority of colours untouched across a pin or a filter.
+/// Keys are visited in sorted order, so the result depends only on the set and
+/// not on the caller's iteration order.
 Map<String, Color> seriesColors(
   Iterable<String> keys, {
   AppColorMode colorMode = AppColorMode.standard,
 }) {
   final palette = colorMode == AppColorMode.deuteranomalyFriendly
-      ? deuteranomalySafeSeries
-      : standardSeries;
+      ? _deuteranomalyExtended
+      : _standardExtended;
   final ordered = keys.toSet().toList()..sort();
-  return {
-    for (var index = 0; index < ordered.length; index++)
-      ordered[index]: palette[index % palette.length],
-  };
+  final taken = <int>{};
+  final result = <String, Color>{};
+  for (final key in ordered) {
+    final preferred = key.hashCode.abs() % palette.length;
+    var slot = preferred;
+    // Past a full palette every slot is taken, so reuse rather than loop.
+    if (taken.length < palette.length) {
+      var offset = 0;
+      while (taken.contains(slot) && offset < palette.length) {
+        offset++;
+        slot = (preferred + offset) % palette.length;
+      }
+    }
+    taken.add(slot);
+    result[key] = palette[slot];
+  }
+  return result;
+}
+
+/// Black or white, whichever is readable on [background].
+///
+/// The qualitative palettes span dark blues and mid ambers, so a fixed white
+/// label would drop below a usable contrast ratio on the lighter entries.
+Color onSeriesColor(Color background) {
+  final luminance = relativeLuminance(background);
+  final onWhite = 1.05 / (luminance + 0.05);
+  final onBlack = (luminance + 0.05) / 0.05;
+  return onBlack >= onWhite ? Colors.black : Colors.white;
 }
 
 /// A deterministic accent for a single label, used for avatars and dots.

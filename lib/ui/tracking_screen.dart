@@ -1806,9 +1806,7 @@ class _PlanCell extends StatelessWidget {
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 12,
-                          // Fixed white keeps the number readable on every
-                          // series colour, in light and dark alike.
-                          color: Colors.white,
+                          color: onSeriesColor(accent),
                         ),
                       )
                     : const SizedBox.shrink(),
