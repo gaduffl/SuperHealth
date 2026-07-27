@@ -285,7 +285,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
         supplement: status.supplement,
         dose: status.schedule.dose,
         unit: status.schedule.unit,
-        takenAt: DateTime.now(),
+        takenAt: _sameDay(_selectedDay, DateTime.now())
+            ? DateTime.now()
+            : status.dueAt,
         schedule: status.schedule,
         skipped: skipped,
       );
@@ -843,6 +845,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
             .toList()
           ..sort((a, b) => b.observedAt.compareTo(a.observedAt));
     final visibleHistory = history.take(_historyVisible).toList();
+    final visibleHistoryByDay = <DateTime, List<SupplementIntake>>{};
+    for (final intake in visibleHistory) {
+      final day = DateTime(
+        intake.takenAt.year,
+        intake.takenAt.month,
+        intake.takenAt.day,
+      );
+      visibleHistoryByDay.putIfAbsent(day, () => []).add(intake);
+    }
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
       children: [
@@ -874,6 +885,55 @@ class _TrackingScreenState extends State<TrackingScreen> {
             _historyVisible = 50;
           }),
         ),
+        SectionHeader(
+          title: strings.intakeHistory,
+          subtitle: strings.intakeHistoryDescription,
+        ),
+        if (history.isEmpty)
+          EmptyState(
+            icon: Icons.history,
+            title: strings.noIntakeHistory,
+            message: strings.intakeHistoryEmptyDescription,
+          )
+        else
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (final day in visibleHistoryByDay.entries) ...[
+                  ListTile(
+                    dense: true,
+                    tileColor: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
+                    title: Text(
+                      strings.formatTrackingDate(day.key),
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    trailing: Text(
+                      strings.intakeCount(day.value.length),
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ),
+                  for (final intake in day.value)
+                    _historyIntakeTile(context, controller, intake),
+                ],
+                if (visibleHistory.length < history.length)
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: OutlinedButton.icon(
+                      onPressed: () => setState(() => _historyVisible += 50),
+                      icon: const Icon(Icons.expand_more),
+                      label: Text(
+                        strings.showMoreHistory(
+                          history.length - visibleHistory.length,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         SectionHeader(
           title: strings.weeklyAdherence,
           subtitle: strings.weeklyAdherenceDescription,
@@ -982,66 +1042,63 @@ class _TrackingScreenState extends State<TrackingScreen> {
               ],
             ),
           ),
-        SectionHeader(
-          title: strings.intakeHistory,
-          subtitle: strings.intakeHistoryDescription,
-        ),
-        if (history.isEmpty)
-          EmptyState(
-            icon: Icons.history,
-            title: strings.noIntakeHistory,
-            message: strings.intakeHistoryEmptyDescription,
-          )
-        else
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                for (final intake in visibleHistory)
-                  ListTile(
-                    leading: Icon(
-                      intake.skipped ? Icons.close : Icons.check,
-                      color: intake.skipped
-                          ? Theme.of(context).colorScheme.outline
-                          : Theme.of(context).colorScheme.primary,
-                    ),
-                    title: Text(
-                      controller.supplements
-                              .firstWhereOrNull(
-                                (item) => item.id == intake.supplementId,
-                              )
-                              ?.name ??
-                          strings.deletedSupplement,
-                    ),
-                    subtitle: Text(
-                      '${strings.formatNumber(intake.dose)} ${intake.unit} · '
-                      '${strings.formatTrackingDateTime(intake.takenAt)}'
-                      '${intake.notes.isEmpty ? '' : ' · ${intake.notes}'}',
-                    ),
-                    trailing: IconButton(
-                      tooltip: strings.delete,
-                      onPressed: () =>
-                          _deleteHistoryIntake(context, controller, intake),
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                  ),
-                if (visibleHistory.length < history.length)
-                  Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: OutlinedButton.icon(
-                      onPressed: () => setState(() => _historyVisible += 50),
-                      icon: const Icon(Icons.expand_more),
-                      label: Text(
-                        strings.showMoreHistory(
-                          history.length - visibleHistory.length,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
       ],
+    );
+  }
+
+  Widget _historyIntakeTile(
+    BuildContext context,
+    AppController controller,
+    SupplementIntake intake,
+  ) {
+    final strings = AppLocalizations.of(context);
+    final supplement = controller.supplements.firstWhereOrNull(
+      (item) => item.id == intake.supplementId,
+    );
+    return ListTile(
+      leading: Icon(
+        intake.skipped ? Icons.close : Icons.check,
+        color: intake.skipped
+            ? Theme.of(context).colorScheme.outline
+            : Theme.of(context).colorScheme.primary,
+      ),
+      title: Text(supplement?.name ?? strings.deletedSupplement),
+      subtitle: Text(
+        '${strings.formatNumber(intake.dose)} ${intake.unit} · '
+        '${strings.formatTrackingDateTime(intake.takenAt)}'
+        '${intake.notes.isEmpty ? '' : ' · ${intake.notes}'}',
+      ),
+      onTap: supplement == null
+          ? null
+          : () => showLogIntakeDialog(
+              context,
+              controller,
+              supplement,
+              existing: intake,
+            ),
+      trailing: Wrap(
+        spacing: 0,
+        children: [
+          IconButton(
+            tooltip: strings.edit,
+            onPressed: supplement == null
+                ? null
+                : () => showLogIntakeDialog(
+                    context,
+                    controller,
+                    supplement,
+                    existing: intake,
+                  ),
+            icon: const Icon(Icons.edit_outlined),
+          ),
+          IconButton(
+            tooltip: strings.delete,
+            onPressed: () =>
+                _deleteHistoryIntake(context, controller, intake),
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1383,7 +1440,21 @@ class _TrackingScreenState extends State<TrackingScreen> {
       ),
     );
     if (product != null && context.mounted) {
-      await showLogIntakeDialog(context, controller, product);
+      final now = DateTime.now();
+      await showLogIntakeDialog(
+        context,
+        controller,
+        product,
+        initialTakenAt: _sameDay(_selectedDay, now)
+            ? now
+            : DateTime(
+                _selectedDay.year,
+                _selectedDay.month,
+                _selectedDay.day,
+                now.hour,
+                now.minute,
+              ),
+      );
     }
   }
 
