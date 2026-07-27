@@ -1,4 +1,9 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:collection/collection.dart';
+import 'package:csv/csv.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,10 +11,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../analysis/supplement_insights.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../app/appearance_settings.dart';
+import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
+import 'charts.dart';
 import 'common.dart';
+import 'dashboard_screen.dart' show periodLabel;
+import 'design.dart';
 import 'dialogs.dart';
 
+/// The supplements screen: the catalog, the weekly plan, stock, and history.
+///
+/// The day-by-day dosing workflow lives on Today, so this screen owns
+/// everything about the products themselves.
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({super.key});
 
@@ -17,360 +31,106 @@ class TrackingScreen extends StatefulWidget {
   State<TrackingScreen> createState() => _TrackingScreenState();
 }
 
-class _TrackingScreenState extends State<TrackingScreen> {
-  final _insights = const SupplementInsights();
+class _TrackingScreenState extends State<TrackingScreen>
+    with SingleTickerProviderStateMixin {
+  static const _insights = SupplementInsights();
+  static const _tabCount = 4;
+
+  late final TabController _tabs = TabController(
+    length: _tabCount,
+    vsync: this,
+  );
   final _search = TextEditingController();
   final _historySearch = TextEditingController();
-  var _selectedDay = DateTime.now();
+
   var _catalogFilter = 'active';
-  var _historyRange = '30';
+  var _historyRange = '90';
   var _historyVisible = 50;
+  var _planMonths = 3;
+  var _onlyLowStock = false;
   String? _historyPinsProfileId;
-  bool _historyPinsLoading = false;
+  var _historyPinsLoading = false;
   Set<String> _historyPins = <String>{};
+  int? _handledRequestToken;
 
   @override
   void dispose() {
+    _tabs.dispose();
     _search.dispose();
     _historySearch.dispose();
     super.dispose();
   }
 
+  /// Applies a pending deep link from a Today tile.
+  void _applyRequest(ShellNavigation navigation) {
+    final request = navigation.request;
+    if (request == null || request.token == _handledRequestToken) return;
+    final tab = supplementsTabForSection(request.section);
+    if (tab == null) return;
+    _handledRequestToken = request.token;
+    final wantsLowStock = request.filter == SectionFilter.lowStock;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _tabs.index = tab;
+      if (wantsLowStock != _onlyLowStock) {
+        setState(() => _onlyLowStock = wantsLowStock);
+      }
+      navigation.completeRequest(request.token);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final navigation = context.watch<ShellNavigation>();
     final strings = AppLocalizations.of(context);
-    return DefaultTabController(
-      length: 4,
-      child: PageBody(
-        child: Column(
-          children: [
-            Material(
-              color: Colors.transparent,
-              child: TabBar(
-                isScrollable: true,
-                tabAlignment: TabAlignment.start,
-                tabs: [
-                  Tab(
-                    icon: const Icon(Icons.today_outlined),
-                    text: strings.today,
-                  ),
-                  Tab(
-                    icon: const Icon(Icons.medication_outlined),
-                    text: strings.catalog,
-                  ),
-                  Tab(
-                    icon: const Icon(Icons.inventory_2_outlined),
-                    text: strings.stock,
-                  ),
-                  Tab(
-                    icon: const Icon(Icons.analytics_outlined),
-                    text: strings.history,
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: TabBarView(
-                children: [
-                  _today(context, controller),
-                  _catalog(context, controller),
-                  _stock(context, controller),
-                  _history(context, controller),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _today(BuildContext context, AppController controller) {
-    final strings = AppLocalizations.of(context);
-    final doses = _insights.dosesForDay(
-      day: _selectedDay,
-      schedules: controller.schedules,
-      supplements: controller.supplements,
-      intakes: controller.intakes,
-    );
-    final now = DateTime.now();
-    final adherence = _insights.adherence(
-      from: now.subtract(const Duration(days: 29)),
-      through: now,
-      schedules: controller.schedules,
-      supplements: controller.supplements,
-      intakes: controller.intakes,
-    );
-    return RefreshIndicator(
-      onRefresh: controller.refreshActiveData,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
+    _applyRequest(navigation);
+    return PageBody(
+      child: Column(
         children: [
-          _dayStrip(context),
-          SectionHeader(
-            title: strings.formatTrackingDate(_selectedDay),
-            subtitle: doses.isEmpty
-                ? strings.nothingScheduled
-                : strings.trackingProgress(
-                    doses.where((item) => item.taken).length,
-                    doses.length,
-                  ),
-            action: TextButton.icon(
-              onPressed: controller.supplements.isEmpty
-                  ? () => showAddSupplementDialog(context, controller)
-                  : () => _chooseManualIntake(context, controller),
-              icon: const Icon(Icons.add),
-              label: Text(strings.manual),
+          Material(
+            color: Colors.transparent,
+            child: TabBar(
+              controller: _tabs,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              tabs: [
+                Tab(
+                  icon: const Icon(Icons.medication_outlined),
+                  text: strings.catalog,
+                ),
+                Tab(
+                  icon: const Icon(Icons.calendar_view_week_outlined),
+                  text: strings.pick('Plan', 'Plan'),
+                ),
+                Tab(
+                  icon: const Icon(Icons.inventory_2_outlined),
+                  text: strings.stock,
+                ),
+                Tab(
+                  icon: const Icon(Icons.analytics_outlined),
+                  text: strings.history,
+                ),
+              ],
             ),
           ),
-          if (doses.isEmpty)
-            EmptyState(
-              icon: Icons.event_available_outlined,
-              title: strings.noDosesForThisDay,
-              message: controller.schedules.isEmpty
-                  ? strings.addScheduleFromCatalog
-                  : strings.scheduleFreeDay,
-            )
-          else
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (final dose in doses)
-                    _doseTile(context, controller, dose),
-                ],
-              ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _catalog(context, controller),
+                _weeklyPlan(context, controller),
+                _stock(context, controller),
+                _history(context, controller),
+              ],
             ),
-          SectionHeader(
-            title: strings.adherence30Day,
-            subtitle: strings.scheduledThroughCurrentTime,
           ),
-          _adherenceCard(context, adherence),
         ],
       ),
     );
   }
 
-  Widget _dayStrip(BuildContext context) {
-    final strings = AppLocalizations.of(context);
-    final today = DateTime.now();
-    return SizedBox(
-      height: 74,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: 15,
-        separatorBuilder: (_, _) => const SizedBox(width: 7),
-        itemBuilder: (context, index) {
-          final day = DateTime(
-            today.year,
-            today.month,
-            today.day,
-          ).add(Duration(days: index - 7));
-          final selected = _sameDay(day, _selectedDay);
-          return Semantics(
-            selected: selected,
-            label: strings.formatTrackingDate(day),
-            child: ChoiceChip(
-              selected: selected,
-              onSelected: (_) => setState(() => _selectedDay = day),
-              label: SizedBox(
-                width: 40,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(strings.formatTrackingWeekday(day).substring(0, 2)),
-                    Text(
-                      strings.formatNumber(
-                        day.day.toDouble(),
-                        decimalDigits: 0,
-                      ),
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _doseTile(
-    BuildContext context,
-    AppController controller,
-    ScheduledDoseStatus status,
-  ) {
-    final strings = AppLocalizations.of(context);
-    final colorScheme = Theme.of(context).colorScheme;
-    final icon = status.taken
-        ? Icons.check_circle
-        : status.skipped
-        ? Icons.do_not_disturb_on
-        : status.missed
-        ? Icons.error_outline
-        : Icons.schedule;
-    final color = status.taken
-        ? colorScheme.primary
-        : status.skipped
-        ? colorScheme.outline
-        : status.missed
-        ? colorScheme.error
-        : colorScheme.secondary;
-    return Column(
-      children: [
-        ListTile(
-          leading: Icon(icon, color: color, size: 30),
-          title: Text(status.supplement.name),
-          subtitle: Text(
-            [
-              '${strings.formatNumber(status.schedule.dose)} ${status.schedule.unit}',
-              status.schedule.timeOfDay,
-              if (status.schedule.instructions.isNotEmpty)
-                status.schedule.instructions,
-            ].join(' · '),
-          ),
-          trailing: status.intake != null
-              ? IconButton(
-                  tooltip: strings.undoCheckIn,
-                  onPressed: controller.busy
-                      ? null
-                      : () => _undoIntake(context, controller, status.intake!),
-                  icon: const Icon(Icons.undo),
-                )
-              : Wrap(
-                  spacing: 4,
-                  children: [
-                    IconButton.outlined(
-                      tooltip: strings.skipDose,
-                      onPressed: controller.busy
-                          ? null
-                          : () => _recordScheduled(
-                              context,
-                              controller,
-                              status,
-                              skipped: true,
-                            ),
-                      icon: const Icon(Icons.close),
-                    ),
-                    IconButton.filled(
-                      tooltip: strings.markTaken,
-                      onPressed: controller.busy
-                          ? null
-                          : () => _recordScheduled(
-                              context,
-                              controller,
-                              status,
-                              skipped: false,
-                            ),
-                      icon: const Icon(Icons.check),
-                    ),
-                  ],
-                ),
-        ),
-        const Divider(height: 1),
-      ],
-    );
-  }
-
-  Future<void> _recordScheduled(
-    BuildContext context,
-    AppController controller,
-    ScheduledDoseStatus status, {
-    required bool skipped,
-  }) async {
-    try {
-      await controller.logIntake(
-        supplement: status.supplement,
-        dose: status.schedule.dose,
-        unit: status.schedule.unit,
-        takenAt: _sameDay(_selectedDay, DateTime.now())
-            ? DateTime.now()
-            : status.dueAt,
-        schedule: status.schedule,
-        skipped: skipped,
-      );
-    } on Object catch (error) {
-      if (context.mounted) await showAppError(context, error);
-    }
-  }
-
-  Future<void> _undoIntake(
-    BuildContext context,
-    AppController controller,
-    SupplementIntake intake,
-  ) async {
-    try {
-      await controller.deleteIntake(intake);
-    } on Object catch (error) {
-      if (context.mounted) await showAppError(context, error);
-    }
-  }
-
-  Widget _adherenceCard(BuildContext context, AdherenceSummary value) {
-    final strings = AppLocalizations.of(context);
-    final rate = value.rate;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                SizedBox(
-                  width: 64,
-                  height: 64,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CircularProgressIndicator(
-                        value: rate ?? 0,
-                        strokeWidth: 7,
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                      ),
-                      Center(
-                        child: Text(
-                          rate == null ? '—' : strings.formatPercent(rate),
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 18),
-                Expanded(
-                  child: Wrap(
-                    spacing: 18,
-                    runSpacing: 8,
-                    children: [
-                      _count(strings, strings.taken, value.taken),
-                      _count(strings, strings.skipped, value.skipped),
-                      _count(strings, strings.missed, value.missed),
-                      _count(strings, strings.scheduled, value.scheduled),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _count(AppLocalizations strings, String label, int value) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        strings.formatNumber(value.toDouble(), decimalDigits: 0),
-        style: const TextStyle(fontWeight: FontWeight.bold),
-      ),
-      Text(label),
-    ],
-  );
+  // ---------------------------------------------------------------- catalog
 
   Widget _catalog(BuildContext context, AppController controller) {
     final strings = AppLocalizations.of(context);
@@ -389,56 +149,76 @@ class _TrackingScreenState extends State<TrackingScreen> {
           (_catalogFilter == 'active' ? item.active : !item.active);
       return matchesQuery && matchesState;
     }).toList();
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
-      children: [
-        TextField(
-          controller: _search,
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.search),
-            labelText: strings.searchProductsOrIngredients,
-            suffixIcon: _search.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: strings.clearSearch,
-                    onPressed: () => setState(_search.clear),
-                    icon: const Icon(Icons.clear),
-                  ),
+    return RefreshIndicator(
+      onRefresh: controller.refreshActiveData,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
+        children: [
+          TextField(
+            controller: _search,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              labelText: strings.searchProductsOrIngredients,
+              suffixIcon: _search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: strings.clearSearch,
+                      onPressed: () => setState(_search.clear),
+                      icon: const Icon(Icons.clear),
+                    ),
+            ),
           ),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            SegmentedButton<String>(
-              segments: [
-                ButtonSegment(value: 'active', label: Text(strings.active)),
-                ButtonSegment(value: 'inactive', label: Text(strings.paused)),
-                ButtonSegment(value: 'all', label: Text(strings.all)),
-              ],
-              selected: {_catalogFilter},
-              onSelectionChanged: (value) =>
-                  setState(() => _catalogFilter = value.first),
-            ),
-            const Spacer(),
-            IconButton.filled(
-              tooltip: strings.addSupplement,
-              onPressed: () => showAddSupplementDialog(context, controller),
-              icon: const Icon(Icons.add),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        if (products.isEmpty)
-          EmptyState(
-            icon: Icons.search_off,
-            title: strings.noMatchingSupplements,
-            message: strings.changeFilterOrAddProduct,
-          )
-        else
-          for (final product in products)
-            _productCard(context, controller, product),
-      ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SegmentedButton<String>(
+                    showSelectedIcon: false,
+                    segments: [
+                      ButtonSegment(
+                        value: 'active',
+                        label: Text(strings.active),
+                      ),
+                      ButtonSegment(
+                        value: 'inactive',
+                        label: Text(strings.paused),
+                      ),
+                      ButtonSegment(value: 'all', label: Text(strings.all)),
+                    ],
+                    selected: {_catalogFilter},
+                    onSelectionChanged: (value) =>
+                        setState(() => _catalogFilter = value.first),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: strings.addSupplement,
+                onPressed: () => showAddSupplementDialog(context, controller),
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (products.isEmpty)
+            EmptyState(
+              icon: Icons.search_off,
+              title: strings.noMatchingSupplements,
+              message: strings.changeFilterOrAddProduct,
+              action: FilledButton.tonalIcon(
+                onPressed: () => showAddSupplementDialog(context, controller),
+                icon: const Icon(Icons.add),
+                label: Text(strings.addSupplement),
+              ),
+            )
+          else
+            for (final product in products)
+              _productCard(context, controller, product),
+        ],
+      ),
     );
   }
 
@@ -448,15 +228,25 @@ class _TrackingScreenState extends State<TrackingScreen> {
     Supplement product,
   ) {
     final strings = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
     final stock = controller.stockLevels[product.id] ?? 0;
     final productSchedules = controller.schedules
         .where((item) => item.supplementId == product.id)
         .toList();
+    final accent = seriesColorFor(
+      product.name,
+      colorMode: controller.colorMode,
+    );
     return Card(
+      clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
+        shape: const Border(),
+        collapsedShape: const Border(),
         leading: CircleAvatar(
+          backgroundColor: accent.withValues(alpha: 0.18),
           child: Text(
             product.name.isEmpty ? '?' : product.name.characters.first,
+            style: TextStyle(fontWeight: FontWeight.w700, color: accent),
           ),
         ),
         title: Text(product.name),
@@ -465,6 +255,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
             if (product.brand.isNotEmpty) product.brand,
             '${strings.formatNumber(stock)} ${product.stockUnit}',
             strings.scheduleCount(productSchedules.length),
+            if (!product.active) strings.paused,
           ].join(' · '),
         ),
         trailing: PopupMenuButton<String>(
@@ -497,6 +288,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   children: [
                     for (final ingredient in product.ingredients)
                       Chip(
+                        visualDensity: VisualDensity.compact,
                         label: Text(
                           [
                                 ingredient['name'],
@@ -517,9 +309,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
             ListTile(
               leading: Icon(
                 schedule.active ? Icons.schedule : Icons.pause_circle_outline,
+                color: schedule.active ? colors.primary : colors.outline,
               ),
               title: Text(
-                '${strings.formatNumber(schedule.dose)} ${schedule.unit} · ${schedule.timeOfDay}',
+                '${strings.formatNumber(schedule.dose)} ${schedule.unit} · '
+                '${schedule.timeOfDay}',
               ),
               subtitle: Text(
                 '${strings.daysPerWeek(schedule.weekdays.length)}'
@@ -535,6 +329,19 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 tooltip: strings.deleteSchedule,
                 onPressed: () => _deleteSchedule(context, controller, schedule),
                 icon: const Icon(Icons.delete_outline),
+              ),
+            ),
+          if (productSchedules.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () =>
+                      showAddScheduleDialog(context, controller, product),
+                  icon: const Icon(Icons.add),
+                  label: Text(strings.addSchedule),
+                ),
               ),
             ),
           if (product.notes.isNotEmpty)
@@ -622,104 +429,325 @@ class _TrackingScreenState extends State<TrackingScreen> {
     if (confirmed) await controller.deleteSchedule(schedule);
   }
 
+  // ------------------------------------------------------------ weekly plan
+
+  /// The weekly pillbox: what to lay out for each day of the week.
+  Widget _weeklyPlan(BuildContext context, AppController controller) {
+    final strings = AppLocalizations.of(context);
+    final scheduled =
+        controller.supplements
+            .where(
+              (product) =>
+                  !product.deleted &&
+                  controller.schedules.any(
+                    (schedule) =>
+                        schedule.supplementId == product.id &&
+                        schedule.active &&
+                        !schedule.deleted &&
+                        schedule.weekdays.isNotEmpty,
+                  ),
+            )
+            .toList()
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
+    return RefreshIndicator(
+      onRefresh: controller.refreshActiveData,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
+        children: [
+          SectionHeader(
+            title: strings.pick('Weekly plan', 'Wochenplan'),
+            subtitle: strings.pick(
+              'What to lay out in a pill box for each day of the week.',
+              'Was für jeden Wochentag in die Pillendose gehört.',
+            ),
+          ),
+          if (scheduled.isEmpty)
+            EmptyState(
+              icon: Icons.calendar_view_week_outlined,
+              title: strings.pick(
+                'No weekly schedule yet',
+                'Noch kein Wochenplan',
+              ),
+              message: strings.addScheduleFromCatalog,
+              action: FilledButton.tonalIcon(
+                onPressed: () => _tabs.index = 0,
+                icon: const Icon(Icons.medication_outlined),
+                label: Text(strings.catalog),
+              ),
+            )
+          else
+            for (final product in scheduled)
+              _WeeklyPlanCard(
+                product: product,
+                schedules: controller.schedules
+                    .where(
+                      (item) =>
+                          item.supplementId == product.id &&
+                          item.active &&
+                          !item.deleted,
+                    )
+                    .toList(),
+                onEditSchedule: (schedule) => showAddScheduleDialog(
+                  context,
+                  controller,
+                  product,
+                  existing: schedule,
+                ),
+                colorMode: controller.colorMode,
+              ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------------ stock
+
   Widget _stock(BuildContext context, AppController controller) {
     final strings = AppLocalizations.of(context);
-    final projections = _insights.stockProjections(
+    final allProjections = _insights.stockProjections(
       supplements: controller.supplements,
       householdSchedules: controller.householdSchedules,
       stockLevels: controller.stockLevels,
     );
+    final projections = _onlyLowStock
+        ? allProjections.where((item) => item.low).toList()
+        : allProjections;
     final monthlyCost = _insights.monthlyCostEstimate(
       supplements: controller.supplements,
       householdSchedules: controller.householdSchedules,
     );
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: MetricCard(
-                label: strings.lowStock,
-                value: strings.formatNumber(
-                  projections.where((item) => item.low).length.toDouble(),
-                  decimalDigits: 0,
-                ),
-                icon: Icons.inventory_outlined,
-                detail: strings.householdCatalog,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: MetricCard(
-                label: strings.plannedMonthlyCost,
-                value: strings.formatEur(monthlyCost, decimalDigits: 0),
-                icon: Icons.euro_outlined,
-                detail: strings.knownPackagePrices,
-              ),
-            ),
-          ],
-        ),
-        SectionHeader(
-          title: strings.householdStock,
-          subtitle: strings.stockProjectionDescription,
-        ),
-        if (projections.isEmpty)
-          EmptyState(
-            icon: Icons.inventory_2_outlined,
-            title: strings.noStockToManage,
-            message: strings.addSupplementAndContainerCount,
-          )
-        else
-          for (final projection in projections)
-            Card(
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: projection.low
-                      ? Theme.of(context).colorScheme.errorContainer
-                      : null,
-                  child: Icon(
-                    projection.low
-                        ? Icons.warning_amber_rounded
-                        : Icons.inventory_2_outlined,
+    final plan = _insights.purchasePlan(
+      supplements: controller.supplements,
+      householdSchedules: controller.householdSchedules,
+      stockLevels: controller.stockLevels,
+      months: _planMonths,
+    );
+    final toBuy = plan.where((item) => !item.covered).toList();
+    final knownPlanCost = toBuy
+        .map((item) => item.estimatedCostEur)
+        .whereType<double>()
+        .fold<double>(0, (sum, item) => sum + item);
+    final unknownPlanPrices = toBuy
+        .where((item) => item.estimatedCostEur == null)
+        .length;
+
+    return RefreshIndicator(
+      onRefresh: controller.refreshActiveData,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: StatTile(
+                  label: strings.lowStock,
+                  value: strings.formatNumber(
+                    allProjections.where((item) => item.low).length.toDouble(),
+                    decimalDigits: 0,
                   ),
+                  icon: Icons.inventory_outlined,
+                  detail: strings.householdCatalog,
+                  tone: allProjections.any((item) => item.low)
+                      ? Theme.of(context).colorScheme.error
+                      : null,
+                  onTap: () => setState(() => _onlyLowStock = !_onlyLowStock),
                 ),
-                title: Text(projection.supplement.name),
-                subtitle: Text(
-                  [
-                    '${strings.formatNumber(projection.unitsOnHand)} ${projection.supplement.stockUnit}',
-                    if (projection.daysRemaining != null)
-                      strings.daysProjected(
-                        projection.daysRemaining!.clamp(0, 9999).round(),
-                      )
-                    else
-                      strings.noCompatibleHouseholdSchedule,
-                    if (projection.low && projection.suggestedPurchaseUnits > 0)
-                      strings.buyForWeeks(
-                        projection.suggestedPurchaseUnits.round(),
-                        12,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: StatTile(
+                  label: strings.plannedMonthlyCost,
+                  value: strings.formatEur(monthlyCost, decimalDigits: 0),
+                  icon: Icons.euro_outlined,
+                  detail: strings.knownPackagePrices,
+                ),
+              ),
+            ],
+          ),
+          SectionHeader(
+            title: strings.pick('Shopping list', 'Einkaufsliste'),
+            subtitle: strings.pick(
+              'Containers to buy so the plan is covered for the horizon below.',
+              'Packungen, damit der Plan über den gewählten Zeitraum reicht.',
+            ),
+          ),
+          SurfaceCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        strings.pick('Plan ahead', 'Vorausplanen'),
+                        style: Theme.of(context).textTheme.titleSmall,
                       ),
-                  ].join(' · '),
+                    ),
+                    SegmentedButton<int>(
+                      showSelectedIcon: false,
+                      segments: [
+                        for (final months in [1, 3, 6, 12])
+                          ButtonSegment(
+                            value: months,
+                            label: Text(
+                              strings.pick('${months}m', '$months M'),
+                            ),
+                          ),
+                      ],
+                      selected: {_planMonths},
+                      onSelectionChanged: (value) =>
+                          setState(() => _planMonths = value.first),
+                    ),
+                  ],
                 ),
-                trailing: FilledButton.tonal(
-                  onPressed: () => showAdjustStockDialog(
+                const SizedBox(height: 12),
+                if (toBuy.isEmpty)
+                  Text(
+                    plan.isEmpty
+                        ? strings.pick(
+                            'Add a schedule and a package size to plan '
+                                'purchases.',
+                            'Lege Plan und Packungsgröße an, um Einkäufe zu '
+                                'planen.',
+                          )
+                        : strings.pick(
+                            'Nothing to buy for this horizon.',
+                            'Für diesen Zeitraum ist nichts zu kaufen.',
+                          ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  )
+                else ...[
+                  for (final item in toBuy)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.shopping_cart_outlined),
+                      title: Text(item.supplement.name),
+                      subtitle: Text(
+                        [
+                          strings.pick(
+                            'need ${strings.formatNumber(item.missingUnits)} '
+                                '${item.supplement.stockUnit}',
+                            'Bedarf ${strings.formatNumber(item.missingUnits)} '
+                                '${item.supplement.stockUnit}',
+                          ),
+                          if (item.estimatedCostEur != null)
+                            strings.formatEur(item.estimatedCostEur!),
+                        ].join(' · '),
+                      ),
+                      trailing: Text(
+                        item.containersToBuy == null
+                            ? strings.pick('size?', 'Größe?')
+                            : strings.pick(
+                                '${item.containersToBuy}×',
+                                '${item.containersToBuy}×',
+                              ),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  const Divider(),
+                  Text(
+                    unknownPlanPrices == 0
+                        ? strings.pick(
+                            'Estimated total ${strings.formatEur(knownPlanCost)}.',
+                            'Geschätzte Summe ${strings.formatEur(knownPlanCost)}.',
+                          )
+                        : strings.pick(
+                            'Known subtotal ${strings.formatEur(knownPlanCost)}; '
+                                '$unknownPlanPrices product(s) have no price.',
+                            'Bekannte Zwischensumme ${strings.formatEur(knownPlanCost)}; '
+                                'für $unknownPlanPrices Produkt(e) fehlt der Preis.',
+                          ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          SectionHeader(
+            title: strings.householdStock,
+            subtitle: strings.stockProjectionDescription,
+            action: _onlyLowStock
+                ? TextButton.icon(
+                    onPressed: () => setState(() => _onlyLowStock = false),
+                    icon: const Icon(Icons.filter_alt_off_outlined),
+                    label: Text(strings.clearFilter),
+                  )
+                : null,
+          ),
+          if (projections.isEmpty)
+            EmptyState(
+              icon: Icons.inventory_2_outlined,
+              title: _onlyLowStock
+                  ? strings.pick(
+                      'Nothing is running low',
+                      'Nichts geht zur Neige',
+                    )
+                  : strings.noStockToManage,
+              message: _onlyLowStock
+                  ? strings.pick(
+                      'Every tracked product has more than a month of cover.',
+                      'Jedes erfasste Produkt reicht noch über einen Monat.',
+                    )
+                  : strings.addSupplementAndContainerCount,
+            )
+          else
+            for (final projection in projections)
+              SurfaceCard(
+                padding: EdgeInsets.zero,
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: projection.low
+                        ? Theme.of(context).colorScheme.errorContainer
+                        : null,
+                    child: Icon(
+                      projection.low
+                          ? Icons.warning_amber_rounded
+                          : Icons.inventory_2_outlined,
+                    ),
+                  ),
+                  title: Text(projection.supplement.name),
+                  subtitle: Text(
+                    [
+                      '${strings.formatNumber(projection.unitsOnHand)} '
+                          '${projection.supplement.stockUnit}',
+                      if (projection.daysRemaining != null)
+                        strings.daysProjected(
+                          projection.daysRemaining!.clamp(0, 9999).round(),
+                        )
+                      else
+                        strings.noCompatibleHouseholdSchedule,
+                      if (projection.low &&
+                          projection.suggestedPurchaseUnits > 0)
+                        strings.buyForWeeks(
+                          projection.suggestedPurchaseUnits.round(),
+                          12,
+                        ),
+                    ].join(' · '),
+                  ),
+                  trailing: FilledButton.tonal(
+                    onPressed: () => showAdjustStockDialog(
+                      context,
+                      controller,
+                      projection.supplement,
+                      purchase: true,
+                    ),
+                    child: Text(strings.purchase),
+                  ),
+                  onTap: () => showAdjustStockDialog(
                     context,
                     controller,
                     projection.supplement,
-                    purchase: true,
                   ),
-                  child: Text(strings.purchase),
-                ),
-                onTap: () => showAdjustStockDialog(
-                  context,
-                  controller,
-                  projection.supplement,
                 ),
               ),
-            ),
-      ],
+        ],
+      ),
     );
   }
+
+  // ---------------------------------------------------------------- history
 
   Widget _history(BuildContext context, AppController controller) {
     final strings = AppLocalizations.of(context);
@@ -752,6 +780,19 @@ class _TrackingScreenState extends State<TrackingScreen> {
       from: window.$1,
       through: window.$2,
     );
+    final weeks = _insights.weeksIn(from: window.$1, through: window.$2);
+    final supplementSeries = _insights.weeklySupplementSeries(
+      intakes: controller.intakes,
+      supplements: controller.supplements,
+      from: window.$1,
+      through: window.$2,
+    );
+    final ingredientSeries = _insights.weeklyIngredientSeries(
+      intakes: controller.intakes,
+      from: window.$1,
+      through: window.$2,
+    );
+
     final query = _historySearch.text.trim().toLowerCase();
     final filteredExposures =
         exposures
@@ -816,6 +857,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
         );
       }
     }
+
     final history =
         controller.intakes
             .where(
@@ -854,196 +896,373 @@ class _TrackingScreenState extends State<TrackingScreen> {
       );
       visibleHistoryByDay.putIfAbsent(day, () => []).add(intake);
     }
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
-      children: [
-        SectionHeader(
-          title: strings.historyAnalytics,
-          subtitle:
-              '${strings.formatHistoryDate(window.$1)} – ${strings.formatHistoryDate(window.$2)}',
-        ),
-        SegmentedButton<String>(
-          segments: [
-            ButtonSegment(
-              value: '30',
-              label: Text(strings.historyRangeDays(30)),
+
+    // Charts only draw the pinned series, so a catalog of thirty products does
+    // not turn into thirty overlapping lines.
+    final pinnedSupplementSeries = _pinnedOrTop(
+      supplementSeries,
+      (item) => 'supplement|${item.key}',
+    );
+    final pinnedIngredientSeries = _pinnedOrTop(
+      ingredientSeries,
+      (item) => 'ingredient|${item.key}',
+    );
+    final supplementColors = seriesColors(
+      pinnedSupplementSeries.map((item) => item.key),
+      colorMode: controller.colorMode,
+    );
+    final ingredientColors = seriesColors(
+      pinnedIngredientSeries.map((item) => item.key),
+      colorMode: controller.colorMode,
+    );
+
+    return RefreshIndicator(
+      onRefresh: controller.refreshActiveData,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
+        children: [
+          SectionHeader(
+            title: strings.historyAnalytics,
+            subtitle:
+                '${strings.formatHistoryDate(window.$1)} – '
+                '${strings.formatHistoryDate(window.$2)}',
+            action: IconButton.outlined(
+              tooltip: strings.pick('Export CSV', 'CSV exportieren'),
+              onPressed: history.isEmpty
+                  ? null
+                  : () => _exportHistoryCsv(context, controller, history),
+              icon: const Icon(Icons.table_view_outlined),
             ),
-            ButtonSegment(
-              value: '90',
-              label: Text(strings.historyRangeDays(90)),
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<String>(
+              segments: [
+                ButtonSegment(
+                  value: '30',
+                  label: Text(strings.historyRangeDays(30)),
+                ),
+                ButtonSegment(
+                  value: '90',
+                  label: Text(strings.historyRangeDays(90)),
+                ),
+                ButtonSegment(
+                  value: '365',
+                  label: Text(strings.historyRangeDays(365)),
+                ),
+                ButtonSegment(value: 'all', label: Text(strings.all)),
+              ],
+              selected: {_historyRange},
+              showSelectedIcon: false,
+              onSelectionChanged: (value) => setState(() {
+                _historyRange = value.first;
+                _historyVisible = 50;
+              }),
             ),
-            ButtonSegment(
-              value: '365',
-              label: Text(strings.historyRangeDays(365)),
+          ),
+          const SizedBox(height: 12),
+          if (weekly.any((item) => item.scheduled > 0))
+            ChartCard(
+              title: strings.weeklyAdherence,
+              subtitle: strings.weeklyAdherenceDescription,
+              legend: SeriesLegend(
+                entries: {
+                  strings.taken: Theme.of(context).colorScheme.primary,
+                  strings.skipped: Theme.of(context).colorScheme.outline,
+                  strings.missed: Theme.of(context).colorScheme.error,
+                },
+              ),
+              child: AdherenceChart(
+                values: weekly,
+                weekLabel: strings.formatShortDate,
+                semanticLabel: weekly
+                    .map(
+                      (item) => strings.weeklyAdherenceSemantic(
+                        item.weekStarting,
+                        item.taken,
+                        item.skipped,
+                        item.missed,
+                        item.scheduled,
+                      ),
+                    )
+                    .join('. '),
+              ),
+            )
+          else
+            EmptyState(
+              icon: Icons.calendar_today_outlined,
+              title: strings.noDueScheduledDoses,
+              message: strings.futureDosesExcluded,
             ),
-            ButtonSegment(value: 'all', label: Text(strings.all)),
-          ],
-          selected: {_historyRange},
-          showSelectedIcon: false,
-          onSelectionChanged: (value) => setState(() {
-            _historyRange = value.first;
-            _historyVisible = 50;
-          }),
-        ),
-        SectionHeader(
-          title: strings.intakeHistory,
-          subtitle: strings.intakeHistoryDescription,
-        ),
-        if (history.isEmpty)
-          EmptyState(
-            icon: Icons.history,
-            title: strings.noIntakeHistory,
-            message: strings.intakeHistoryEmptyDescription,
-          )
-        else
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                for (final day in visibleHistoryByDay.entries) ...[
-                  ListTile(
-                    dense: true,
-                    tileColor: Theme.of(
-                      context,
-                    ).colorScheme.surfaceContainerHighest,
-                    title: Text(
-                      strings.formatTrackingDate(day.key),
-                      style: Theme.of(context).textTheme.titleSmall,
+          if (pinnedSupplementSeries.isNotEmpty)
+            ChartCard(
+              title: strings.supplementExposure,
+              subtitle: strings.pick(
+                'Weekly totals for the pinned products.',
+                'Wochensummen der angehefteten Produkte.',
+              ),
+              legend: SeriesLegend(
+                entries: {
+                  for (final item in pinnedSupplementSeries)
+                    item.label: supplementColors[item.key]!,
+                },
+              ),
+              child: WeeklySeriesChart(
+                weeks: weeks,
+                series: pinnedSupplementSeries,
+                colors: supplementColors,
+                weekLabel: strings.formatShortDate,
+                valueLabel: (value) => strings.formatNumber(value),
+                semanticLabel: pinnedSupplementSeries
+                    .map(
+                      (item) =>
+                          '${item.label}: ${strings.formatNumber(item.total)}',
+                    )
+                    .join('. '),
+              ),
+            ),
+          if (pinnedIngredientSeries.isNotEmpty)
+            ChartCard(
+              title: strings.ingredientExposure,
+              subtitle: strings.pick(
+                'Weekly totals for the pinned components.',
+                'Wochensummen der angehefteten Komponenten.',
+              ),
+              legend: SeriesLegend(
+                entries: {
+                  for (final item in pinnedIngredientSeries)
+                    item.label: ingredientColors[item.key]!,
+                },
+              ),
+              child: WeeklySeriesChart(
+                weeks: weeks,
+                series: pinnedIngredientSeries,
+                colors: ingredientColors,
+                weekLabel: strings.formatShortDate,
+                valueLabel: (value) => strings.formatNumber(value),
+                semanticLabel: pinnedIngredientSeries
+                    .map(
+                      (item) =>
+                          '${item.label}: ${strings.formatNumber(item.total)}',
+                    )
+                    .join('. '),
+              ),
+            ),
+          SectionHeader(
+            title: strings.intakeHistory,
+            subtitle: strings.intakeHistoryDescription,
+          ),
+          if (history.isEmpty)
+            EmptyState(
+              icon: Icons.history,
+              title: strings.noIntakeHistory,
+              message: strings.intakeHistoryEmptyDescription,
+            )
+          else
+            SurfaceCard(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  for (final day in visibleHistoryByDay.entries) ...[
+                    ListTile(
+                      dense: true,
+                      tileColor: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
+                      title: Text(
+                        strings.formatTrackingDate(day.key),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      trailing: Text(
+                        strings.intakeCount(day.value.length),
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
                     ),
-                    trailing: Text(
-                      strings.intakeCount(day.value.length),
-                      style: Theme.of(context).textTheme.labelMedium,
-                    ),
-                  ),
-                  for (final intake in day.value)
-                    _historyIntakeTile(context, controller, intake),
-                ],
-                if (visibleHistory.length < history.length)
-                  Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: OutlinedButton.icon(
-                      onPressed: () => setState(() => _historyVisible += 50),
-                      icon: const Icon(Icons.expand_more),
-                      label: Text(
-                        strings.showMoreHistory(
-                          history.length - visibleHistory.length,
+                    for (final intake in day.value)
+                      _historyIntakeTile(context, controller, intake),
+                  ],
+                  if (visibleHistory.length < history.length)
+                    Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: OutlinedButton.icon(
+                        onPressed: () => setState(() => _historyVisible += 50),
+                        icon: const Icon(Icons.expand_more),
+                        label: Text(
+                          strings.showMoreHistory(
+                            history.length - visibleHistory.length,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        SectionHeader(
-          title: strings.weeklyAdherence,
-          subtitle: strings.weeklyAdherenceDescription,
-        ),
-        _weeklyAdherenceCard(context, weekly),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _historySearch,
-          onChanged: (_) => setState(() => _historyVisible = 50),
-          decoration: InputDecoration(
-            labelText: strings.filterSupplementsAndIngredients,
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon: _historySearch.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: strings.clearFilter,
-                    onPressed: () => setState(() {
-                      _historySearch.clear();
-                      _historyVisible = 50;
-                    }),
-                    icon: const Icon(Icons.clear),
-                  ),
-          ),
-        ),
-        SectionHeader(
-          title: strings.supplementExposure,
-          subtitle: strings.supplementExposureDescription,
-        ),
-        if (filteredExposures.isEmpty)
-          EmptyState(
-            icon: Icons.medication_outlined,
-            title: strings.noSupplementExposure,
-            message: strings.logNonSkippedIntake,
-          )
-        else
-          Card(
-            child: Column(
-              children: [
-                for (final item in filteredExposures)
-                  _exposureTile(
-                    context,
-                    title: item.name,
-                    total: item.total,
-                    unit: item.unit,
-                    detail: strings.intakeCount(item.intakeCount),
-                    pinKey: _supplementPinKey(item),
-                  ),
-              ],
-            ),
-          ),
-        SectionHeader(
-          title: strings.ingredientExposure,
-          subtitle: strings.ingredientExposureDescription,
-        ),
-        if (filteredIngredients.isEmpty)
-          EmptyState(
-            icon: Icons.science_outlined,
-            title: strings.noIngredientTotals,
-            message: strings.addIngredientsAndIntakes,
-          )
-        else
-          Card(
-            child: Column(
-              children: [
-                for (final item in filteredIngredients)
-                  _exposureTile(
-                    context,
-                    title: item.name,
-                    total: item.total,
-                    unit: item.unit,
-                    detail: strings.ingredientSnapshot,
-                    pinKey: _ingredientPinKey(item),
-                  ),
-              ],
-            ),
-          ),
-        SectionHeader(
-          title: strings.knownIntakeCost,
-          subtitle: strings.knownIntakeCostDescription,
-        ),
-        _costCard(context, cost),
-        SectionHeader(
-          title: strings.temporalContext,
-          subtitle: strings.temporalContextDescription,
-        ),
-        if (eventContext.isEmpty)
-          EmptyState(
-            icon: Icons.event_note_outlined,
-            title: strings.noSymptomOrTagEvents,
-            message: strings.eventsShownAlongsideHistory,
-          )
-        else
-          Card(
-            child: Column(
-              children: [
-                for (final event in eventContext)
-                  ListTile(
-                    leading: Icon(
-                      event.kind == EventKind.symptom
-                          ? Icons.monitor_heart_outlined
-                          : Icons.sell_outlined,
+          const SizedBox(height: 12),
+          TextField(
+            controller: _historySearch,
+            onChanged: (_) => setState(() => _historyVisible = 50),
+            decoration: InputDecoration(
+              labelText: strings.filterSupplementsAndIngredients,
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _historySearch.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: strings.clearFilter,
+                      onPressed: () => setState(() {
+                        _historySearch.clear();
+                        _historyVisible = 50;
+                      }),
+                      icon: const Icon(Icons.clear),
                     ),
-                    title: Text(event.name),
-                    subtitle: Text(_eventLabel(event, strings)),
-                  ),
-              ],
             ),
           ),
-      ],
+          SectionHeader(
+            title: strings.supplementExposure,
+            subtitle: strings.supplementExposureDescription,
+          ),
+          if (filteredExposures.isEmpty)
+            EmptyState(
+              icon: Icons.medication_outlined,
+              title: strings.noSupplementExposure,
+              message: strings.logNonSkippedIntake,
+            )
+          else
+            SurfaceCard(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  for (final item in filteredExposures)
+                    _exposureTile(
+                      context,
+                      title: item.name,
+                      total: item.total,
+                      unit: item.unit,
+                      detail: strings.intakeCount(item.intakeCount),
+                      pinKey: _supplementPinKey(item),
+                    ),
+                ],
+              ),
+            ),
+          SectionHeader(
+            title: strings.ingredientExposure,
+            subtitle: strings.ingredientExposureDescription,
+          ),
+          if (filteredIngredients.isEmpty)
+            EmptyState(
+              icon: Icons.science_outlined,
+              title: strings.noIngredientTotals,
+              message: strings.addIngredientsAndIntakes,
+            )
+          else
+            SurfaceCard(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  for (final item in filteredIngredients)
+                    _exposureTile(
+                      context,
+                      title: item.name,
+                      total: item.total,
+                      unit: item.unit,
+                      detail: strings.ingredientSnapshot,
+                      pinKey: _ingredientPinKey(item),
+                    ),
+                ],
+              ),
+            ),
+          SectionHeader(
+            title: strings.knownIntakeCost,
+            subtitle: strings.knownIntakeCostDescription,
+          ),
+          _costCard(context, cost),
+          SectionHeader(
+            title: strings.temporalContext,
+            subtitle: strings.temporalContextDescription,
+          ),
+          if (eventContext.isEmpty)
+            EmptyState(
+              icon: Icons.event_note_outlined,
+              title: strings.noSymptomOrTagEvents,
+              message: strings.eventsShownAlongsideHistory,
+            )
+          else
+            SurfaceCard(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  for (final event in eventContext.take(40))
+                    ListTile(
+                      leading: Icon(
+                        event.kind == EventKind.symptom
+                            ? Icons.monitor_heart_outlined
+                            : Icons.sell_outlined,
+                      ),
+                      title: Text(event.name),
+                      subtitle: Text(_eventLabel(event, strings)),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
+  }
+
+  /// Pinned series if any are pinned, otherwise the six largest.
+  List<ExposureSeries> _pinnedOrTop(
+    List<ExposureSeries> series,
+    String Function(ExposureSeries item) pinKey,
+  ) {
+    final pinned = series
+        .where((item) => _historyPins.contains(pinKey(item)))
+        .toList();
+    return pinned.isNotEmpty
+        ? pinned.take(8).toList()
+        : series.take(6).toList();
+  }
+
+  Future<void> _exportHistoryCsv(
+    BuildContext context,
+    AppController controller,
+    List<SupplementIntake> history,
+  ) async {
+    final strings = AppLocalizations.of(context);
+    final names = {
+      for (final item in controller.supplements) item.id: item.name,
+    };
+    final rows = <List<Object?>>[
+      ['taken_at', 'supplement', 'dose', 'unit', 'skipped', 'notes'],
+      for (final intake in history)
+        [
+          intake.takenAt.toIso8601String(),
+          names[intake.supplementId] ?? '',
+          intake.dose,
+          intake.unit,
+          intake.skipped,
+          intake.notes,
+        ],
+    ];
+    final bytes = Uint8List.fromList(
+      utf8.encode(const ListToCsvConverter().convert(rows)),
+    );
+    final fileName =
+        'superhealth-intake-history-'
+        '${DateTime.now().toIso8601String().split('T').first}.csv';
+    try {
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: strings.pick('Save $fileName', '$fileName speichern'),
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['csv'],
+        bytes: bytes,
+      );
+      if (path == null || !context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(strings.pick('CSV saved.', 'CSV gespeichert.'))),
+      );
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
   }
 
   Widget _historyIntakeTile(
@@ -1119,98 +1338,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
     return (range.from, range.through);
   }
 
-  Widget _weeklyAdherenceCard(
-    BuildContext context,
-    List<WeeklyAdherence> values,
-  ) {
-    final strings = AppLocalizations.of(context);
-    if (values.isEmpty || values.every((item) => item.scheduled == 0)) {
-      return EmptyState(
-        icon: Icons.calendar_today_outlined,
-        title: strings.noDueScheduledDoses,
-        message: strings.futureDosesExcluded,
-      );
-    }
-    final maximum = values.fold<int>(
-      1,
-      (value, item) => item.scheduled > value ? item.scheduled : value,
-    );
-    return Card(
-      child: Column(
-        children: [
-          for (final value in values)
-            Semantics(
-              label: strings.weeklyAdherenceSemantic(
-                value.weekStarting,
-                value.taken,
-                value.skipped,
-                value.missed,
-                value.scheduled,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 84,
-                          child: Text(
-                            strings.formatShortDate(value.weekStarting),
-                          ),
-                        ),
-                        Expanded(
-                          child: _stackedAdherenceBar(context, value, maximum),
-                        ),
-                      ],
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 84, top: 4),
-                      child: Text(
-                        strings.weeklyAdherenceSummary(
-                          value.taken,
-                          value.skipped,
-                          value.missed,
-                          value.scheduled,
-                        ),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _stackedAdherenceBar(
-    BuildContext context,
-    WeeklyAdherence value,
-    int maximum,
-  ) {
-    final colors = Theme.of(context).colorScheme;
-    Widget segment(int count, Color color) => count == 0
-        ? const SizedBox.shrink()
-        : Expanded(
-            flex: count,
-            child: Container(height: 12, color: color),
-          );
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: Row(
-        children: [
-          segment(value.taken, colors.primary),
-          segment(value.skipped, colors.outline),
-          segment(value.missed, colors.error),
-          segment(maximum - value.scheduled, colors.surfaceContainerHighest),
-        ],
-      ),
-    );
-  }
-
   Widget _exposureTile(
     BuildContext context, {
     required String title,
@@ -1247,70 +1374,43 @@ class _TrackingScreenState extends State<TrackingScreen> {
   Widget _costCard(BuildContext context, IntakeCostInsight value) {
     final strings = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
-    final maximum = value.daily.fold<double>(
-      0,
-      (total, item) => item.knownEur > total ? item.knownEur : total,
-    );
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              strings.knownSubtotal(value.knownEur),
-              style: Theme.of(context).textTheme.titleMedium,
+    return SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            strings.knownSubtotal(value.knownEur),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            strings.knownCostCoverage(
+              value.knownIntakes,
+              value.eligibleIntakes,
             ),
-            const SizedBox(height: 4),
+          ),
+          if (!value.completeCoverage) ...[
+            const SizedBox(height: 6),
             Text(
-              strings.knownCostCoverage(
-                value.knownIntakes,
-                value.eligibleIntakes,
-              ),
+              strings.unknownCostDescription(value.unknownIntakes),
+              style: TextStyle(color: color.error),
             ),
-            if (!value.completeCoverage) ...[
-              const SizedBox(height: 6),
-              Text(
-                strings.unknownCostDescription(value.unknownIntakes),
-                style: TextStyle(color: color.error),
-              ),
-            ],
-            if (value.daily.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Semantics(
-                label: strings.dailyKnownCostsSemantic(
-                  value.daily.map((item) => (item.day, item.knownEur)),
-                ),
-                child: SizedBox(
-                  height: 52,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      for (final item in value.daily)
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 1),
-                            child: Tooltip(
-                              message: strings.dailyKnownCostTooltip(
-                                item.day,
-                                item.knownEur,
-                              ),
-                              child: Container(
-                                height: maximum == 0
-                                    ? 0
-                                    : 48 * item.knownEur / maximum,
-                                color: color.primary,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
           ],
-        ),
+          if (value.daily.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            DailyValueChart(
+              points: [
+                for (final item in value.daily)
+                  (day: item.day, value: item.knownEur),
+              ],
+              dayLabel: strings.formatShortDate,
+              valueLabel: strings.formatEur,
+              semanticLabel: strings.dailyKnownCostsSemantic(
+                value.daily.map((item) => (item.day, item.knownEur)),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1410,53 +1510,223 @@ class _TrackingScreenState extends State<TrackingScreen> {
     );
     if (confirmed) await controller.deleteIntake(intake);
   }
+}
 
-  Future<void> _chooseManualIntake(
-    BuildContext context,
-    AppController controller,
-  ) async {
-    final product = await showModalBottomSheet<Supplement>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            ListTile(
-              title: Text(AppLocalizations.of(context).chooseSupplement),
-            ),
-            for (final item in controller.supplements.where(
-              (value) => value.active,
-            ))
-              ListTile(
-                leading: const Icon(Icons.medication_outlined),
-                title: Text(item.name),
-                subtitle: item.brand.isEmpty ? null : Text(item.brand),
-                onTap: () => Navigator.pop(context, item),
+/// One product's week: a dose count per weekday and part of the day.
+class _WeeklyPlanCard extends StatelessWidget {
+  const _WeeklyPlanCard({
+    required this.product,
+    required this.schedules,
+    required this.onEditSchedule,
+    required this.colorMode,
+  });
+
+  static const _weekdays = [
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday',
+  ];
+
+  final Supplement product;
+  final List<SupplementSchedule> schedules;
+  final ValueChanged<SupplementSchedule> onEditSchedule;
+  final AppColorMode colorMode;
+
+  @override
+  Widget build(BuildContext context) {
+    const insights = SupplementInsights();
+    final strings = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
+    final accent = seriesColorFor(product.name, colorMode: colorMode);
+
+    // Sum the dose per weekday and block, and remember one schedule per cell so
+    // tapping a filled cell opens the plan that produced it.
+    final totals = <(DosePeriod, int), double>{};
+    final owners = <(DosePeriod, int), SupplementSchedule>{};
+    final units = <String>{};
+    for (final schedule in schedules) {
+      final period =
+          insights.periodOfSlot(schedule.timeOfDay) ??
+          insights.periodOfHour(
+            int.tryParse(schedule.timeOfDay.split(':').first.trim()) ?? 12,
+          );
+      units.add(schedule.unit.trim());
+      for (final weekday in schedule.weekdays) {
+        final index = _weekdays.indexOf(weekday);
+        if (index < 0) continue;
+        final cell = (period, index);
+        totals[cell] = (totals[cell] ?? 0) + schedule.dose;
+        owners[cell] ??= schedule;
+      }
+    }
+    final blocks = DosePeriod.values
+        .where((period) => totals.keys.any((cell) => cell.$1 == period))
+        .toList();
+    if (blocks.isEmpty) return const SizedBox.shrink();
+
+    // A reference Monday, used only to render localized weekday initials.
+    final today = DateTime.now();
+    final monday = DateTime(
+      today.year,
+      today.month,
+      today.day - today.weekday + 1,
+    );
+
+    return SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
               ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  product.name,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Text(
+                units.length == 1
+                    ? units.first
+                    : strings.pick('mixed', 'gemischt'),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const SizedBox(width: 64),
+              for (var index = 0; index < 7; index++)
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      strings
+                          .formatTrackingWeekday(
+                            monday.add(Duration(days: index)),
+                          )
+                          .substring(0, 2)
+                          .toUpperCase(),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          for (final period in blocks) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                SizedBox(
+                  width: 64,
+                  child: Text(
+                    periodLabel(strings, period),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ),
+                for (var index = 0; index < 7; index++)
+                  Expanded(
+                    child: _PlanCell(
+                      dose: totals[(period, index)],
+                      accent: accent,
+                      label: totals[(period, index)] == null
+                          ? null
+                          : strings.formatNumber(totals[(period, index)]!),
+                      semanticLabel:
+                          '${product.name}, '
+                          '${periodLabel(strings, period)}, '
+                          '${strings.formatTrackingWeekday(monday.add(Duration(days: index)))}: '
+                          '${totals[(period, index)] == null ? '—' : strings.formatNumber(totals[(period, index)]!)}',
+                      onTap: owners[(period, index)] == null
+                          ? null
+                          : () => onEditSchedule(owners[(period, index)]!),
+                    ),
+                  ),
+              ],
+            ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanCell extends StatelessWidget {
+  const _PlanCell({
+    required this.dose,
+    required this.accent,
+    required this.label,
+    required this.semanticLabel,
+    required this.onTap,
+  });
+
+  final double? dose;
+  final Color accent;
+  final String? label;
+  final String semanticLabel;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final filled = dose != null && dose! > 0;
+    return Semantics(
+      label: semanticLabel,
+      button: onTap != null,
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+        child: Material(
+          color: filled ? accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Ink(
+              height: 34,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: filled
+                    ? null
+                    : Border.all(color: colors.outlineVariant),
+              ),
+              child: Center(
+                child: filled
+                    ? Text(
+                        label!,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          // Fixed white keeps the number readable on every
+                          // series colour, in light and dark alike.
+                          color: Colors.white,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
+          ),
         ),
       ),
     );
-    if (product != null && context.mounted) {
-      final now = DateTime.now();
-      await showLogIntakeDialog(
-        context,
-        controller,
-        product,
-        initialTakenAt: _sameDay(_selectedDay, now)
-            ? now
-            : DateTime(
-                _selectedDay.year,
-                _selectedDay.month,
-                _selectedDay.day,
-                now.hour,
-                now.minute,
-              ),
-      );
-    }
   }
-
-  bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
 }

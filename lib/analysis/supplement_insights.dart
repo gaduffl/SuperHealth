@@ -162,6 +162,34 @@ class DailyCost {
   final double knownEur;
 }
 
+/// One chartable line: a named quantity summed into Monday-anchored weeks.
+///
+/// Weekly buckets are used rather than raw days because supplement schedules
+/// are weekly, so a daily series is dominated by the weekday pattern instead of
+/// the trend a person is trying to read.
+class ExposureSeries {
+  const ExposureSeries({
+    required this.key,
+    required this.name,
+    required this.unit,
+    required this.weeklyTotals,
+  });
+
+  /// A stable identity for pinning, independent of the display name.
+  final String key;
+  final String name;
+  final String unit;
+
+  /// Week start (local Monday) to the total recorded in that week.
+  final Map<DateTime, double> weeklyTotals;
+
+  /// The label shown in legends, which has to carry the unit because two
+  /// series with the same name but different units are not comparable.
+  String get label => unit.isEmpty ? name : '$name ($unit)';
+
+  double get total => weeklyTotals.values.fold(0, (sum, item) => sum + item);
+}
+
 class InsightDateRange {
   const InsightDateRange({required this.from, required this.through});
 
@@ -191,6 +219,30 @@ class IntakeCostInsight {
   String get coverageLabel => eligibleIntakes == 0
       ? 'No non-skipped intakes'
       : '$knownIntakes of $eligibleIntakes intakes have known compatible cost';
+}
+
+/// How much of a product to buy to cover a planning horizon.
+class PurchaseSuggestion {
+  const PurchaseSuggestion({
+    required this.supplement,
+    required this.requiredUnits,
+    required this.unitsOnHand,
+    required this.missingUnits,
+    required this.containersToBuy,
+    required this.estimatedCostEur,
+  });
+
+  final Supplement supplement;
+  final double requiredUnits;
+  final double unitsOnHand;
+  final double missingUnits;
+
+  /// `null` when the package size is unknown, so a guess is never presented as
+  /// a concrete number of containers.
+  final int? containersToBuy;
+  final double? estimatedCostEur;
+
+  bool get covered => missingUnits <= 0;
 }
 
 class SupplementInsights {
@@ -617,6 +669,146 @@ class SupplementInsights {
     return result;
   }
 
+  /// The Monday-anchored weeks covered by a range, oldest first.
+  List<DateTime> weeksIn({required DateTime from, required DateTime through}) {
+    final result = <DateTime>[];
+    var week = _weekStart(from);
+    final last = _weekStart(through);
+    while (!week.isAfter(last)) {
+      result.add(week);
+      week = DateTime(week.year, week.month, week.day + 7);
+    }
+    return result;
+  }
+
+  /// Weekly totals per supplement and reported unit, for the intake chart.
+  List<ExposureSeries> weeklySupplementSeries({
+    required List<SupplementIntake> intakes,
+    required List<Supplement> supplements,
+    required DateTime from,
+    required DateTime through,
+  }) {
+    final names = {
+      for (final supplement in supplements) supplement.id: supplement.name,
+    };
+    final totals = <String, Map<DateTime, double>>{};
+    final display = <String, (String, String)>{};
+    for (final intake in _actualIntakesInRange(intakes, from, through)) {
+      final unit = intake.unit.trim();
+      final key = '${intake.supplementId}|${unit.toLowerCase()}';
+      final week = _weekStart(intake.takenAt);
+      final bucket = totals.putIfAbsent(key, () => <DateTime, double>{});
+      bucket[week] = (bucket[week] ?? 0) + intake.dose;
+      display[key] = (names[intake.supplementId] ?? 'Deleted supplement', unit);
+    }
+    return _sortedSeries(totals, display);
+  }
+
+  /// Weekly totals per ingredient and unit, for the component chart.
+  List<ExposureSeries> weeklyIngredientSeries({
+    required List<SupplementIntake> intakes,
+    required DateTime from,
+    required DateTime through,
+  }) {
+    final totals = <String, Map<DateTime, double>>{};
+    final display = <String, (String, String)>{};
+    for (final intake in _actualIntakesInRange(intakes, from, through)) {
+      if (!intake.dose.isFinite) continue;
+      final week = _weekStart(intake.takenAt);
+      for (final ingredient in intake.ingredientSnapshot) {
+        final name = ingredient['name']?.toString().trim() ?? '';
+        final unit = ingredient['unit']?.toString().trim() ?? '';
+        final amount = _asDouble(ingredient['amount']);
+        if (name.isEmpty || amount == null) continue;
+        final contribution = amount * intake.dose;
+        if (!contribution.isFinite) continue;
+        final key = '${name.toLowerCase()}|${unit.toLowerCase()}';
+        final bucket = totals.putIfAbsent(key, () => <DateTime, double>{});
+        final next = (bucket[week] ?? 0) + contribution;
+        if (!next.isFinite) continue;
+        bucket[week] = next;
+        display[key] = (name, unit);
+      }
+    }
+    return _sortedSeries(totals, display);
+  }
+
+  List<ExposureSeries> _sortedSeries(
+    Map<String, Map<DateTime, double>> totals,
+    Map<String, (String, String)> display,
+  ) {
+    final result = [
+      for (final entry in totals.entries)
+        ExposureSeries(
+          key: entry.key,
+          name: display[entry.key]!.$1,
+          unit: display[entry.key]!.$2,
+          weeklyTotals: Map.unmodifiable(entry.value),
+        ),
+    ];
+    result.sort((a, b) {
+      final amount = b.total.compareTo(a.total);
+      if (amount != 0) return amount;
+      final name = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      return name != 0 ? name : a.unit.compareTo(b.unit);
+    });
+    return result;
+  }
+
+  /// How many containers of each product to buy to cover [months] ahead.
+  ///
+  /// Ports Supplement Manager's shopping list: projected consumption minus what
+  /// is on hand, rounded up to whole packages.
+  List<PurchaseSuggestion> purchasePlan({
+    required List<Supplement> supplements,
+    required List<SupplementSchedule> householdSchedules,
+    required Map<String, double> stockLevels,
+    required int months,
+  }) {
+    final result = <PurchaseSuggestion>[];
+    for (final supplement in supplements.where(
+      (item) => !item.deleted && item.active,
+    )) {
+      var weeklyUnits = 0.0;
+      for (final schedule in householdSchedules.where(
+        (item) => item.supplementId == supplement.id && item.active,
+      )) {
+        if (!_sameStockUnit(schedule.unit, supplement.stockUnit)) continue;
+        weeklyUnits += schedule.dose * schedule.weekdays.length;
+      }
+      if (weeklyUnits <= 0) continue;
+      // 52 weeks over 12 months, so a month is not silently treated as four
+      // weeks and the plan does not come up short over a year.
+      final requiredUnits = weeklyUnits * 52 / 12 * months;
+      final onHand = stockLevels[supplement.id] ?? 0;
+      final deficit = (requiredUnits - onHand).clamp(0, double.infinity);
+      final packageUnits = supplement.unitsPerContainer;
+      final containers = packageUnits == null || packageUnits <= 0
+          ? null
+          : (deficit / packageUnits).ceil();
+      result.add(
+        PurchaseSuggestion(
+          supplement: supplement,
+          requiredUnits: requiredUnits.toDouble(),
+          unitsOnHand: onHand,
+          missingUnits: deficit.toDouble(),
+          containersToBuy: containers,
+          estimatedCostEur: containers == null || supplement.priceEur == null
+              ? null
+              : containers * supplement.priceEur!,
+        ),
+      );
+    }
+    result.sort((a, b) {
+      final missing = b.missingUnits.compareTo(a.missingUnits);
+      if (missing != 0) return missing;
+      return a.supplement.name.toLowerCase().compareTo(
+        b.supplement.name.toLowerCase(),
+      );
+    });
+    return result;
+  }
+
   IntakeCostInsight actualIntakeCost({
     required List<SupplementIntake> intakes,
     required List<Supplement> supplements,
@@ -817,6 +1009,10 @@ class SupplementInsights {
 
   DateTime _calendarDay(DateTime value) =>
       DateTime(value.year, value.month, value.day);
+
+  /// The local Monday that starts the week containing [value].
+  DateTime _weekStart(DateTime value) =>
+      DateTime(value.year, value.month, value.day - value.weekday + 1);
 
   double? _asDouble(Object? value) {
     final parsed = value is num

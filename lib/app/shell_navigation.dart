@@ -38,8 +38,11 @@ enum SectionFilter {
 }
 
 /// Which shell tab owns a section.
+///
+/// The day's doses live on the Today screen itself, so that section stays on
+/// tab 0 rather than duplicating the workflow inside the supplements screen.
 int tabIndexForSection(AppSection section) => switch (section) {
-  AppSection.todayDoses ||
+  AppSection.todayDoses => 0,
   AppSection.catalog ||
   AppSection.weeklyPlan ||
   AppSection.stock ||
@@ -54,11 +57,10 @@ int tabIndexForSection(AppSection section) => switch (section) {
 
 /// Which tab inside the supplements screen owns a section.
 int? supplementsTabForSection(AppSection section) => switch (section) {
-  AppSection.todayDoses => 0,
-  AppSection.catalog => 1,
-  AppSection.weeklyPlan => 2,
-  AppSection.stock => 3,
-  AppSection.intakeHistory => 4,
+  AppSection.catalog => 0,
+  AppSection.weeklyPlan => 1,
+  AppSection.stock => 2,
+  AppSection.intakeHistory => 3,
   _ => null,
 };
 
