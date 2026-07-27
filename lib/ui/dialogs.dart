@@ -834,7 +834,8 @@ Future<void> showLogIntakeDialog(
 }) async {
   final dose = TextEditingController(text: existing?.dose.toString() ?? '1');
   final unit = TextEditingController(
-    text: existing?.unit ??
+    text:
+        existing?.unit ??
         (supplement.stockUnit.trim().isNotEmpty
             ? supplement.stockUnit
             : (supplement.form.trim().isNotEmpty ? supplement.form : 'unit')),
@@ -961,7 +962,11 @@ Future<void> showLogIntakeDialog(
             child: Text(
               existing == null
                   ? _dialogText(context, 'Log intake', 'Einnahme erfassen')
-                  : _dialogText(context, 'Save changes', 'Änderungen speichern'),
+                  : _dialogText(
+                      context,
+                      'Save changes',
+                      'Änderungen speichern',
+                    ),
             ),
           ),
         ],
