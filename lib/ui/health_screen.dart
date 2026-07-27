@@ -1,52 +1,82 @@
-import 'dart:math' as math;
-
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
+import 'charts.dart';
+import 'check_in_dialog.dart';
 import 'common.dart';
+import 'design.dart';
 import 'dialogs.dart';
 import 'labs_screen.dart';
 
-class HealthScreen extends StatelessWidget {
+class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
+
+  @override
+  State<HealthScreen> createState() => _HealthScreenState();
+}
+
+class _HealthScreenState extends State<HealthScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs = TabController(length: 3, vsync: this);
+  int? _handledRequestToken;
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  /// Switches to the tab a Today tile asked for. The biomarker filter itself is
+  /// applied by [LabsScreen], which owns the catalog's filter state.
+  void _applyRequest(ShellNavigation navigation) {
+    final request = navigation.request;
+    if (request == null || request.token == _handledRequestToken) return;
+    final tab = healthTabForSection(request.section);
+    if (tab == null) return;
+    _handledRequestToken = request.token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _tabs.index = tab;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        children: [
-          Material(
-            color: Colors.transparent,
-            child: TabBar(
-              tabs: [
-                Tab(
-                  icon: const Icon(Icons.monitor_heart_outlined),
-                  text: strings.journal,
-                ),
-                Tab(
-                  icon: const Icon(Icons.science_outlined),
-                  text: strings.biomarkers,
-                ),
-                Tab(
-                  icon: const Icon(Icons.assignment_ind_outlined),
-                  text: strings.context,
-                ),
-              ],
-            ),
+    _applyRequest(context.watch<ShellNavigation>());
+    return Column(
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: TabBar(
+            controller: _tabs,
+            tabs: [
+              Tab(
+                icon: const Icon(Icons.monitor_heart_outlined),
+                text: strings.journal,
+              ),
+              Tab(
+                icon: const Icon(Icons.science_outlined),
+                text: strings.biomarkers,
+              ),
+              Tab(
+                icon: const Icon(Icons.assignment_ind_outlined),
+                text: strings.context,
+              ),
+            ],
           ),
-          const Expanded(
-            child: TabBarView(
-              children: [_JournalPane(), LabsScreen(), _ContextPane()],
-            ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabs,
+            children: const [_JournalPane(), LabsScreen(), _ContextPane()],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -102,158 +132,244 @@ class _JournalPaneState extends State<_JournalPane> {
                     .toList()
           ..sort((a, b) => a.observedAt.compareTo(b.observedAt));
     return PageBody(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
-        children: [
-          SectionHeader(
-            title: strings.quickCheckIn,
-            subtitle: strings.quickCheckInDescription,
-            action: IconButton.filled(
-              tooltip: strings.trackHealthEvent,
-              onPressed: () => showAddEventDialog(context, controller),
-              icon: const Icon(Icons.add),
-            ),
-          ),
-          if (controller.eventDefinitions.isNotEmpty)
-            Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: [
-                for (final definition in controller.eventDefinitions.take(16))
-                  ActionChip(
-                    avatar: Icon(
-                      definition.kind == EventKind.symptom
-                          ? Icons.monitor_heart_outlined
-                          : Icons.sell_outlined,
-                      size: 18,
-                    ),
-                    label: Text(definition.name),
-                    onPressed: () => showAddEventDialog(
-                      context,
-                      controller,
-                      initialKind: definition.kind,
-                    ),
-                  ),
-              ],
-            )
-          else
-            Card(
-              child: ListTile(
-                leading: Icon(Icons.lightbulb_outline),
-                title: Text(strings.reusableCheckIns),
-                subtitle: Text(strings.reusableCheckInsExamples),
-              ),
-            ),
-          if (trendEvents.isNotEmpty) ...[
+      child: RefreshIndicator(
+        onRefresh: controller.refreshActiveData,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
+          children: [
             SectionHeader(
-              title: strings.symptomTrend,
-              action: DropdownButton<String>(
-                value: selectedTrend,
-                items: [
-                  for (final name in trendNames)
-                    DropdownMenuItem(value: name, child: Text(name)),
-                ],
-                onChanged: (value) => setState(() => _trendName = value),
+              title: strings.quickCheckIn,
+              subtitle: strings.quickCheckInDescription,
+              action: IconButton.filled(
+                tooltip: strings.trackHealthEvent,
+                onPressed: () => showAddEventDialog(context, controller),
+                icon: const Icon(Icons.add),
               ),
             ),
-            _TrendCard(events: trendEvents),
-          ],
-          SectionHeader(
-            title: strings.journal,
-            subtitle: strings.journalEntries(filtered.length),
-            action: PopupMenuButton<int>(
-              tooltip: strings.changeDateRange,
-              initialValue: _rangeDays,
-              onSelected: (value) => setState(() => _rangeDays = value),
-              itemBuilder: (_) => [
-                PopupMenuItem(value: 30, child: Text(strings.lastDays(30))),
-                PopupMenuItem(value: 90, child: Text(strings.lastDays(90))),
-                PopupMenuItem(value: 365, child: Text(strings.lastYear)),
-                PopupMenuItem(value: 36500, child: Text(strings.allHistory)),
-              ],
-              icon: const Icon(Icons.date_range_outlined),
-            ),
-          ),
-          SegmentedButton<String>(
-            segments: [
-              ButtonSegment(value: 'all', label: Text(strings.all)),
-              ButtonSegment(value: 'symptom', label: Text(strings.symptoms)),
-              ButtonSegment(value: 'tag', label: Text(strings.tags)),
-            ],
-            selected: {_kind},
-            onSelectionChanged: (value) => setState(() => _kind = value.first),
-          ),
-          const SizedBox(height: 10),
-          if (filtered.isEmpty)
-            EmptyState(
-              icon: Icons.monitor_heart_outlined,
-              title: strings.noJournalEntries,
-              message: strings.noJournalEntriesDescription,
-            )
-          else
-            Card(
-              clipBehavior: Clip.antiAlias,
+            SurfaceCard(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final event in filtered)
-                    _eventTile(context, controller, event),
-                ],
-              ),
-            ),
-          SectionHeader(
-            title: strings.exploratoryCorrelations,
-            subtitle: strings.correlationsDescription,
-            action: TextButton.icon(
-              onPressed: controller.busy
-                  ? null
-                  : () async {
-                      try {
-                        await controller.analyzeCorrelations();
-                      } on Object catch (error) {
-                        if (context.mounted) await showAppError(context, error);
-                      }
-                    },
-              icon: const Icon(Icons.analytics_outlined),
-              label: Text(strings.analyze),
-            ),
-          ),
-          if (controller.correlations.isEmpty)
-            Card(
-              child: ListTile(
-                leading: Icon(Icons.info_outline),
-                title: Text(strings.minimumCorrelationDays),
-                subtitle: Text(strings.minimumCorrelationDaysDescription),
-              ),
-            )
-          else
-            Card(
-              child: Column(
-                children: [
-                  for (final result in controller.correlations.take(20))
-                    ListTile(
-                      isThreeLine: true,
-                      title: Text('${result.exposure} → ${result.outcome}'),
-                      subtitle: Text(
-                        strings.correlationSummary(
-                          lagDays: result.lagDays,
-                          sampleSize: result.sampleSize,
-                          strength: result.strength,
-                          spearman: result.spearmanCoefficient,
-                          adjustedQ: result.adjustedPValue,
-                          statisticallySignificant:
-                              result.isStatisticallySignificant,
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.self_improvement_outlined,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          strings.pick('Daily check-in', 'Täglicher Check-in'),
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
-                      trailing: Text(strings.pearson(result.coefficient)),
+                      FilledButton.tonalIcon(
+                        onPressed: () => showDailyCheckInDialog(
+                          context,
+                          controller,
+                          day: DateTime.now(),
+                        ),
+                        icon: const Icon(Icons.edit_note_outlined),
+                        label: Text(strings.pick('Open', 'Öffnen')),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    strings.pick(
+                      'Score every tracked symptom for today in one pass.',
+                      'Bewerte alle erfassten Symptome für heute auf einmal.',
                     ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                    child: Text(strings.correlationCaveat),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
             ),
-        ],
+            const SizedBox(height: 8),
+            if (controller.eventDefinitions.isNotEmpty)
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: [
+                  for (final definition in controller.eventDefinitions.take(16))
+                    ActionChip(
+                      avatar: Icon(
+                        definition.kind == EventKind.symptom
+                            ? Icons.monitor_heart_outlined
+                            : Icons.sell_outlined,
+                        size: 18,
+                      ),
+                      label: Text(definition.name),
+                      onPressed: () => showAddEventDialog(
+                        context,
+                        controller,
+                        initialKind: definition.kind,
+                      ),
+                    ),
+                ],
+              )
+            else
+              Card(
+                child: ListTile(
+                  leading: Icon(Icons.lightbulb_outline),
+                  title: Text(strings.reusableCheckIns),
+                  subtitle: Text(strings.reusableCheckInsExamples),
+                ),
+              ),
+            if (trendEvents.isNotEmpty)
+              ChartCard(
+                title: strings.symptomTrend,
+                subtitle: strings.lastDays(_rangeDays),
+                trailing: DropdownButton<String>(
+                  value: selectedTrend,
+                  underline: const SizedBox.shrink(),
+                  items: [
+                    for (final name in trendNames)
+                      DropdownMenuItem(value: name, child: Text(name)),
+                  ],
+                  onChanged: (value) => setState(() => _trendName = value),
+                ),
+                child: TrendChart(
+                  points: [
+                    for (final event in trendEvents)
+                      (
+                        day: event.observedAt,
+                        value:
+                            event.score?.toDouble() ?? event.numericValue ?? 0,
+                      ),
+                  ],
+                  dayLabel: strings.formatShortDate,
+                  // Scores are on a fixed 0-10 scale, so pinning the axis keeps
+                  // a flat week from looking like dramatic swings.
+                  minY: trendEvents.every((event) => event.score != null)
+                      ? 0
+                      : null,
+                  maxY: trendEvents.every((event) => event.score != null)
+                      ? 10
+                      : null,
+                  semanticLabel: strings.trendSemantics(
+                    trendEvents.first.name,
+                    trendEvents.length,
+                    trendEvents
+                        .map(
+                          (event) =>
+                              event.score?.toDouble() ??
+                              event.numericValue ??
+                              0,
+                        )
+                        .reduce((a, b) => a < b ? a : b),
+                    trendEvents
+                        .map(
+                          (event) =>
+                              event.score?.toDouble() ??
+                              event.numericValue ??
+                              0,
+                        )
+                        .reduce((a, b) => a > b ? a : b),
+                  ),
+                ),
+              ),
+            SectionHeader(
+              title: strings.journal,
+              subtitle: strings.journalEntries(filtered.length),
+              action: PopupMenuButton<int>(
+                tooltip: strings.changeDateRange,
+                initialValue: _rangeDays,
+                onSelected: (value) => setState(() => _rangeDays = value),
+                itemBuilder: (_) => [
+                  PopupMenuItem(value: 30, child: Text(strings.lastDays(30))),
+                  PopupMenuItem(value: 90, child: Text(strings.lastDays(90))),
+                  PopupMenuItem(value: 365, child: Text(strings.lastYear)),
+                  PopupMenuItem(value: 36500, child: Text(strings.allHistory)),
+                ],
+                icon: const Icon(Icons.date_range_outlined),
+              ),
+            ),
+            SegmentedButton<String>(
+              segments: [
+                ButtonSegment(value: 'all', label: Text(strings.all)),
+                ButtonSegment(value: 'symptom', label: Text(strings.symptoms)),
+                ButtonSegment(value: 'tag', label: Text(strings.tags)),
+              ],
+              selected: {_kind},
+              onSelectionChanged: (value) =>
+                  setState(() => _kind = value.first),
+            ),
+            const SizedBox(height: 10),
+            if (filtered.isEmpty)
+              EmptyState(
+                icon: Icons.monitor_heart_outlined,
+                title: strings.noJournalEntries,
+                message: strings.noJournalEntriesDescription,
+              )
+            else
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    for (final event in filtered)
+                      _eventTile(context, controller, event),
+                  ],
+                ),
+              ),
+            SectionHeader(
+              title: strings.exploratoryCorrelations,
+              subtitle: strings.correlationsDescription,
+              action: TextButton.icon(
+                onPressed: controller.busy
+                    ? null
+                    : () async {
+                        try {
+                          await controller.analyzeCorrelations();
+                        } on Object catch (error) {
+                          if (context.mounted)
+                            await showAppError(context, error);
+                        }
+                      },
+                icon: const Icon(Icons.analytics_outlined),
+                label: Text(strings.analyze),
+              ),
+            ),
+            if (controller.correlations.isEmpty)
+              Card(
+                child: ListTile(
+                  leading: Icon(Icons.info_outline),
+                  title: Text(strings.minimumCorrelationDays),
+                  subtitle: Text(strings.minimumCorrelationDaysDescription),
+                ),
+              )
+            else
+              Card(
+                child: Column(
+                  children: [
+                    for (final result in controller.correlations.take(20))
+                      ListTile(
+                        isThreeLine: true,
+                        title: Text('${result.exposure} → ${result.outcome}'),
+                        subtitle: Text(
+                          strings.correlationSummary(
+                            lagDays: result.lagDays,
+                            sampleSize: result.sampleSize,
+                            strength: result.strength,
+                            spearman: result.spearmanCoefficient,
+                            adjustedQ: result.adjustedPValue,
+                            statisticallySignificant:
+                                result.isStatisticallySignificant,
+                          ),
+                        ),
+                        trailing: Text(strings.pearson(result.coefficient)),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                      child: Text(strings.correlationCaveat),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -320,94 +436,6 @@ class _JournalPaneState extends State<_JournalPane> {
       const Divider(height: 1),
     ],
   );
-}
-
-class _TrendCard extends StatelessWidget {
-  const _TrendCard({required this.events});
-
-  final List<HealthEvent> events;
-
-  @override
-  Widget build(BuildContext context) {
-    final values = [
-      for (final event in events)
-        event.score?.toDouble() ?? event.numericValue ?? 0,
-    ];
-    final minValue = values.reduce(math.min);
-    final maxValue = values.reduce(math.max);
-    return Semantics(
-      label: AppLocalizations.of(
-        context,
-      ).trendSemantics(events.first.name, events.length, minValue, maxValue),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            height: 150,
-            width: double.infinity,
-            child: CustomPaint(
-              painter: _LineChartPainter(
-                values: values,
-                lineColor: Theme.of(context).colorScheme.primary,
-                gridColor: Theme.of(context).colorScheme.outlineVariant,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LineChartPainter extends CustomPainter {
-  const _LineChartPainter({
-    required this.values,
-    required this.lineColor,
-    required this.gridColor,
-  });
-
-  final List<double> values;
-  final Color lineColor;
-  final Color gridColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final grid = Paint()
-      ..color = gridColor
-      ..strokeWidth = 1;
-    for (var row = 0; row <= 4; row++) {
-      final y = size.height * row / 4;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
-    if (values.isEmpty) return;
-    final low = values.reduce(math.min);
-    final high = values.reduce(math.max);
-    final spread = high == low ? 1.0 : high - low;
-    final line = Paint()
-      ..color = lineColor
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    final path = Path();
-    for (var index = 0; index < values.length; index++) {
-      final x = values.length == 1
-          ? size.width / 2
-          : size.width * index / (values.length - 1);
-      final y = size.height - ((values[index] - low) / spread * size.height);
-      if (index == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(path, line);
-  }
-
-  @override
-  bool shouldRepaint(_LineChartPainter oldDelegate) =>
-      oldDelegate.values != values ||
-      oldDelegate.lineColor != lineColor ||
-      oldDelegate.gridColor != gridColor;
 }
 
 class _ContextPane extends StatelessWidget {

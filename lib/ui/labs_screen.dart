@@ -10,6 +10,7 @@ import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../app/shell_navigation.dart';
 import '../biomarkers/biomarker_status_service.dart';
 import '../domain/entities.dart';
 import '../export/lab_plan_export_service.dart';
@@ -21,6 +22,25 @@ import 'temporary_biomarker_resolution_screen.dart';
 
 String _labsText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
+
+/// Translates a Today tile's deep link into the catalog's status filter.
+///
+/// "Without a usable range" covers both an unusable range and a marker that was
+/// never measured; the catalog can only show one at a time, so it opens on the
+/// unusable ones and the other stays a click away in the dropdown.
+({int token, String status})? _statusRequest(ShellNavigation navigation) {
+  final request = navigation.request;
+  if (request == null) return null;
+  final status = switch (request.filter) {
+    SectionFilter.dueBiomarkers => 'Due',
+    SectionFilter.belowTarget => 'Below',
+    SectionFilter.aboveTarget => 'Above',
+    SectionFilter.withoutUsableRange => 'Unavailable',
+    _ => null,
+  };
+  if (status == null) return null;
+  return (token: request.token, status: status);
+}
 
 Uri? _safeWebUri(String value) {
   final uri = Uri.tryParse(value);
@@ -395,6 +415,7 @@ class LabsScreen extends StatelessWidget {
               latestByBiomarker: latestByBiomarker,
               profile: activeProfile,
               now: now,
+              statusRequest: _statusRequest(context.watch<ShellNavigation>()),
             ),
         ],
       ),
@@ -1637,12 +1658,17 @@ class _BiomarkerCatalog extends StatefulWidget {
     required this.latestByBiomarker,
     required this.profile,
     required this.now,
+    this.statusRequest,
   });
 
   final AppController controller;
   final Map<String, Measurement> latestByBiomarker;
   final Profile profile;
   final DateTime now;
+
+  /// A status filter asked for by a Today tile, with the request's token so a
+  /// repeated tap on the same tile is applied again after a manual change.
+  final ({int token, String status})? statusRequest;
 
   @override
   State<_BiomarkerCatalog> createState() => _BiomarkerCatalogState();
@@ -1652,6 +1678,7 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
   final _search = TextEditingController();
   String _category = 'All';
   String _status = 'All';
+  int? _handledRequestToken;
 
   @override
   void dispose() {
@@ -1659,8 +1686,19 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
     super.dispose();
   }
 
+  void _applyStatusRequest() {
+    final request = widget.statusRequest;
+    if (request == null || request.token == _handledRequestToken) return;
+    _handledRequestToken = request.token;
+    if (request.status == _status) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _status = request.status);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    _applyStatusRequest();
     final statusService = BiomarkerStatusService();
     final statusByBiomarker = {
       for (final biomarker in widget.controller.biomarkers)
@@ -1688,6 +1726,9 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
       final matchesCategory =
           _category == 'All' || biomarker.category == _category;
       final matchesStatus = switch (_status) {
+        'Due' => widget.controller.dueBiomarkers.any(
+          (item) => item.biomarker.id == biomarker.id,
+        ),
         'Below' => statusByBiomarker[biomarker.id]!.isBelow,
         'Above' => statusByBiomarker[biomarker.id]!.isAbove,
         'In target/optimal' =>
@@ -1760,6 +1801,10 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
                     child: Text(
                       _labsText(context, 'All statuses', 'Alle Status'),
                     ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Due',
+                    child: Text(_labsText(context, 'Due', 'Fällig')),
                   ),
                   DropdownMenuItem(
                     value: 'Below',
