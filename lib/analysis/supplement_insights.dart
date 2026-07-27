@@ -855,9 +855,21 @@ class SupplementInsights {
   double monthlyCostEstimate({
     required List<Supplement> supplements,
     required List<SupplementSchedule> householdSchedules,
+  }) => monthlyCostByProduct(
+    supplements: supplements,
+    householdSchedules: householdSchedules,
+  ).fold(0, (total, item) => total + item.eur);
+
+  /// The planned monthly cost broken down per product, largest first.
+  ///
+  /// Products with no price, no package size, or no compatible schedule are
+  /// omitted rather than counted as free.
+  List<({Supplement supplement, double eur})> monthlyCostByProduct({
+    required List<Supplement> supplements,
+    required List<SupplementSchedule> householdSchedules,
   }) {
-    var total = 0.0;
-    for (final supplement in supplements) {
+    final result = <({Supplement supplement, double eur})>[];
+    for (final supplement in supplements.where((item) => !item.deleted)) {
       final price = supplement.priceEur;
       final packageUnits = supplement.unitsPerContainer;
       if (price == null || packageUnits == null || packageUnits <= 0) continue;
@@ -868,9 +880,61 @@ class SupplementInsights {
         if (!_sameStockUnit(schedule.unit, supplement.stockUnit)) continue;
         weeklyUnits += schedule.dose * schedule.weekdays.length;
       }
-      total += weeklyUnits * 52 / 12 * price / packageUnits;
+      if (weeklyUnits <= 0) continue;
+      result.add((
+        supplement: supplement,
+        eur: weeklyUnits * 52 / 12 * price / packageUnits,
+      ));
     }
-    return total;
+    result.sort((a, b) => b.eur.compareTo(a.eur));
+    return result;
+  }
+
+  /// What an active weekly plan is designed to deliver per component.
+  ///
+  /// This reads the schedule rather than the history, so it answers "what
+  /// should I be getting each week" independently of adherence — the question
+  /// Supplement Manager's intake analysis existed to answer.
+  List<IngredientExposure> plannedWeeklyIngredients({
+    required List<Supplement> supplements,
+    required List<SupplementSchedule> schedules,
+  }) {
+    final catalog = {for (final item in supplements) item.id: item};
+    final totals = <String, double>{};
+    final display = <String, (String, String)>{};
+    for (final schedule in schedules.where(
+      (item) => item.active && !item.deleted,
+    )) {
+      final supplement = catalog[schedule.supplementId];
+      if (supplement == null || supplement.deleted || !supplement.active) {
+        continue;
+      }
+      final weeklyUnits = schedule.dose * schedule.weekdays.length;
+      if (weeklyUnits <= 0 || !weeklyUnits.isFinite) continue;
+      for (final ingredient in supplement.ingredients) {
+        final name = ingredient['name']?.toString().trim() ?? '';
+        final unit = ingredient['unit']?.toString().trim() ?? '';
+        final amount = _asDouble(ingredient['amount']);
+        if (name.isEmpty || amount == null) continue;
+        final contribution = amount * weeklyUnits;
+        if (!contribution.isFinite) continue;
+        final key = '${name.toLowerCase()}|${unit.toLowerCase()}';
+        final next = (totals[key] ?? 0) + contribution;
+        if (!next.isFinite) continue;
+        totals[key] = next;
+        display[key] = (name, unit);
+      }
+    }
+    final result = [
+      for (final entry in totals.entries)
+        IngredientExposure(
+          name: display[entry.key]!.$1,
+          unit: display[entry.key]!.$2,
+          total: entry.value,
+        ),
+    ];
+    result.sort(_compareExposure);
+    return result;
   }
 
   bool _scheduledOn(SupplementSchedule schedule, DateTime day) {

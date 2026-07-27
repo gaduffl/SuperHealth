@@ -153,6 +153,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     icon: const Icon(Icons.monitor_heart_outlined),
                     label: Text(strings.symptom),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: doses.isEmpty && dayIntakes.isEmpty
+                        ? null
+                        : () => _analyzeDay(
+                            context,
+                            controller,
+                            navigation,
+                            doses,
+                            dayIntakes,
+                          ),
+                    icon: const Icon(Icons.auto_awesome),
+                    label: Text(strings.pick('Analyze', 'Analysieren')),
+                  ),
                 ],
               ),
             ),
@@ -321,6 +334,79 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DateTime _timestampFor(ScheduledDoseStatus dose) {
     final now = DateTime.now();
     return _sameDay(dose.dueAt, now) ? now : dose.dueAt;
+  }
+
+  /// Hands the day's supplements and their components to the advisor.
+  ///
+  /// Supplement Manager ran its own one-off analysis call. Routing through the
+  /// advisor instead keeps a single BYOK code path, one place where the health
+  /// context is assembled, and the answer in the conversation history.
+  void _analyzeDay(
+    BuildContext context,
+    AppController controller,
+    ShellNavigation navigation,
+    List<ScheduledDoseStatus> doses,
+    List<SupplementIntake> dayIntakes,
+  ) {
+    final strings = AppLocalizations.of(context);
+    final lines = <String>{};
+    for (final dose in doses) {
+      lines.add(
+        _describe(
+          strings,
+          dose.supplement,
+          dose.schedule.dose,
+          dose.schedule.unit,
+          taken: dose.taken,
+        ),
+      );
+    }
+    for (final intake in dayIntakes.where((item) => !item.skipped)) {
+      final supplement = controller.supplements.firstWhereOrNull(
+        (item) => item.id == intake.supplementId,
+      );
+      if (supplement == null) continue;
+      lines.add(
+        _describe(strings, supplement, intake.dose, intake.unit, taken: true),
+      );
+    }
+    if (lines.isEmpty) return;
+    final question = strings.pick(
+      'Review my supplement intake for ${strings.formatTrackingDate(_selectedDay)}. '
+          'Flag interactions, duplicate active ingredients, and anything above '
+          'a commonly cited upper limit. Plan for the day:\n'
+          '${lines.join('\n')}',
+      'Prüfe meine Supplement-Einnahme für '
+          '${strings.formatTrackingDate(_selectedDay)}. Weise auf '
+          'Wechselwirkungen, doppelte Wirkstoffe und alles über einer üblichen '
+          'Obergrenze hin. Plan für den Tag:\n'
+          '${lines.join('\n')}',
+    );
+    navigation.askAdvisor(question);
+  }
+
+  /// One line per product: dose, status, and the components it contributes.
+  String _describe(
+    AppLocalizations strings,
+    Supplement supplement,
+    double dose,
+    String unit, {
+    required bool taken,
+  }) {
+    final components = [
+      for (final ingredient in supplement.ingredients)
+        [
+          ingredient['name'],
+          ingredient['amount'],
+          ingredient['unit'],
+        ].where((item) => item != null && '$item'.isNotEmpty).join(' '),
+    ].where((item) => item.isNotEmpty);
+    final status = taken
+        ? strings.pick('recorded', 'erfasst')
+        : strings.pick('planned', 'geplant');
+    return '- ${supplement.name} '
+        '${strings.formatNumber(dose)} $unit ($status)'
+        '${components.isEmpty ? '' : ' — ${components.join(', ')}'}';
   }
 
   Future<void> _logManualIntake(

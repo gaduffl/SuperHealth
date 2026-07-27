@@ -324,8 +324,9 @@ class _JournalPaneState extends State<_JournalPane> {
                         try {
                           await controller.analyzeCorrelations();
                         } on Object catch (error) {
-                          if (context.mounted)
+                          if (context.mounted) {
                             await showAppError(context, error);
+                          }
                         }
                       },
                 icon: const Icon(Icons.analytics_outlined),

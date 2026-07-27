@@ -451,6 +451,10 @@ class _TrackingScreenState extends State<TrackingScreen>
           ..sort(
             (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
           );
+    final plannedComponents = _insights.plannedWeeklyIngredients(
+      supplements: controller.supplements,
+      schedules: controller.schedules,
+    );
     return RefreshIndicator(
       onRefresh: controller.refreshActiveData,
       child: ListView(
@@ -497,6 +501,34 @@ class _TrackingScreenState extends State<TrackingScreen>
                 ),
                 colorMode: controller.colorMode,
               ),
+          if (plannedComponents.isNotEmpty) ...[
+            SectionHeader(
+              title: strings.pick(
+                'Planned components per week',
+                'Geplante Komponenten pro Woche',
+              ),
+              subtitle: strings.pick(
+                'What the active plan is designed to deliver, before adherence.',
+                'Was der aktive Plan liefern soll, unabhängig von der Einnahme.',
+              ),
+            ),
+            SurfaceCard(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  for (final item in plannedComponents.take(30))
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.science_outlined),
+                      title: Text(item.name),
+                      trailing: Text(
+                        '${strings.formatNumber(item.total)} ${item.unit}',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -514,9 +546,13 @@ class _TrackingScreenState extends State<TrackingScreen>
     final projections = _onlyLowStock
         ? allProjections.where((item) => item.low).toList()
         : allProjections;
-    final monthlyCost = _insights.monthlyCostEstimate(
+    final costByProduct = _insights.monthlyCostByProduct(
       supplements: controller.supplements,
       householdSchedules: controller.householdSchedules,
+    );
+    final monthlyCost = costByProduct.fold<double>(
+      0,
+      (total, item) => total + item.eur,
     );
     final plan = _insights.purchasePlan(
       supplements: controller.supplements,
@@ -566,6 +602,60 @@ class _TrackingScreenState extends State<TrackingScreen>
               ),
             ],
           ),
+          if (costByProduct.isNotEmpty)
+            ChartCard(
+              title: strings.plannedMonthlyCost,
+              subtitle: strings.pick(
+                'Per product, from package prices and the active plan.',
+                'Pro Produkt, aus Packungspreisen und dem aktiven Plan.',
+              ),
+              child: Column(
+                children: [
+                  for (final item in costByProduct.take(10))
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 110,
+                            child: Text(
+                              item.supplement.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: costByProduct.first.eur <= 0
+                                    ? 0
+                                    : item.eur / costByProduct.first.eur,
+                                minHeight: 10,
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
+                                valueColor: AlwaysStoppedAnimation(
+                                  seriesColorFor(
+                                    item.supplement.name,
+                                    colorMode: controller.colorMode,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            strings.formatEur(item.eur),
+                            style: Theme.of(context).textTheme.labelMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
           SectionHeader(
             title: strings.pick('Shopping list', 'Einkaufsliste'),
             subtitle: strings.pick(

@@ -79,10 +79,15 @@ class SectionRequest {
     required this.section,
     required this.token,
     this.filter,
+    this.prompt,
   });
 
   final AppSection section;
   final SectionFilter? filter;
+
+  /// A question to hand to the advisor, set when a shortcut wants the advisor
+  /// to answer something specific rather than just opening the screen.
+  final String? prompt;
 
   /// Increments on every request so a screen can tell a repeated tap on the
   /// same tile apart from the request it already handled.
@@ -107,15 +112,19 @@ class ShellNavigation extends ChangeNotifier {
 
   /// Opens [section], switching the shell tab and asking the owning screen to
   /// select its own sub-tab and apply [filter].
-  void go(AppSection section, {SectionFilter? filter}) {
+  void go(AppSection section, {SectionFilter? filter, String? prompt}) {
     _tabIndex = tabIndexForSection(section);
     _request = SectionRequest(
       section: section,
       filter: filter,
+      prompt: prompt,
       token: _nextToken++,
     );
     notifyListeners();
   }
+
+  /// Opens the advisor with [question] already asked.
+  void askAdvisor(String question) => go(AppSection.advisor, prompt: question);
 
   /// Marks the current request as handled so it is not replayed on rebuild.
   void completeRequest(int token) {
