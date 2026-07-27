@@ -30,6 +30,7 @@ class LegacyImportPreview {
     required this.warnings,
     required this.duplicates,
     required this.alreadyImported,
+    required this.authoritativeSupplementImport,
     required _LegacyBundle bundle,
   }) : _bundle = bundle;
 
@@ -39,10 +40,12 @@ class LegacyImportPreview {
   final List<String> warnings;
   final List<String> duplicates;
   final bool alreadyImported;
+  final bool authoritativeSupplementImport;
   final _LegacyBundle _bundle;
 
   bool get canImport =>
-      !alreadyImported && counts.values.any((value) => value > 0);
+      (authoritativeSupplementImport || !alreadyImported) &&
+      counts.values.any((value) => value > 0);
 
   Map<String, Object?> toJson() => {
     'source_hash': sourceHash,
@@ -51,6 +54,7 @@ class LegacyImportPreview {
     'warnings': warnings,
     'duplicates': duplicates,
     'already_imported': alreadyImported,
+    'authoritative_supplement_import': authoritativeSupplementImport,
   };
 }
 
@@ -144,6 +148,9 @@ class LegacyImportService {
       _parseFile(bundle, file);
     }
     _finalizeSupplementData(bundle);
+    final authoritativeSupplementImport = bundle.sourceKinds.contains(
+      'Supplement Manager',
+    );
 
     final existingProfiles = await _repository.profiles();
     final existingSupplements = <String, Set<String>>{};
@@ -210,7 +217,8 @@ class LegacyImportService {
       counts: bundle.counts,
       warnings: bundle.warnings,
       duplicates: bundle.duplicates.toSet().toList(),
-      alreadyImported: imported.isNotEmpty,
+      alreadyImported: imported.isNotEmpty && !authoritativeSupplementImport,
+      authoritativeSupplementImport: authoritativeSupplementImport,
       bundle: bundle,
     );
   }
@@ -684,7 +692,7 @@ class LegacyImportService {
                 timeOfDay: period,
               ),
             );
-            grouped.weekdays.add('${dayEntry.key}');
+            grouped.weekdays.addAll(normalizeWeekdays(['${dayEntry.key}']));
           }
         }
       });
@@ -1076,20 +1084,24 @@ class LegacyImportService {
     var auditSequence = 0;
 
     await db.transaction((txn) async {
-      final already = await txn.query(
-        'import_runs',
-        where: 'source_hash = ? AND rolled_back_at IS NULL',
-        whereArgs: [preview.sourceHash],
-        limit: 1,
-      );
-      if (already.isNotEmpty) {
-        throw StateError('Source has already been imported');
+      if (!preview.authoritativeSupplementImport) {
+        final already = await txn.query(
+          'import_runs',
+          where: 'source_hash = ? AND rolled_back_at IS NULL',
+          whereArgs: [preview.sourceHash],
+          limit: 1,
+        );
+        if (already.isNotEmpty) {
+          throw StateError('Source has already been imported');
+        }
       }
 
       await txn.insert('import_runs', {
         'id': importId,
         'source_type': preview.sourceKinds.join(', '),
-        'source_hash': preview.sourceHash,
+        'source_hash': preview.authoritativeSupplementImport
+            ? '${preview.sourceHash}:$importId'
+            : preview.sourceHash,
         'profile_id': bundle.fallbackProfileId,
         'preview_json': jsonEncode(preview.toJson()),
         'imported_at': DateTime.now().toUtc().toIso8601String(),
@@ -1098,15 +1110,31 @@ class LegacyImportService {
       Future<bool> insertAudited(
         String table,
         String rowId,
-        Map<String, Object?> row,
-      ) async {
+        Map<String, Object?> row, {
+        bool replaceExisting = false,
+      }) async {
         final existing = await txn.query(
           table,
           where: 'id = ?',
           whereArgs: [rowId],
           limit: 1,
         );
-        if (existing.isNotEmpty) return false;
+        if (existing.isNotEmpty) {
+          if (!replaceExisting || existing.single['deleted'] != 1) {
+            return false;
+          }
+          await txn.update(table, row, where: 'id = ?', whereArgs: [rowId]);
+          await txn.insert('import_audit', {
+            'import_id': importId,
+            'sequence': auditSequence++,
+            'table_name': table,
+            'row_id': rowId,
+            'action': 'update',
+            'before_json': jsonEncode(existing.single),
+          });
+          inserted[table] = (inserted[table] ?? 0) + 1;
+          return true;
+        }
         await txn.insert(table, row);
         await txn.insert('import_audit', {
           'import_id': importId,
@@ -1117,6 +1145,36 @@ class LegacyImportService {
         });
         inserted[table] = (inserted[table] ?? 0) + 1;
         return true;
+      }
+
+      if (preview.authoritativeSupplementImport) {
+        final resetAt = DateTime.now().toUtc().toIso8601String();
+        for (final table in const [
+          'supplement_intakes',
+          'inventory_movements',
+          'supplement_schedules',
+          'health_events',
+          'health_event_definitions',
+          'supplements',
+        ]) {
+          final rows = await txn.query(table, where: 'deleted = 0');
+          for (final row in rows) {
+            await txn.update(
+              table,
+              {'deleted': 1, 'updated_at': resetAt},
+              where: 'id = ?',
+              whereArgs: [row['id']],
+            );
+            await txn.insert('import_audit', {
+              'import_id': importId,
+              'sequence': auditSequence++,
+              'table_name': table,
+              'row_id': '${row['id']}',
+              'action': 'update',
+              'before_json': jsonEncode(row),
+            });
+          }
+        }
       }
 
       Future<void> fillMissingProfileFields(
@@ -1293,6 +1351,7 @@ class LegacyImportService {
             createdAt: now,
             updatedAt: now,
           ).toMap(),
+          replaceExisting: preview.authoritativeSupplementImport,
         );
         supplementIds[item.token] = id;
         final unitsPerContainer = item.unitsPerContainer;
@@ -1318,6 +1377,7 @@ class LegacyImportService {
                 createdAt: now,
                 updatedAt: now,
               ).toMap(),
+              replaceExisting: preview.authoritativeSupplementImport,
             );
           }
         }
@@ -1344,6 +1404,7 @@ class LegacyImportService {
             createdAt: now,
             updatedAt: now,
           ).toMap(),
+          replaceExisting: preview.authoritativeSupplementImport,
         );
       }
 
@@ -1368,6 +1429,7 @@ class LegacyImportService {
             createdAt: now,
             updatedAt: now,
           ).toMap(),
+          replaceExisting: preview.authoritativeSupplementImport,
         );
       }
 
@@ -1393,6 +1455,7 @@ class LegacyImportService {
             createdAt: now,
             updatedAt: now,
           ).toMap(),
+          replaceExisting: preview.authoritativeSupplementImport,
         );
         await insertAudited(
           'health_events',
@@ -1410,6 +1473,7 @@ class LegacyImportService {
             createdAt: now,
             updatedAt: now,
           ).toMap(),
+          replaceExisting: preview.authoritativeSupplementImport,
         );
       }
 

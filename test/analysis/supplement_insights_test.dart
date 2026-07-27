@@ -3,6 +3,36 @@ import 'package:super_health/analysis/supplement_insights.dart';
 import 'package:super_health/domain/entities.dart';
 
 void main() {
+  test('normalizes duplicate legacy weekday labels to one seven-day week', () {
+    expect(
+      normalizeWeekdays(const [
+        'Monday',
+        'monday',
+        'Tuesday',
+        'tuesday',
+        'Wednesday',
+        'wednesday',
+        'Thursday',
+        'thursday',
+        'Friday',
+        'friday',
+        'Saturday',
+        'saturday',
+        'Sunday',
+        'sunday',
+      ]),
+      const [
+        'monday',
+        'tuesday',
+        'wednesday',
+        'thursday',
+        'friday',
+        'saturday',
+        'sunday',
+      ],
+    );
+  });
+
   final service = SupplementInsights();
   final monday = DateTime(2026, 7, 13);
   final supplement = Supplement(
