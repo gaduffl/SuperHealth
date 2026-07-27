@@ -613,8 +613,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Text(
               _settingsText(
                 context,
-                'SuperHealth 0.4.1 · Personal-use Android build',
-                'SuperHealth 0.4.1 · Android-Build für den persönlichen Gebrauch',
+                'SuperHealth 0.5.0 · Personal-use Android build',
+                'SuperHealth 0.5.0 · Android-Build für den persönlichen Gebrauch',
               ),
               textAlign: TextAlign.center,
             ),
@@ -1558,6 +1558,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       'Erkannt: ${preview.sourceKinds.join(', ')}',
                     ),
                   ),
+                  if (preview.authoritativeSupplementImport) ...[
+                    const SizedBox(height: 12),
+                    Card(
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      child: ListTile(
+                        leading: const Icon(Icons.sync_problem_outlined),
+                        title: Text(
+                          _settingsText(
+                            context,
+                            'Supplement Manager replaces SuperHealth supplement data',
+                            'Supplement Manager ersetzt die Ergänzungsdaten in SuperHealth',
+                          ),
+                        ),
+                        subtitle: Text(
+                          _settingsText(
+                            context,
+                            'Catalog, stock, schedules, intakes, symptoms, and tags '
+                                'will be reset to this export. Profiles and biomarker '
+                                'data are preserved.',
+                            'Katalog, Bestand, Einnahmepläne, Einnahmen, Symptome und '
+                                'Tags werden auf diesen Export zurückgesetzt. Profile '
+                                'und Biomarker-Daten bleiben erhalten.',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   for (final entry in preview.counts.entries)
                     ListTile(
