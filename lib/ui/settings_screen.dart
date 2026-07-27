@@ -1539,110 +1539,111 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ),
   );
 
-  Future<bool?> _showImportPreview(LegacyImportPreview preview) =>
-      showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(_settingsText(context, 'Review import', 'Import prüfen')),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _settingsText(
-                      context,
-                      'Detected: ${preview.sourceKinds.join(', ')}',
-                      'Erkannt: ${preview.sourceKinds.join(', ')}',
-                    ),
-                  ),
-                  if (preview.authoritativeSupplementImport) ...[
-                    const SizedBox(height: 12),
-                    Card(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      child: ListTile(
-                        leading: const Icon(Icons.sync_problem_outlined),
-                        title: Text(
-                          _settingsText(
-                            context,
-                            'Supplement Manager replaces SuperHealth supplement data',
-                            'Supplement Manager ersetzt die Ergänzungsdaten in SuperHealth',
-                          ),
-                        ),
-                        subtitle: Text(
-                          _settingsText(
-                            context,
-                            'Catalog, stock, schedules, intakes, symptoms, and tags '
-                                'will be reset to this export. Profiles and biomarker '
-                                'data are preserved.',
-                            'Katalog, Bestand, Einnahmepläne, Einnahmen, Symptome und '
-                                'Tags werden auf diesen Export zurückgesetzt. Profile '
-                                'und Biomarker-Daten bleiben erhalten.',
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  for (final entry in preview.counts.entries)
-                    ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(entry.key.replaceAll('_', ' ')),
-                      trailing: Text('${entry.value}'),
-                    ),
-                  if (preview.duplicates.isNotEmpty) ...[
-                    const Divider(),
-                    Text(
+  Future<bool?> _showImportPreview(
+    LegacyImportPreview preview,
+  ) => showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(_settingsText(context, 'Review import', 'Import prüfen')),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _settingsText(
+                  context,
+                  'Detected: ${preview.sourceKinds.join(', ')}',
+                  'Erkannt: ${preview.sourceKinds.join(', ')}',
+                ),
+              ),
+              if (preview.authoritativeSupplementImport) ...[
+                const SizedBox(height: 12),
+                Card(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.sync_problem_outlined),
+                    title: Text(
                       _settingsText(
                         context,
-                        'Duplicates / merges',
-                        'Duplikate / Zusammenführungen',
-                      ),
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    for (final item in preview.duplicates) Text('• $item'),
-                  ],
-                  if (preview.warnings.isNotEmpty) ...[
-                    const Divider(),
-                    Text(
-                      _settingsText(context, 'Warnings', 'Warnungen'),
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    for (final item in preview.warnings) Text('• $item'),
-                  ],
-                  if (preview.alreadyImported)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.info_outline),
-                      title: Text(
-                        _settingsText(
-                          context,
-                          'This exact source has already been imported.',
-                          'Diese exakte Quelle wurde bereits importiert.',
-                        ),
+                        'Supplement Manager replaces SuperHealth supplement data',
+                        'Supplement Manager ersetzt die Ergänzungsdaten in SuperHealth',
                       ),
                     ),
-                ],
-              ),
-            ),
+                    subtitle: Text(
+                      _settingsText(
+                        context,
+                        'Catalog, stock, schedules, intakes, symptoms, and tags '
+                            'will be reset to this export. Profiles and biomarker '
+                            'data are preserved.',
+                        'Katalog, Bestand, Einnahmepläne, Einnahmen, Symptome und '
+                            'Tags werden auf diesen Export zurückgesetzt. Profile '
+                            'und Biomarker-Daten bleiben erhalten.',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              for (final entry in preview.counts.entries)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(entry.key.replaceAll('_', ' ')),
+                  trailing: Text('${entry.value}'),
+                ),
+              if (preview.duplicates.isNotEmpty) ...[
+                const Divider(),
+                Text(
+                  _settingsText(
+                    context,
+                    'Duplicates / merges',
+                    'Duplikate / Zusammenführungen',
+                  ),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                for (final item in preview.duplicates) Text('• $item'),
+              ],
+              if (preview.warnings.isNotEmpty) ...[
+                const Divider(),
+                Text(
+                  _settingsText(context, 'Warnings', 'Warnungen'),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                for (final item in preview.warnings) Text('• $item'),
+              ],
+              if (preview.alreadyImported)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.info_outline),
+                  title: Text(
+                    _settingsText(
+                      context,
+                      'This exact source has already been imported.',
+                      'Diese exakte Quelle wurde bereits importiert.',
+                    ),
+                  ),
+                ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(_settingsText(context, 'Cancel', 'Abbrechen')),
-            ),
-            FilledButton(
-              onPressed: preview.canImport
-                  ? () => Navigator.pop(dialogContext, true)
-                  : null,
-              child: Text(_settingsText(context, 'Import', 'Importieren')),
-            ),
-          ],
         ),
-      );
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: Text(_settingsText(context, 'Cancel', 'Abbrechen')),
+        ),
+        FilledButton(
+          onPressed: preview.canImport
+              ? () => Navigator.pop(dialogContext, true)
+              : null,
+          child: Text(_settingsText(context, 'Import', 'Importieren')),
+        ),
+      ],
+    ),
+  );
 }
 
 class _RestoreSyncDecisionCard extends StatelessWidget {
