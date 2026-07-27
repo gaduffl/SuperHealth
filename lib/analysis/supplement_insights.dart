@@ -1,5 +1,25 @@
 import '../domain/entities.dart';
 
+/// The named part of the day a scheduled dose belongs to.
+///
+/// Schedules store a free-text slot ("morning", "08:00", "bedtime"), so the UI
+/// needs one canonical bucket to group the day's doses under.
+enum DosePeriod {
+  morning,
+  midday,
+  evening,
+  bedtime;
+
+  /// The representative hour used when a dose has to be timestamped for a past
+  /// day, where "now" would fall outside the block.
+  int get representativeHour => switch (this) {
+    DosePeriod.morning => 8,
+    DosePeriod.midday => 12,
+    DosePeriod.evening => 18,
+    DosePeriod.bedtime => 22,
+  };
+}
+
 class ScheduledDoseStatus {
   const ScheduledDoseStatus({
     required this.schedule,
@@ -14,6 +34,12 @@ class ScheduledDoseStatus {
   final DateTime dueAt;
   final DateTime evaluatedAt;
   final SupplementIntake? intake;
+
+  /// The block this dose is shown under on the Today screen. Exact-time slots
+  /// fall back to the hour they are due at.
+  DosePeriod get period =>
+      const SupplementInsights().periodOfSlot(schedule.timeOfDay) ??
+      const SupplementInsights().periodOfHour(dueAt.hour);
 
   bool get taken => intake != null && !intake!.skipped;
   bool get skipped => intake?.skipped == true;
@@ -220,6 +246,24 @@ class SupplementInsights {
       through: through,
     );
   }
+
+  /// The named block a schedule slot belongs to, or `null` when the slot is an
+  /// exact time rather than a named part of the day.
+  DosePeriod? periodOfSlot(String timeOfDay) => switch (_period(timeOfDay)) {
+    'morning' => DosePeriod.morning,
+    'midday' => DosePeriod.midday,
+    'evening' => DosePeriod.evening,
+    'bedtime' => DosePeriod.bedtime,
+    _ => null,
+  };
+
+  /// The block a wall-clock hour falls into.
+  DosePeriod periodOfHour(int hour) => switch (_periodForHour(hour)) {
+    'morning' => DosePeriod.morning,
+    'midday' => DosePeriod.midday,
+    'bedtime' => DosePeriod.bedtime,
+    _ => DosePeriod.evening,
+  };
 
   List<ScheduledDoseStatus> dosesForDay({
     required DateTime day,
