@@ -237,6 +237,16 @@ class _TrackingScreenState extends State<TrackingScreen>
       product.name,
       colorMode: controller.colorMode,
     );
+    // Days of cover is the number that decides whether to reorder, so it
+    // belongs on the row rather than only in the stock tab.
+    final projection = _insights
+        .stockProjections(
+          supplements: [product],
+          householdSchedules: controller.householdSchedules,
+          stockLevels: controller.stockLevels,
+        )
+        .firstOrNull;
+    final daysRemaining = projection?.daysRemaining;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
@@ -250,13 +260,40 @@ class _TrackingScreenState extends State<TrackingScreen>
           ),
         ),
         title: Text(product.name),
-        subtitle: Text(
-          [
-            if (product.brand.isNotEmpty) product.brand,
-            '${strings.formatNumber(stock)} ${product.stockUnit}',
-            strings.scheduleCount(productSchedules.length),
-            if (!product.active) strings.paused,
-          ].join(' · '),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              [
+                if (product.brand.isNotEmpty) product.brand,
+                '${strings.formatNumber(stock)} ${product.stockUnit}',
+                strings.scheduleCount(productSchedules.length),
+                if (!product.active) strings.paused,
+              ].join(' · '),
+            ),
+            if (daysRemaining != null) ...[
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  // 90 days of cover fills the bar; past that the exact figure
+                  // matters less than there being plenty.
+                  value: (daysRemaining / 90).clamp(0.0, 1.0),
+                  minHeight: 5,
+                  backgroundColor: colors.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation(
+                    projection!.low ? colors.error : colors.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                strings.daysProjected(daysRemaining.clamp(0, 9999).round()),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ],
         ),
         trailing: PopupMenuButton<String>(
           onSelected: (value) =>
