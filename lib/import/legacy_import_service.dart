@@ -692,9 +692,7 @@ class LegacyImportService {
                 timeOfDay: period,
               ),
             );
-            grouped.weekdays.addAll(
-              normalizeWeekdays(['${dayEntry.key}']),
-            );
+            grouped.weekdays.addAll(normalizeWeekdays(['${dayEntry.key}']));
           }
         }
       });
@@ -1125,12 +1123,7 @@ class LegacyImportService {
           if (!replaceExisting || existing.single['deleted'] != 1) {
             return false;
           }
-          await txn.update(
-            table,
-            row,
-            where: 'id = ?',
-            whereArgs: [rowId],
-          );
+          await txn.update(table, row, where: 'id = ?', whereArgs: [rowId]);
           await txn.insert('import_audit', {
             'import_id': importId,
             'sequence': auditSequence++,
