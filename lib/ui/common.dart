@@ -246,3 +246,40 @@ double? parseOptionalDouble(String value) {
 
 int? parseOptionalInt(String value) =>
     value.trim().isEmpty ? null : int.tryParse(value.trim());
+
+/// The placeholder stored when a product has no unit of its own.
+///
+/// It exists so the database always has a value, but it is an internal token,
+/// not something to put in front of a person: "3 unit" reads as a bug.
+const genericStockUnit = 'unit';
+
+/// The unit to show next to an amount of [supplement].
+///
+/// A unit a person typed themselves is shown exactly as they typed it — it is
+/// their vocabulary, in their language. Only the internal placeholder is
+/// replaced: first by the product's form ("capsule", "Kapsel", "scoop"), and
+/// otherwise by a localized generic word.
+String unitLabel(
+  AppLocalizations strings, {
+  required String unit,
+  String? form,
+}) {
+  final trimmed = unit.trim();
+  if (trimmed.isNotEmpty && trimmed.toLowerCase() != genericStockUnit) {
+    return trimmed;
+  }
+  final fallback = form?.trim() ?? '';
+  if (fallback.isNotEmpty) return fallback;
+  return strings.pick('units', 'Einheiten');
+}
+
+/// An amount with its resolved unit, the way it should read in a list row.
+String formatAmountWithUnit(
+  AppLocalizations strings, {
+  required double amount,
+  required String unit,
+  String? form,
+  int decimalDigits = 1,
+}) =>
+    '${strings.formatNumber(amount, decimalDigits: decimalDigits)} '
+    '${unitLabel(strings, unit: unit, form: form)}';

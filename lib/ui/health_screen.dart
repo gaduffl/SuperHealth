@@ -223,11 +223,8 @@ class _JournalPaneState extends State<_JournalPane> {
                         size: 18,
                       ),
                       label: Text(definition.name),
-                      onPressed: () => showAddEventDialog(
-                        context,
-                        controller,
-                        initialKind: definition.kind,
-                      ),
+                      onPressed: () =>
+                          _quickTrack(context, controller, definition),
                     ),
                 ],
               )
@@ -392,6 +389,59 @@ class _JournalPaneState extends State<_JournalPane> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// A tap on a quick check-in chip.
+  ///
+  /// A tag has nothing to ask about — it either happened or it did not — so it
+  /// is recorded straight away with an undo. A symptom needs its rating, so it
+  /// opens the dialog with the name already filled in.
+  Future<void> _quickTrack(
+    BuildContext context,
+    AppController controller,
+    HealthEventDefinition definition,
+  ) async {
+    final strings = AppLocalizations.of(context);
+    if (definition.kind == EventKind.symptom) {
+      await showAddEventDialog(
+        context,
+        controller,
+        initialKind: definition.kind,
+        initialName: definition.name,
+      );
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context)..clearSnackBars();
+    try {
+      await controller.addEvent(
+        kind: definition.kind,
+        name: definition.name,
+        definition: definition,
+      );
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+      return;
+    }
+    final recorded = controller.events.firstWhereOrNull(
+      (event) => !event.deleted && event.definitionId == definition.id,
+    );
+    if (!context.mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          strings.pick(
+            '${definition.name} recorded.',
+            '${definition.name} erfasst.',
+          ),
+        ),
+        action: recorded == null
+            ? null
+            : SnackBarAction(
+                label: strings.pick('Undo', 'Rückgängig'),
+                onPressed: () => controller.deleteEvent(recorded),
+              ),
       ),
     );
   }

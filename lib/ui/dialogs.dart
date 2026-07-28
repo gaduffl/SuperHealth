@@ -375,7 +375,13 @@ Future<void> showAddSupplementDialog(
     text: existing?.unitsPerContainer?.toString() ?? '',
   );
   final initialContainers = TextEditingController();
-  final stockUnit = TextEditingController(text: existing?.stockUnit ?? 'unit');
+  final stockUnit = TextEditingController(
+    // A new product starts blank so a real unit gets chosen, rather than
+    // inheriting the placeholder that reads as "3 unit" in every list.
+    text: existing == null || existing.stockUnit.trim() == genericStockUnit
+        ? ''
+        : existing.stockUnit,
+  );
   final lowStock = TextEditingController(
     text: existing?.lowStockThresholdUnits?.toString() ?? '',
   );
@@ -467,16 +473,7 @@ Future<void> showAddSupplementDialog(
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: TextField(
-                      controller: stockUnit,
-                      decoration: InputDecoration(
-                        labelText: _dialogText(
-                          context,
-                          'Stock unit *',
-                          'Bestandseinheit *',
-                        ),
-                      ),
-                    ),
+                    child: _StockUnitField(controller: stockUnit, form: form),
                   ),
                 ],
               ),
@@ -575,17 +572,17 @@ Future<void> showAddSupplementDialog(
     try {
       final parsedIngredients = ingredients.parse();
       final units = parseOptionalInt(unitsPerContainer.text);
-      if (stockUnit.text.trim().isEmpty ||
-          (units != null && units <= 0) ||
-          parsedIngredients == null) {
+      final resolvedStockUnit = stockUnit.text.trim().isEmpty
+          ? genericStockUnit
+          : stockUnit.text.trim();
+      if ((units != null && units <= 0) || parsedIngredients == null) {
         throw StateError(
           _dialogText(
             context,
-            'Check the stock unit, container size, and ingredient rows. '
-                'Every ingredient needs a name, and an amount must be a number.',
-            'Prüfe Bestandseinheit, Behältergröße und Inhaltsstoffzeilen. '
-                'Jeder Inhaltsstoff braucht einen Namen, und eine Menge muss '
-                'eine Zahl sein.',
+            'Check the container size and the ingredient rows. Every '
+                'ingredient needs a name, and an amount must be a number.',
+            'Prüfe Behältergröße und Inhaltsstoffzeilen. Jeder Inhaltsstoff '
+                'braucht einen Namen, und eine Menge muss eine Zahl sein.',
           ),
         );
       }
@@ -598,7 +595,7 @@ Future<void> showAddSupplementDialog(
           ingredients: parsedIngredients,
           unitsPerContainer: units,
           initialContainers: parseOptionalDouble(initialContainers.text),
-          stockUnit: stockUnit.text,
+          stockUnit: resolvedStockUnit,
           lowStockThresholdUnits: parseOptionalDouble(lowStock.text),
           bioavailability: bioavailability.text,
           notes: notes.text,
@@ -619,7 +616,7 @@ Future<void> showAddSupplementDialog(
             active: existing.active,
             lowStockAlerts: existing.lowStockAlerts,
             lowStockThresholdUnits: parseOptionalDouble(lowStock.text),
-            stockUnit: stockUnit.text,
+            stockUnit: resolvedStockUnit,
             sourceId: existing.sourceId,
             createdAt: existing.createdAt,
             updatedAt: existing.updatedAt,
@@ -677,8 +674,8 @@ Future<void> showAdjustStockDialog(
                 subtitle: Text(
                   _dialogText(
                     context,
-                    '${current.toStringAsFixed(1)} ${supplement.stockUnit} on hand',
-                    '${current.toStringAsFixed(1)} ${supplement.stockUnit} vorhanden',
+                    '${current.toStringAsFixed(1)} ${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)} on hand',
+                    '${current.toStringAsFixed(1)} ${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)} vorhanden',
                   ),
                 ),
               ),
@@ -715,13 +712,13 @@ Future<void> showAdjustStockDialog(
                   labelText: direction == 'set'
                       ? _dialogText(
                           context,
-                          'New total (${supplement.stockUnit})',
-                          'Neuer Gesamtbestand (${supplement.stockUnit})',
+                          'New total (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
+                          'Neuer Gesamtbestand (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
                         )
                       : _dialogText(
                           context,
-                          'Quantity (${supplement.stockUnit})',
-                          'Menge (${supplement.stockUnit})',
+                          'Quantity (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
+                          'Menge (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
                         ),
                 ),
               ),
@@ -1432,14 +1429,22 @@ final RegExp _exact24HourTime = RegExp(r'^([01]\d|2[0-3]):([0-5]\d)$');
 bool _isValidScheduleTime(String value) =>
     _namedTimeChoice(value) != null || _exact24HourTime.hasMatch(value.trim());
 
+/// Records a symptom or a tag.
+///
+/// A symptom is normally just a name and a 0-10 rating, and a tag is normally
+/// just "this happened". Asking for a score, a numeric value, a unit, and a
+/// duration on every entry made the quick check-ins anything but quick, so the
+/// dialog now shows only what the chosen kind actually needs and keeps the
+/// rest — which the correlation analysis can use but rarely requires — behind
+/// one disclosure.
 Future<void> showAddEventDialog(
   BuildContext context,
   AppController controller, {
   EventKind initialKind = EventKind.symptom,
+  String? initialName,
   HealthEvent? existing,
 }) async {
-  final name = TextEditingController(text: existing?.name);
-  final score = TextEditingController(text: existing?.score?.toString() ?? '');
+  final name = TextEditingController(text: existing?.name ?? initialName);
   final value = TextEditingController(
     text: existing?.numericValue?.toString() ?? '',
   );
@@ -1449,201 +1454,320 @@ Future<void> showAddEventDialog(
   );
   final notes = TextEditingController(text: existing?.notes);
   var kind = existing?.kind ?? initialKind;
+  var score = existing?.score;
   var observedAt = existing?.observedAt ?? DateTime.now();
+  var showDetails =
+      existing != null &&
+      (existing.numericValue != null ||
+          existing.durationMinutes != null ||
+          existing.notes.trim().isNotEmpty);
+
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(
-          existing == null
-              ? _dialogText(
-                  context,
-                  'Track health event',
-                  'Gesundheitsereignis erfassen',
-                )
-              : _dialogText(context, 'Edit event', 'Ereignis bearbeiten'),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SegmentedButton<EventKind>(
-                segments: [
-                  ButtonSegment(
-                    value: EventKind.symptom,
-                    label: Text(_dialogText(context, 'Symptom', 'Symptom')),
-                  ),
-                  ButtonSegment(
-                    value: EventKind.tag,
-                    label: Text(_dialogText(context, 'Tag', 'Markierung')),
-                  ),
-                ],
-                selected: {kind},
-                onSelectionChanged: (value) =>
-                    setState(() => kind = value.first),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: name,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: kind == EventKind.symptom
-                      ? _dialogText(context, 'Symptom name *', 'Symptomname *')
-                      : _dialogText(
-                          context,
-                          'Tag name *',
-                          'Name der Markierung *',
-                        ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 6,
-                  children: [
-                    for (final definition
-                        in controller.eventDefinitions
-                            .where((item) => item.kind == kind)
-                            .take(8))
-                      ActionChip(
-                        label: Text(definition.name),
-                        onPressed: () {
-                          name.text = definition.name;
-                          unit.text = definition.defaultUnit ?? unit.text;
-                        },
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
+      builder: (context, setState) {
+        final strings = AppLocalizations.of(context);
+        final isSymptom = kind == EventKind.symptom;
+        final suggestions = controller.eventDefinitions
+            .where(
+              (item) => item.kind == kind && !item.archived && !item.deleted,
+            )
+            .take(8)
+            .toList();
+        return AlertDialog(
+          title: Text(
+            existing == null
+                ? (isSymptom
+                      ? _dialogText(context, 'Log symptom', 'Symptom erfassen')
+                      : _dialogText(context, 'Log tag', 'Markierung erfassen'))
+                : _dialogText(context, 'Edit entry', 'Eintrag bearbeiten'),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: score,
+                  SegmentedButton<EventKind>(
+                    showSelectedIcon: false,
+                    segments: [
+                      ButtonSegment(
+                        value: EventKind.symptom,
+                        label: Text(strings.symptom),
+                        icon: const Icon(Icons.monitor_heart_outlined),
+                      ),
+                      ButtonSegment(
+                        value: EventKind.tag,
+                        label: Text(strings.tag),
+                        icon: const Icon(Icons.sell_outlined),
+                      ),
+                    ],
+                    selected: {kind},
+                    onSelectionChanged: (next) =>
+                        setState(() => kind = next.first),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    isSymptom
+                        ? _dialogText(
+                            context,
+                            'Something you feel, rated so it can be tracked '
+                                'over time.',
+                            'Etwas, das du spürst — bewertet, damit es über '
+                                'die Zeit verfolgbar ist.',
+                          )
+                        : _dialogText(
+                            context,
+                            'Something you did or took, used as a predictor '
+                                'in correlations.',
+                            'Etwas, das du getan oder zu dir genommen hast — '
+                                'dient als Prädiktor in Korrelationen.',
+                          ),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: name,
+                    autofocus: name.text.isEmpty,
+                    textCapitalization: TextCapitalization.sentences,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: isSymptom
+                          ? _dialogText(context, 'Symptom', 'Symptom')
+                          : _dialogText(context, 'Tag', 'Markierung'),
+                      hintText: isSymptom
+                          ? _dialogText(context, 'Energy', 'Energie')
+                          : _dialogText(context, 'Coffee', 'Kaffee'),
+                    ),
+                  ),
+                  if (suggestions.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final definition in suggestions)
+                          ChoiceChip(
+                            visualDensity: VisualDensity.compact,
+                            label: Text(definition.name),
+                            selected:
+                                name.text.trim().toLowerCase() ==
+                                definition.name.toLowerCase(),
+                            onSelected: (_) => setState(() {
+                              name.text = definition.name;
+                              if (definition.defaultUnit?.isNotEmpty ?? false) {
+                                unit.text = definition.defaultUnit!;
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (isSymptom) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _dialogText(context, 'How strong?', 'Wie stark?'),
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                        ),
+                        Text(
+                          score == null ? '—' : '$score/10',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: (score ?? 0).toDouble(),
+                      max: 10,
+                      divisions: 10,
+                      label: '${score ?? 0}',
+                      onChanged: (next) => setState(() => score = next.round()),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: value,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              labelText: _dialogText(
+                                context,
+                                'How much? (optional)',
+                                'Wie viel? (optional)',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: unit,
+                            decoration: InputDecoration(
+                              isDense: true,
+                              labelText: _dialogText(
+                                context,
+                                'Unit',
+                                'Einheit',
+                              ),
+                              hintText: _dialogText(context, 'cups', 'Tassen'),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () =>
+                          setState(() => showDetails = !showDetails),
+                      icon: Icon(
+                        showDetails ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                      ),
+                      label: Text(
+                        _dialogText(context, 'More details', 'Mehr Details'),
+                      ),
+                    ),
+                  ),
+                  if (showDetails) ...[
+                    if (isSymptom) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: value,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                labelText: _dialogText(
+                                  context,
+                                  'Measured value',
+                                  'Messwert',
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: unit,
+                              decoration: InputDecoration(
+                                isDense: true,
+                                labelText: _dialogText(
+                                  context,
+                                  'Unit',
+                                  'Einheit',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    TextField(
+                      controller: duration,
                       keyboardType: TextInputType.number,
                       decoration: InputDecoration(
+                        isDense: true,
                         labelText: _dialogText(
                           context,
-                          'Score (0–10)',
-                          'Bewertung (0–10)',
+                          'Duration (minutes)',
+                          'Dauer (Minuten)',
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: value,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: notes,
+                      maxLines: 2,
                       decoration: InputDecoration(
-                        labelText: _dialogText(
-                          context,
-                          'Numeric value',
-                          'Zahlenwert',
-                        ),
+                        labelText: _dialogText(context, 'Notes', 'Notizen'),
                       ),
                     ),
+                  ],
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: const Icon(Icons.schedule, size: 20),
+                    title: Text(
+                      _sameCalendarDay(observedAt, DateTime.now())
+                          ? _dialogText(context, 'Now', 'Jetzt')
+                          : '${strings.formatTrackingDate(observedAt)} · '
+                                '${strings.formatTime(observedAt)}',
+                    ),
+                    trailing: const Icon(Icons.edit_calendar_outlined),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        firstDate: DateTime(1950),
+                        lastDate: DateTime.now(),
+                        initialDate: observedAt,
+                      );
+                      if (date == null || !context.mounted) return;
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(observedAt),
+                      );
+                      if (time == null) return;
+                      setState(() {
+                        observedAt = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
+                      });
+                    },
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: unit,
-                decoration: InputDecoration(
-                  labelText: _dialogText(context, 'Unit', 'Einheit'),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: duration,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: _dialogText(
-                    context,
-                    'Duration (minutes)',
-                    'Dauer (Minuten)',
-                  ),
-                ),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  _dialogText(context, 'Observed at', 'Beobachtet am'),
-                ),
-                subtitle: Text(
-                  '${observedAt.toIso8601String().split('T').first} · '
-                  '${TimeOfDay.fromDateTime(observedAt).format(context)}',
-                ),
-                trailing: const Icon(Icons.edit_calendar_outlined),
-                onTap: () async {
-                  final date = await showDatePicker(
-                    context: context,
-                    firstDate: DateTime(1950),
-                    lastDate: DateTime.now(),
-                    initialDate: observedAt,
-                  );
-                  if (date == null || !context.mounted) return;
-                  final time = await showTimePicker(
-                    context: context,
-                    initialTime: TimeOfDay.fromDateTime(observedAt),
-                  );
-                  if (time != null) {
-                    setState(() {
-                      observedAt = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time.hour,
-                        time.minute,
-                      );
-                    });
-                  }
-                },
-              ),
-              TextField(
-                controller: notes,
-                maxLines: 2,
-                decoration: InputDecoration(
-                  labelText: _dialogText(context, 'Notes', 'Notizen'),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(_dialogText(context, 'Save', 'Speichern')),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
+            ),
+            FilledButton(
+              onPressed: name.text.trim().isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              child: Text(_dialogText(context, 'Save', 'Speichern')),
+            ),
+          ],
+        );
+      },
     ),
   );
+
   if (result == true && name.text.trim().isNotEmpty && context.mounted) {
     try {
-      final parsedScore = parseOptionalInt(score.text);
-      if (parsedScore != null && (parsedScore < 0 || parsedScore > 10)) {
-        throw StateError(
-          _dialogText(
-            context,
-            'Symptom score must be between 0 and 10.',
-            'Die Symptombewertung muss zwischen 0 und 10 liegen.',
-          ),
-        );
-      }
+      // A tag carries no rating, so switching kind must not leave a stale one
+      // behind on the saved entry.
+      final resolvedScore = kind == EventKind.symptom ? score : null;
       if (existing == null) {
         await controller.addEvent(
           kind: kind,
           name: name.text,
-          score: parsedScore,
+          score: resolvedScore,
           value: parseOptionalDouble(value.text),
           unit: unit.text,
           observedAt: observedAt,
@@ -1659,7 +1783,7 @@ Future<void> showAddEventDialog(
             kind: kind,
             name: name.text,
             observedAt: observedAt,
-            score: parsedScore,
+            score: resolvedScore,
             numericValue: parseOptionalDouble(value.text),
             unit: unit.text,
             durationMinutes: parseOptionalInt(duration.text),
@@ -1675,10 +1799,13 @@ Future<void> showAddEventDialog(
       await showAppError(context, error);
     }
   }
-  for (final item in [name, score, value, unit, duration, notes]) {
+  for (final item in [name, value, unit, duration, notes]) {
     item.dispose();
   }
 }
+
+bool _sameCalendarDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
 
 Future<void> showAddBiomarkerDialog(
   BuildContext context,
@@ -2474,5 +2601,79 @@ Future<void> showAddNamedRecordDialog(
   }
   for (final item in [name, dose, unit, schedule, priority, notes]) {
     item.dispose();
+  }
+}
+
+/// The product's counting unit, with the common answers one tap away.
+///
+/// Left as free text underneath, because a unit is the person's own
+/// vocabulary in their own language — the suggestions only save typing.
+class _StockUnitField extends StatefulWidget {
+  const _StockUnitField({required this.controller, required this.form});
+
+  final TextEditingController controller;
+
+  /// The product's form field. Offered first, since a product described as a
+  /// capsule is almost always counted in capsules.
+  final TextEditingController form;
+
+  @override
+  State<_StockUnitField> createState() => _StockUnitFieldState();
+}
+
+class _StockUnitFieldState extends State<_StockUnitField> {
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final suggestions = <String>{
+      if (widget.form.text.trim().isNotEmpty) widget.form.text.trim(),
+      ...strings
+          .pick(
+            'capsule,tablet,softgel,scoop,drop,ml,g,sachet',
+            'Kapsel,Tablette,Softgel,Messlöffel,Tropfen,ml,g,Beutel',
+          )
+          .split(','),
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: widget.controller,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: _dialogText(context, 'Stock unit', 'Bestandseinheit'),
+            hintText: strings.pick('capsule', 'Kapsel'),
+            helperText: _dialogText(
+              context,
+              'What one of these is called',
+              'Wie eine Einheit davon heißt',
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 34,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final suggestion in suggestions)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(suggestion),
+                    selected:
+                        widget.controller.text.trim().toLowerCase() ==
+                        suggestion.toLowerCase(),
+                    onSelected: (_) => setState(() {
+                      widget.controller.text = suggestion;
+                    }),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }

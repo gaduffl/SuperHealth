@@ -267,7 +267,12 @@ class _TrackingScreenState extends State<TrackingScreen>
             Text(
               [
                 if (product.brand.isNotEmpty) product.brand,
-                '${strings.formatNumber(stock)} ${product.stockUnit}',
+                formatAmountWithUnit(
+                  strings,
+                  amount: stock,
+                  unit: product.stockUnit,
+                  form: product.form,
+                ),
                 strings.scheduleCount(productSchedules.length),
                 if (!product.active) strings.paused,
               ].join(' · '),
@@ -349,7 +354,7 @@ class _TrackingScreenState extends State<TrackingScreen>
                 color: schedule.active ? colors.primary : colors.outline,
               ),
               title: Text(
-                '${strings.formatNumber(schedule.dose)} ${schedule.unit} · '
+                '${formatAmountWithUnit(strings, amount: schedule.dose, unit: schedule.unit, form: product.form)} · '
                 '${schedule.timeOfDay}',
               ),
               subtitle: Text(
@@ -754,10 +759,8 @@ class _TrackingScreenState extends State<TrackingScreen>
                       subtitle: Text(
                         [
                           strings.pick(
-                            'need ${strings.formatNumber(item.missingUnits)} '
-                                '${item.supplement.stockUnit}',
-                            'Bedarf ${strings.formatNumber(item.missingUnits)} '
-                                '${item.supplement.stockUnit}',
+                            'need ${formatAmountWithUnit(strings, amount: item.missingUnits, unit: item.supplement.stockUnit, form: item.supplement.form)}',
+                            'Bedarf ${formatAmountWithUnit(strings, amount: item.missingUnits, unit: item.supplement.stockUnit, form: item.supplement.form)}',
                           ),
                           if (item.estimatedCostEur != null)
                             strings.formatEur(item.estimatedCostEur!),
@@ -837,8 +840,12 @@ class _TrackingScreenState extends State<TrackingScreen>
                   title: Text(projection.supplement.name),
                   subtitle: Text(
                     [
-                      '${strings.formatNumber(projection.unitsOnHand)} '
-                          '${projection.supplement.stockUnit}',
+                      formatAmountWithUnit(
+                        strings,
+                        amount: projection.unitsOnHand,
+                        unit: projection.supplement.stockUnit,
+                        form: projection.supplement.form,
+                      ),
                       if (projection.daysRemaining != null)
                         strings.daysProjected(
                           projection.daysRemaining!.clamp(0, 9999).round(),
@@ -1264,6 +1271,11 @@ class _TrackingScreenState extends State<TrackingScreen>
                       title: item.name,
                       total: item.total,
                       unit: item.unit,
+                      form: controller.supplements
+                          .firstWhereOrNull(
+                            (product) => product.id == item.supplementId,
+                          )
+                          ?.form,
                       detail: strings.intakeCount(item.intakeCount),
                       pinKey: _supplementPinKey(item),
                     ),
@@ -1410,7 +1422,7 @@ class _TrackingScreenState extends State<TrackingScreen>
       ),
       title: Text(supplement?.name ?? strings.deletedSupplement),
       subtitle: Text(
-        '${strings.formatNumber(intake.dose)} ${intake.unit} · '
+        '${formatAmountWithUnit(strings, amount: intake.dose, unit: intake.unit, form: supplement?.form)} · '
         '${strings.formatTrackingDateTime(intake.takenAt)}'
         '${intake.notes.isEmpty ? '' : ' · ${intake.notes}'}',
       ),
@@ -1472,6 +1484,7 @@ class _TrackingScreenState extends State<TrackingScreen>
     required String unit,
     required String detail,
     required String pinKey,
+    String? form,
   }) {
     final strings = AppLocalizations.of(context);
     final pinned =
@@ -1485,7 +1498,14 @@ class _TrackingScreenState extends State<TrackingScreen>
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('${strings.formatNumber(total)} $unit'),
+          Text(
+            formatAmountWithUnit(
+              strings,
+              amount: total,
+              unit: unit,
+              form: form,
+            ),
+          ),
           IconButton(
             tooltip: pinned
                 ? strings.unpinComparisonSeries
@@ -1726,7 +1746,7 @@ class _WeeklyPlanCard extends StatelessWidget {
               ),
               Text(
                 units.length == 1
-                    ? units.first
+                    ? unitLabel(strings, unit: units.first, form: product.form)
                     : strings.pick('mixed', 'gemischt'),
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   color: colors.onSurfaceVariant,
