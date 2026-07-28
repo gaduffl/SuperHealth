@@ -8,24 +8,9 @@ import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
 import 'ingredient_editor.dart';
-import 'last_entry_memory.dart';
 
 String _dialogText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
-
-/// A stock figure with its unit, written without trailing noise: a whole
-/// number of capsules should read "120", not "120.0".
-String _stockAmountLabel(
-  BuildContext context,
-  Supplement supplement,
-  double value,
-) => formatAmountWithUnit(
-  AppLocalizations.of(context),
-  amount: value,
-  unit: supplement.stockUnit,
-  form: supplement.form,
-  decimalDigits: value == value.roundToDouble() ? 0 : 1,
-);
 
 Future<void> showAddProfileDialog(
   BuildContext context,
@@ -665,20 +650,6 @@ Future<void> showAdjustStockDialog(
   Supplement supplement, {
   bool purchase = false,
 }) async {
-  // Read before the dialog opens so the reminder is on screen together with
-  // the field, not appearing later under a cursor that is already typing.
-  final profileId = controller.activeProfile?.id;
-  final remembered = <String, double>{};
-  if (profileId != null) {
-    for (final mode in const ['set', 'add', 'remove']) {
-      final value = await LastEntryMemory.read(
-        profileId,
-        LastEntryMemory.stockSlot(supplementId: supplement.id, mode: mode),
-      );
-      if (value != null) remembered[mode] = value;
-    }
-  }
-  if (!context.mounted) return;
   final amount = TextEditingController();
   final notes = TextEditingController();
   var direction = purchase ? 'add' : 'set';
@@ -751,21 +722,6 @@ Future<void> showAdjustStockDialog(
                         ),
                 ),
               ),
-              if (remembered[direction] case final last?)
-                LastEntryHint(
-                  label: _dialogText(
-                    context,
-                    'Last entered here: ${_stockAmountLabel(context, supplement, last)}',
-                    'Zuletzt hier eingegeben: ${_stockAmountLabel(context, supplement, last)}',
-                  ),
-                  onUse: () {
-                    final text = plainAmountText(last);
-                    amount.value = TextEditingValue(
-                      text: text,
-                      selection: TextSelection.collapsed(offset: text.length),
-                    );
-                  },
-                ),
               const SizedBox(height: 10),
               TextField(
                 controller: notes,
@@ -817,19 +773,6 @@ Future<void> showAdjustStockDialog(
           reason: purchase ? 'purchase' : 'correction',
           notes: notes.text,
         );
-        // Remember the figure as typed. The stored movement is a delta, so
-        // "set the total to 40" would otherwise come back as whatever the gap
-        // to the old total happened to be.
-        if (profileId != null) {
-          await LastEntryMemory.write(
-            profileId,
-            LastEntryMemory.stockSlot(
-              supplementId: supplement.id,
-              mode: direction,
-            ),
-            parsed,
-          );
-        }
       } on Object catch (error) {
         if (context.mounted) await showAppError(context, error);
       }
