@@ -283,3 +283,16 @@ String formatAmountWithUnit(
 }) =>
     '${strings.formatNumber(amount, decimalDigits: decimalDigits)} '
     '${unitLabel(strings, unit: unit, form: form)}';
+
+/// Names the lists a biomarker belongs to.
+///
+/// One or two lists are worth naming outright; beyond that the names crowd out
+/// the overdue figure that actually decides whether to book a test.
+String listMembershipLabel(AppLocalizations strings, List<String> listNames) {
+  if (listNames.isEmpty) return strings.pick('No list', 'Keine Liste');
+  if (listNames.length <= 2) return listNames.join(', ');
+  return strings.pick(
+    '${listNames.first} +${listNames.length - 1} more',
+    '${listNames.first} +${listNames.length - 1} weitere',
+  );
+}

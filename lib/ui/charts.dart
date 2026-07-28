@@ -31,10 +31,38 @@ class WeeklySeriesChart extends StatelessWidget {
   final String semanticLabel;
   final double height;
 
+  /// The width each week needs before the axis becomes unreadable.
+  ///
+  /// A year of data is 52 points; squeezed into a phone's width the line turns
+  /// into a smear, so past this density the chart scrolls sideways instead.
+  static const minimumWeekWidth = 26.0;
+
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     if (weeks.isEmpty || series.isEmpty) return const SizedBox.shrink();
+    return Semantics(
+      label: semanticLabel,
+      excludeSemantics: true,
+      child: SizedBox(
+        height: height,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final needed = weeks.length * minimumWeekWidth;
+            if (needed <= constraints.maxWidth) return _chart(context);
+            return Scrollbar(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(width: needed, child: _chart(context)),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _chart(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
 
     var maximum = 0.0;
     for (final item in series) {
@@ -49,112 +77,105 @@ class WeeklySeriesChart extends StatelessWidget {
     // With many weeks, labelling every one turns the axis into a smear.
     final labelStride = math.max(1, (weeks.length / 6).ceil());
 
-    return Semantics(
-      label: semanticLabel,
-      excludeSemantics: true,
-      child: SizedBox(
-        height: height,
-        child: LineChart(
-          LineChartData(
-            minX: 0,
-            maxX: (weeks.length - 1).toDouble(),
-            minY: 0,
-            maxY: maximum * 1.1,
-            clipData: const FlClipData.all(),
-            gridData: FlGridData(
-              drawVerticalLine: false,
-              horizontalInterval: interval,
-              getDrawingHorizontalLine: (_) =>
-                  FlLine(color: scheme.outlineVariant, strokeWidth: 1),
+    return LineChart(
+      LineChartData(
+        minX: 0,
+        maxX: (weeks.length - 1).toDouble(),
+        minY: 0,
+        maxY: maximum * 1.1,
+        clipData: const FlClipData.all(),
+        gridData: FlGridData(
+          drawVerticalLine: false,
+          horizontalInterval: interval,
+          getDrawingHorizontalLine: (_) =>
+              FlLine(color: scheme.outlineVariant, strokeWidth: 1),
+        ),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(),
+          rightTitles: const AxisTitles(),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 48,
+              interval: interval,
+              getTitlesWidget: (value, meta) => SideTitleWidget(
+                meta: meta,
+                child: Text(
+                  valueLabel(value),
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ),
             ),
-            borderData: FlBorderData(show: false),
-            titlesData: FlTitlesData(
-              topTitles: const AxisTitles(),
-              rightTitles: const AxisTitles(),
-              leftTitles: AxisTitles(
-                sideTitles: SideTitles(
-                  showTitles: true,
-                  reservedSize: 48,
-                  interval: interval,
-                  getTitlesWidget: (value, meta) => SideTitleWidget(
-                    meta: meta,
-                    child: Text(
-                      valueLabel(value),
-                      style: Theme.of(context).textTheme.labelSmall,
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 28,
+              interval: 1,
+              getTitlesWidget: (value, meta) {
+                final index = value.round();
+                if (index < 0 || index >= weeks.length) {
+                  return const SizedBox.shrink();
+                }
+                if (index % labelStride != 0 && index != weeks.length - 1) {
+                  return const SizedBox.shrink();
+                }
+                return SideTitleWidget(
+                  meta: meta,
+                  child: Text(
+                    weekLabel(weeks[index]),
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipColor: (_) => scheme.inverseSurface,
+            getTooltipItems: (spots) => [
+              for (final spot in spots)
+                if (spot.barIndex < 0 || spot.barIndex >= series.length)
+                  null
+                else
+                  LineTooltipItem(
+                    '${series[spot.barIndex].label}: '
+                    '${valueLabel(spot.y)}',
+                    TextStyle(
+                      color: scheme.onInverseSurface,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-              ),
-              bottomTitles: AxisTitles(
-                sideTitles: SideTitles(
-                  showTitles: true,
-                  reservedSize: 28,
-                  interval: 1,
-                  getTitlesWidget: (value, meta) {
-                    final index = value.round();
-                    if (index < 0 || index >= weeks.length) {
-                      return const SizedBox.shrink();
-                    }
-                    if (index % labelStride != 0 && index != weeks.length - 1) {
-                      return const SizedBox.shrink();
-                    }
-                    return SideTitleWidget(
-                      meta: meta,
-                      child: Text(
-                        weekLabel(weeks[index]),
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            lineTouchData: LineTouchData(
-              touchTooltipData: LineTouchTooltipData(
-                getTooltipColor: (_) => scheme.inverseSurface,
-                getTooltipItems: (spots) => [
-                  for (final spot in spots)
-                    if (spot.barIndex < 0 || spot.barIndex >= series.length)
-                      null
-                    else
-                      LineTooltipItem(
-                        '${series[spot.barIndex].label}: '
-                        '${valueLabel(spot.y)}',
-                        TextStyle(
-                          color: scheme.onInverseSurface,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                ],
-              ),
-            ),
-            lineBarsData: [
-              for (final item in series)
-                LineChartBarData(
-                  isCurved: true,
-                  curveSmoothness: 0.22,
-                  preventCurveOverShooting: true,
-                  barWidth: 2.6,
-                  color: colors[item.key] ?? scheme.primary,
-                  dotData: FlDotData(
-                    show: weeks.length <= 14,
-                    getDotPainter: (spot, _, bar, _) => FlDotCirclePainter(
-                      radius: 3,
-                      color: bar.color ?? scheme.primary,
-                      strokeWidth: 0,
-                    ),
-                  ),
-                  spots: [
-                    for (var index = 0; index < weeks.length; index++)
-                      FlSpot(
-                        index.toDouble(),
-                        item.weeklyTotals[weeks[index]] ?? 0,
-                      ),
-                  ],
-                ),
             ],
           ),
         ),
+        lineBarsData: [
+          for (final item in series)
+            LineChartBarData(
+              isCurved: true,
+              curveSmoothness: 0.22,
+              preventCurveOverShooting: true,
+              barWidth: 2.6,
+              color: colors[item.key] ?? scheme.primary,
+              dotData: FlDotData(
+                show: weeks.length <= 14,
+                getDotPainter: (spot, _, bar, _) => FlDotCirclePainter(
+                  radius: 3,
+                  color: bar.color ?? scheme.primary,
+                  strokeWidth: 0,
+                ),
+              ),
+              spots: [
+                for (var index = 0; index < weeks.length; index++)
+                  FlSpot(
+                    index.toDouble(),
+                    item.weeklyTotals[weeks[index]] ?? 0,
+                  ),
+              ],
+            ),
+        ],
       ),
     );
   }

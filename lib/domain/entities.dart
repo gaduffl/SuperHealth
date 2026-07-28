@@ -1143,19 +1143,32 @@ class BiomarkerListItem {
       );
 }
 
+/// A biomarker that is due for measurement.
+///
+/// One entry per biomarker, never one per list: the same marker often sits on
+/// several lists, and counting it once per membership made "biomarkers due"
+/// report a number far higher than the number of tests actually needed.
 class DueBiomarker {
   const DueBiomarker({
     required this.biomarker,
-    required this.listName,
+    required this.listNames,
     required this.dueDate,
     required this.intervalDays,
     this.lastMeasuredAt,
   });
 
   final Biomarker biomarker;
-  final String listName;
+
+  /// Every list that asks for this biomarker, sorted for a stable display.
+  final List<String> listNames;
+
   final DateTime? lastMeasuredAt;
+
+  /// The earliest date any of those lists wants it by — the shortest interval
+  /// wins, because meeting that one satisfies the others too.
   final DateTime dueDate;
+
+  /// The interval behind [dueDate].
   final int intervalDays;
 
   int get daysOverdue => DateTime.now().difference(dueDate).inDays;

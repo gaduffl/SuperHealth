@@ -305,7 +305,7 @@ class LabsScreen extends StatelessWidget {
                       ),
                       title: Text(due.biomarker.displayName),
                       subtitle: Text(
-                        '${due.listName} · ${_labsText(context, 'every ${due.intervalDays} days', 'alle ${due.intervalDays} Tage')} · '
+                        '${listMembershipLabel(AppLocalizations.of(context), due.listNames)} · ${_labsText(context, 'every ${due.intervalDays} days', 'alle ${due.intervalDays} Tage')} · '
                         '${due.lastMeasuredAt == null ? _labsText(context, 'never measured', 'noch nie gemessen') : _labsText(context, '${due.daysOverdue} days overdue', '${due.daysOverdue} Tage überfällig')}',
                       ),
                       trailing: const Icon(Icons.chevron_right),

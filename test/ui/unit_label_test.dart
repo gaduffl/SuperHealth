@@ -42,4 +42,23 @@ void main() {
       '500 mg',
     );
   });
+
+  test('list membership names one or two lists and summarises more', () {
+    expect(listMembershipLabel(english, const []), 'No list');
+    expect(listMembershipLabel(german, const []), 'Keine Liste');
+    expect(listMembershipLabel(english, const ['Annual']), 'Annual');
+    expect(
+      listMembershipLabel(english, const ['Annual', 'Iron panel']),
+      'Annual, Iron panel',
+    );
+    // Beyond two, the names would crowd out the overdue figure next to them.
+    expect(
+      listMembershipLabel(english, const ['Annual', 'Iron panel', 'Quarterly']),
+      'Annual +2 more',
+    );
+    expect(
+      listMembershipLabel(german, const ['Jahr', 'Eisen', 'Quartal']),
+      'Jahr +2 weitere',
+    );
+  });
 }
