@@ -1207,10 +1207,12 @@ class _NeedsAttention extends StatelessWidget {
                   leading: const Icon(Icons.event_busy_outlined),
                   title: Text(strings.due(due.biomarker.displayName)),
                   subtitle: Text(
-                    due.lastMeasuredAt == null
-                        ? '${due.listName} · ${strings.neverMeasured}'
-                        : '${due.listName} · '
-                              '${strings.daysOverdue(due.daysOverdue)}',
+                    [
+                      listMembershipLabel(strings, due.listNames),
+                      due.lastMeasuredAt == null
+                          ? strings.neverMeasured
+                          : strings.daysOverdue(due.daysOverdue),
+                    ].join(' · '),
                   ),
                   onTap: () => navigation.go(
                     AppSection.biomarkers,

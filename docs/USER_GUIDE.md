@@ -32,7 +32,7 @@ Restoring a portable backup pauses ordinary OneDrive sync. Choose **Resume and m
 
 ## Daily use
 
-Today opens with the overview tiles. Each one is a shortcut: tapping it opens the screen that owns its number, already filtered — low stock opens the stock list limited to what is running out, biomarkers due opens the catalog limited to overdue markers.
+Today opens with the overview tiles. Each one is a shortcut: tapping it opens the screen that owns its number, already filtered — low stock opens the stock list limited to what is running out, biomarkers due opens the catalog limited to overdue markers. A marker that several lists ask for counts once, not once per list; the lists that want it are named beside it.
 
 Below the tiles, the day strip selects which day you are working on; the bar under each number shows how much of that day is recorded. The day's doses are grouped into morning, midday, evening, and bedtime:
 
@@ -47,7 +47,7 @@ The Supplements screen has four tabs:
 - **Catalog** — products, their ingredients, and their schedules. The stock unit is what one of the things is called — capsule, scoop, ml — and the suggestions next to the field cover the common answers. Everywhere an amount is shown, that unit is used; a product saved without one reads as plain "units" rather than an internal placeholder. Ingredients are edited as rows with separate name, amount, and unit fields; the amount is per one stock unit. **Paste label** opens a panel where you paste the ingredient table from the packaging together with the serving size it applies to — for example 4 capsules. The configured lab document parser model reads it into the rows, dividing the stated amounts down to one unit. The rows stay editable, so nothing is stored until you save the product. If the model reads a different serving size on the label than you entered, it says so instead of quietly storing a dose several times too high. No health record is sent with the request; only the pasted packaging text.
 - **Plan** — the weekly pillbox: dose per weekday and part of the day. Tap a filled cell to edit the schedule behind it. Below the grid, the components the active plan is designed to deliver each week, independent of adherence.
 - **Stock** — days of cover per product, the shopping list for a 1, 3, 6, or 12 month horizon rounded up to whole packages, and the planned monthly cost per product.
-- **History** — weekly adherence, product intake, and component exposure charts, the known intake cost trend, and CSV export. Pin a product or component to choose which lines the charts draw; with nothing pinned they show the six largest.
+- **History** — weekly adherence, product intake, and component exposure charts, the known intake cost trend, and CSV export. **Choose** on a chart opens the full list of products or components with checkboxes; every one you select is drawn, and with nothing selected the chart shows the six largest. Tapping a legend entry removes that line again. The same selection drives the pins in the exposure lists further down. A long range scrolls sideways rather than squeezing a year of weeks into one screen.
 
 The stock button in the app bar opens a drawer with days of cover for every product, from any screen.
 

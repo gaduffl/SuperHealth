@@ -1128,18 +1128,36 @@ class _TrackingScreenState extends State<TrackingScreen>
               title: strings.noDueScheduledDoses,
               message: strings.futureDosesExcluded,
             ),
-          if (pinnedSupplementSeries.isNotEmpty)
+          if (supplementSeries.isNotEmpty)
             ChartCard(
               title: strings.supplementExposure,
-              subtitle: strings.pick(
-                'Weekly totals for the pinned products.',
-                'Wochensummen der angehefteten Produkte.',
+              subtitle: _seriesSubtitle(
+                strings,
+                shown: pinnedSupplementSeries.length,
+                available: supplementSeries.length,
+                pinned: supplementSeries.any(
+                  (item) => _historyPins.contains('supplement|${item.key}'),
+                ),
+              ),
+              trailing: TextButton.icon(
+                onPressed: () => _chooseSeries(
+                  context,
+                  title: strings.supplementExposure,
+                  series: supplementSeries,
+                  pinKey: (item) => 'supplement|${item.key}',
+                ),
+                icon: const Icon(Icons.tune, size: 18),
+                label: Text(strings.pick('Choose', 'Auswählen')),
               ),
               legend: SeriesLegend(
                 entries: {
                   for (final item in pinnedSupplementSeries)
                     item.label: supplementColors[item.key]!,
                 },
+                onTap: (label) => _toggleHistoryPin(
+                  'supplement|'
+                  '${pinnedSupplementSeries.firstWhere((item) => item.label == label).key}',
+                ),
               ),
               child: WeeklySeriesChart(
                 weeks: weeks,
@@ -1155,18 +1173,36 @@ class _TrackingScreenState extends State<TrackingScreen>
                     .join('. '),
               ),
             ),
-          if (pinnedIngredientSeries.isNotEmpty)
+          if (ingredientSeries.isNotEmpty)
             ChartCard(
               title: strings.ingredientExposure,
-              subtitle: strings.pick(
-                'Weekly totals for the pinned components.',
-                'Wochensummen der angehefteten Komponenten.',
+              subtitle: _seriesSubtitle(
+                strings,
+                shown: pinnedIngredientSeries.length,
+                available: ingredientSeries.length,
+                pinned: ingredientSeries.any(
+                  (item) => _historyPins.contains('ingredient|${item.key}'),
+                ),
+              ),
+              trailing: TextButton.icon(
+                onPressed: () => _chooseSeries(
+                  context,
+                  title: strings.ingredientExposure,
+                  series: ingredientSeries,
+                  pinKey: (item) => 'ingredient|${item.key}',
+                ),
+                icon: const Icon(Icons.tune, size: 18),
+                label: Text(strings.pick('Choose', 'Auswählen')),
               ),
               legend: SeriesLegend(
                 entries: {
                   for (final item in pinnedIngredientSeries)
                     item.label: ingredientColors[item.key]!,
                 },
+                onTap: (label) => _toggleHistoryPin(
+                  'ingredient|'
+                  '${pinnedIngredientSeries.firstWhere((item) => item.label == label).key}',
+                ),
               ),
               child: WeeklySeriesChart(
                 weeks: weeks,
@@ -1347,6 +1383,133 @@ class _TrackingScreenState extends State<TrackingScreen>
     );
   }
 
+  /// Explains what the chart is currently drawing.
+  String _seriesSubtitle(
+    AppLocalizations strings, {
+    required int shown,
+    required int available,
+    required bool pinned,
+  }) => pinned
+      ? strings.pick(
+          'Weekly totals for $shown of $available selected.',
+          'Wochensummen für $shown von $available ausgewählten.',
+        )
+      : strings.pick(
+          'Weekly totals for the $shown largest of $available. Choose to pick '
+              'your own.',
+          'Wochensummen der $shown größten von $available. Wähle eigene aus.',
+        );
+
+  /// Picks which series the chart draws.
+  ///
+  /// Writes to the same pins the exposure lists below use, so a series pinned
+  /// here shows as pinned there and the two never disagree.
+  Future<void> _chooseSeries(
+    BuildContext context, {
+    required String title,
+    required List<ExposureSeries> series,
+    required String Function(ExposureSeries item) pinKey,
+  }) async {
+    final strings = AppLocalizations.of(context);
+    final ordered = [...series]
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.8,
+        child: StatefulBuilder(
+          builder: (builderContext, setSheetState) {
+            final selected = ordered
+                .where((item) => _historyPins.contains(pinKey(item)))
+                .length;
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(builderContext).textTheme.titleLarge,
+                      ),
+                      Text(
+                        selected == 0
+                            ? strings.pick(
+                                'Nothing selected — the chart shows the '
+                                    'largest series.',
+                                'Nichts ausgewählt — das Diagramm zeigt die '
+                                    'größten Reihen.',
+                              )
+                            : strings.pick(
+                                '$selected selected',
+                                '$selected ausgewählt',
+                              ),
+                        style: Theme.of(builderContext).textTheme.bodySmall
+                            ?.copyWith(
+                              color: Theme.of(
+                                builderContext,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+                    children: [
+                      for (final item in ordered)
+                        CheckboxListTile(
+                          value: _historyPins.contains(pinKey(item)),
+                          title: Text(item.name),
+                          subtitle: Text(
+                            '${strings.formatNumber(item.total)} ${item.unit}',
+                          ),
+                          onChanged: (_) async {
+                            await _toggleHistoryPin(pinKey(item));
+                            setSheetState(() {});
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Row(
+                      children: [
+                        TextButton(
+                          onPressed: selected == 0
+                              ? null
+                              : () async {
+                                  await _clearHistoryPins(
+                                    ordered.map(pinKey).toSet(),
+                                  );
+                                  setSheetState(() {});
+                                },
+                          child: Text(strings.pick('Clear', 'Zurücksetzen')),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: Text(strings.pick('Done', 'Fertig')),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   /// Pinned series if any are pinned, otherwise the six largest.
   List<ExposureSeries> _pinnedOrTop(
     List<ExposureSeries> series,
@@ -1355,9 +1518,9 @@ class _TrackingScreenState extends State<TrackingScreen>
     final pinned = series
         .where((item) => _historyPins.contains(pinKey(item)))
         .toList();
-    return pinned.isNotEmpty
-        ? pinned.take(8).toList()
-        : series.take(6).toList();
+    // An explicit choice is drawn in full. Only the unselected default is
+    // capped, so a large catalog does not open as an unreadable tangle.
+    return pinned.isNotEmpty ? pinned : series.take(6).toList();
   }
 
   Future<void> _exportHistoryCsv(
@@ -1586,6 +1749,18 @@ class _TrackingScreenState extends State<TrackingScreen>
       _historyPinsProfileId = profileId;
       _historyPins = next;
     });
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(
+      _historyPinPreferenceKey(profileId),
+      next.toList()..sort(),
+    );
+  }
+
+  Future<void> _clearHistoryPins(Set<String> keys) async {
+    final profileId = context.read<AppController>().activeProfile?.id;
+    if (profileId == null) return;
+    final next = _historyPins.difference(keys);
+    setState(() => _historyPins = next);
     final preferences = await SharedPreferences.getInstance();
     await preferences.setStringList(
       _historyPinPreferenceKey(profileId),

@@ -1270,7 +1270,10 @@ class HealthRepository {
       latest.putIfAbsent(measurement.biomarkerId, () => measurement.takenAt);
     }
     final now = DateTime.now();
-    final result = <DueBiomarker>[];
+    // Collapsed per biomarker: a marker on three lists is still one blood
+    // draw, so it must count and read as one due item.
+    final byBiomarker = <String, DueBiomarker>{};
+    final listNames = <String, Set<String>>{};
     for (final list in lists) {
       for (final item in list.items) {
         final interval = item.dueIntervalDays;
@@ -1280,20 +1283,42 @@ class HealthRepository {
         final dueDate =
             measured?.add(Duration(days: interval)) ??
             DateTime.fromMillisecondsSinceEpoch(0);
-        if (!dueDate.isAfter(now)) {
-          result.add(
-            DueBiomarker(
-              biomarker: biomarker,
-              listName: list.name,
-              lastMeasuredAt: measured,
-              dueDate: dueDate,
-              intervalDays: interval,
-            ),
+        if (dueDate.isAfter(now)) continue;
+        listNames.putIfAbsent(biomarker.id, () => <String>{}).add(list.name);
+        final existing = byBiomarker[biomarker.id];
+        // Keep the most demanding list's schedule: the earliest due date, and
+        // on a tie the shorter interval.
+        if (existing == null ||
+            dueDate.isBefore(existing.dueDate) ||
+            (dueDate == existing.dueDate && interval < existing.intervalDays)) {
+          byBiomarker[biomarker.id] = DueBiomarker(
+            biomarker: biomarker,
+            listNames: const [],
+            lastMeasuredAt: measured,
+            dueDate: dueDate,
+            intervalDays: interval,
           );
         }
       }
     }
-    result.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    final result = [
+      for (final entry in byBiomarker.entries)
+        DueBiomarker(
+          biomarker: entry.value.biomarker,
+          listNames: listNames[entry.key]!.toList()..sort(),
+          lastMeasuredAt: entry.value.lastMeasuredAt,
+          dueDate: entry.value.dueDate,
+          intervalDays: entry.value.intervalDays,
+        ),
+    ];
+    result.sort((a, b) {
+      final due = a.dueDate.compareTo(b.dueDate);
+      return due != 0
+          ? due
+          : a.biomarker.displayName.toLowerCase().compareTo(
+              b.biomarker.displayName.toLowerCase(),
+            );
+    });
     return result;
   }
 
