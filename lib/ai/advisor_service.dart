@@ -107,7 +107,10 @@ Be direct and useful. State what is known from the profile, what is inferred, an
         '$conversationAppendix$workspaceAppendix\n\n'
         '<context_receipt>${context.receiptInstruction}</context_receipt>\n'
         '<coverage_protocol>${context.coverageInstruction}</coverage_protocol>';
-    const maxOutputTokens = 12000;
+    // Adaptive thinking shares the output budget on current Anthropic models,
+    // so the cap leaves room for reasoning plus the visible answer while
+    // staying inside non-streaming timeout guidance.
+    const maxOutputTokens = 16000;
     final capabilities = _capabilities.forModel(
       settings.provider,
       settings.model,

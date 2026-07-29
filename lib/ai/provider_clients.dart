@@ -346,12 +346,12 @@ class AnthropicClient extends _BaseClient {
   AnthropicClient(super.dio, super.capabilityRegistry);
 
   static const _baseUrl = 'https://api.anthropic.com/v1';
-  static const _adaptiveThinkingModels = {
-    'claude-opus-4-8',
-    'claude-opus-4-7',
-    'claude-opus-4-6',
-    'claude-sonnet-4-6',
-  };
+  static const _filesBeta = 'files-api-2025-04-14';
+  static const _fallbackBeta = 'server-side-fallback-2026-07-01';
+
+  /// A server-tool loop can pause several times on a large evidence package;
+  /// each resume re-sends the conversation, so keep the cap small.
+  static const _maxPauseTurnResumes = 4;
 
   @override
   AiProvider get provider => AiProvider.anthropic;
@@ -359,11 +359,11 @@ class AnthropicClient extends _BaseClient {
   @override
   bool get supportsContextFile => true;
 
-  Options _options(String key, {bool filesBeta = false}) => Options(
+  Options _options(String key, {List<String> betas = const []}) => Options(
     headers: {
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
-      if (filesBeta) 'anthropic-beta': 'files-api-2025-04-14',
+      if (betas.isNotEmpty) 'anthropic-beta': betas.join(','),
       'Content-Type': 'application/json',
     },
   );
@@ -415,6 +415,7 @@ class AnthropicClient extends _BaseClient {
     ProviderRequest request,
   ) async {
     validate(request);
+    final capabilities = capabilityRegistry.forModel(provider, request.model);
     String? contextFileId;
     try {
       if (request.contextFile) {
@@ -423,7 +424,16 @@ class AnthropicClient extends _BaseClient {
       final body = <String, Object?>{
         'model': request.model,
         'max_tokens': request.maxOutputTokens,
-        'system': request.systemPrompt,
+        // The stable prefix (system, then the context block below) carries the
+        // cache breakpoints; the varying task prompt comes last so repeated
+        // calls over the same evidence package are served from cache.
+        'system': [
+          {
+            'type': 'text',
+            'text': request.systemPrompt,
+            'cache_control': {'type': 'ephemeral'},
+          },
+        ],
         'messages': [
           {
             'role': 'user',
@@ -440,24 +450,55 @@ class AnthropicClient extends _BaseClient {
                     },
                     {'type': 'container_upload', 'file_id': contextFileId},
                   ]
-                : '${request.userPrompt}\n\n<complete_health_context>\n'
-                      '${request.contextJson}\n</complete_health_context>',
+                : [
+                    {
+                      'type': 'text',
+                      'text':
+                          '<complete_health_context>\n${request.contextJson}'
+                          '\n</complete_health_context>',
+                      'cache_control': {'type': 'ephemeral'},
+                    },
+                    {'type': 'text', 'text': request.userPrompt},
+                  ],
           },
         ],
       };
-      if (request.reasoningLevel != null) {
-        if (_adaptiveThinkingModels.contains(request.model)) {
-          body['thinking'] = {'type': 'adaptive'};
-        }
-        body['output_config'] = {'effort': request.reasoningLevel};
+      // Adaptive thinking is sent whenever the model documents it. On Opus
+      // 4.7/4.8 omitting the parameter silently disables thinking; on newer
+      // models an explicit adaptive value is the documented no-op default.
+      if (capabilities.adaptiveThinking) {
+        body['thinking'] = {'type': 'adaptive'};
       }
+      final outputConfig = <String, Object?>{};
+      if (request.reasoningLevel != null) {
+        outputConfig['effort'] = request.reasoningLevel;
+      }
+      // Structured outputs are not combined with web search: search results
+      // carry citation blocks, and citations are documented as incompatible
+      // with output_config.format.
+      if (request.requireJson &&
+          request.jsonSchema != null &&
+          capabilities.structuredOutput &&
+          !request.webSearch) {
+        outputConfig['format'] = {
+          'type': 'json_schema',
+          'schema': request.jsonSchema,
+        };
+      }
+      if (outputConfig.isNotEmpty) body['output_config'] = outputConfig;
+      // A benign health question can trip the frontier safety classifiers;
+      // the documented default fallback re-serves it on the recommended
+      // model inside the same call instead of failing the whole turn.
+      if (capabilities.refusalFallback) body['fallbacks'] = 'default';
       final tools = <Map<String, Object?>>[];
       if (request.webSearch) {
-        tools.add({
-          'type': 'web_search_20260318',
-          'name': 'web_search',
-          'max_uses': 8,
-        });
+        final toolType = capabilities.webSearchToolType;
+        if (toolType == null) {
+          throw AiProviderException(
+            'No documented web-search tool version for ${request.model}.',
+          );
+        }
+        tools.add({'type': toolType, 'name': 'web_search', 'max_uses': 8});
       }
       if (request.codeExecution) {
         tools.add({
@@ -466,22 +507,59 @@ class AnthropicClient extends _BaseClient {
         });
       }
       if (tools.isNotEmpty) body['tools'] = tools;
-      final response = await dio.post<Map<String, dynamic>>(
-        '$_baseUrl/messages',
-        data: body,
-        options: _options(apiKey, filesBeta: request.contextFile),
+      final betas = [
+        if (request.contextFile) _filesBeta,
+        if (capabilities.refusalFallback) _fallbackBeta,
+      ];
+      final options = _options(apiKey, betas: betas);
+
+      var raw = objectMap(
+        (await _postWithRetry('$_baseUrl/messages', body, options)).data,
       );
-      final raw = objectMap(response.data);
-      final content = raw['content'];
-      final textParts = <String>[];
-      if (content is List) {
-        for (final block in content.whereType<Map>()) {
-          if (block['type'] == 'text' && block['text'] != null) {
-            textParts.add(block['text'].toString());
-          }
-        }
+      final textParts = <String>[..._textBlocks(raw)];
+      final citations = <String>{...collectUrls(raw)};
+      // A server-tool loop that hits its iteration limit pauses the turn.
+      // Resume by echoing the assistant content; the reply continues where
+      // the paused turn stopped, so text accumulates across resumes.
+      var resumes = 0;
+      while (raw['stop_reason'] == 'pause_turn' &&
+          resumes < _maxPauseTurnResumes) {
+        resumes += 1;
+        final messages = List<Object?>.from(body['messages']! as List)
+          ..add({'role': 'assistant', 'content': raw['content']});
+        body['messages'] = messages;
+        raw = objectMap(
+          (await _postWithRetry('$_baseUrl/messages', body, options)).data,
+        );
+        textParts.addAll(_textBlocks(raw));
+        citations.addAll(collectUrls(raw));
+      }
+      final stopReason = raw['stop_reason']?.toString();
+      if (stopReason == 'pause_turn') {
+        throw const AiProviderException(
+          'Anthropic paused the tool loop repeatedly without finishing. '
+          'Try again, or disable web search for this request.',
+        );
+      }
+      if (stopReason == 'refusal') {
+        final details = raw['stop_details'];
+        final explanation = details is Map
+            ? details['explanation']?.toString()
+            : null;
+        throw AiProviderException(
+          explanation == null || explanation.isEmpty
+              ? 'Anthropic declined this request for safety reasons.'
+              : 'Anthropic declined this request for safety reasons: '
+                    '$explanation',
+        );
       }
       final text = textParts.join('\n').trim();
+      if (stopReason == 'max_tokens') {
+        throw const AiProviderException(
+          'Anthropic stopped at the output token limit, so the answer is '
+          'incomplete. Retry, or reduce the request scope.',
+        );
+      }
       if (text.isEmpty) {
         throw const AiProviderException('Anthropic returned no text output.');
       }
@@ -489,7 +567,7 @@ class AnthropicClient extends _BaseClient {
         text: text,
         raw: raw,
         responseId: raw['id']?.toString(),
-        citations: collectUrls(raw),
+        citations: citations.toList(growable: false),
       );
     } on DioException catch (error) {
       providerError('Anthropic', error);
@@ -498,11 +576,54 @@ class AnthropicClient extends _BaseClient {
         try {
           await dio.delete<void>(
             '$_baseUrl/files/$contextFileId',
-            options: _options(apiKey, filesBeta: true),
+            options: _options(apiKey, betas: const [_filesBeta]),
           );
         } on DioException {
           // The request result is more important than best-effort cleanup.
         }
+      }
+    }
+  }
+
+  List<String> _textBlocks(Map<String, Object?> raw) {
+    final content = raw['content'];
+    if (content is! List) return const [];
+    return [
+      for (final block in content.whereType<Map>())
+        if (block['type'] == 'text' && block['text'] != null)
+          block['text'].toString(),
+    ];
+  }
+
+  /// Retries transient Anthropic failures (rate limits, overload, server
+  /// errors) with exponential backoff, honoring an explicit retry-after.
+  Future<Response<Map<String, dynamic>>> _postWithRetry(
+    String url,
+    Map<String, Object?> body,
+    Options options,
+  ) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return await dio.post<Map<String, dynamic>>(
+          url,
+          data: body,
+          options: options,
+        );
+      } on DioException catch (error) {
+        final status = error.response?.statusCode;
+        const retryable = {429, 500, 502, 503, 529};
+        if (attempt >= 2 || status == null || !retryable.contains(status)) {
+          rethrow;
+        }
+        final retryAfter = int.tryParse(
+          error.response?.headers.value('retry-after') ?? '',
+        );
+        final delay = retryAfter != null
+            ? Duration(seconds: retryAfter.clamp(1, 60).toInt())
+            : Duration(seconds: 2 << attempt);
+        attempt += 1;
+        await Future<void>.delayed(delay);
       }
     }
   }
