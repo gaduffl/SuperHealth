@@ -503,6 +503,13 @@ class _Client implements AiProviderClient {
   Future<List<AiModelInfo>> listModels(String apiKey) async => const [];
 
   @override
+  Future<int?> countContextTokens(
+    String apiKey, {
+    required String model,
+    required String contextJson,
+  }) async => null;
+
+  @override
   Future<ProviderResponse> respond(
     String apiKey,
     ProviderRequest request,

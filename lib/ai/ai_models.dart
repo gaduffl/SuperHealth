@@ -53,12 +53,23 @@ class ModelCapabilities {
   final bool refusalFallback;
 }
 
+/// One prior conversation turn, delivered to providers as a native chat
+/// message instead of serialized transcript text.
+class ProviderChatMessage {
+  const ProviderChatMessage({required this.role, required this.content});
+
+  /// Either `user` or `assistant`.
+  final String role;
+  final String content;
+}
+
 class ProviderRequest {
   const ProviderRequest({
     required this.model,
     required this.systemPrompt,
     required this.userPrompt,
     required this.contextJson,
+    this.history = const [],
     this.reasoningLevel,
     this.webSearch = false,
     this.codeExecution = false,
@@ -73,6 +84,10 @@ class ProviderRequest {
   final String systemPrompt;
   final String userPrompt;
   final String contextJson;
+
+  /// Prior turns in order. The current question stays in [userPrompt];
+  /// providers place history between the stable context and the prompt.
+  final List<ProviderChatMessage> history;
   final String? reasoningLevel;
   final bool webSearch;
   final bool codeExecution;

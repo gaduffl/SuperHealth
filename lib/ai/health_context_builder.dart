@@ -182,6 +182,7 @@ class HealthContextBuilder {
     required int maxOutputTokens,
     int promptReserveTokens = 3000,
     int additionalInputTokens = 0,
+    int? measuredContextTokens,
   }) {
     deliveryFor(
       context: context,
@@ -189,6 +190,7 @@ class HealthContextBuilder {
       maxOutputTokens: maxOutputTokens,
       promptReserveTokens: promptReserveTokens,
       additionalInputTokens: additionalInputTokens,
+      measuredContextTokens: measuredContextTokens,
     );
   }
 
@@ -198,6 +200,9 @@ class HealthContextBuilder {
     required int maxOutputTokens,
     int promptReserveTokens = 3000,
     int additionalInputTokens = 0,
+    // An exact provider-side count when available; the local byte-based
+    // estimate remains the fallback.
+    int? measuredContextTokens,
   }) {
     final limit = capabilities.contextWindowTokens;
     if (limit == null) {
@@ -209,7 +214,7 @@ class HealthContextBuilder {
       );
     }
     final required =
-        context.estimatedTokens +
+        (measuredContextTokens ?? context.estimatedTokens) +
         additionalInputTokens +
         maxOutputTokens +
         promptReserveTokens;

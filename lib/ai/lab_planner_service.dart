@@ -272,6 +272,7 @@ ${context.coverageInstruction}
 
 $_schemaInstructions
 ''';
+    final client = _clientFactory.create(settings.provider);
     final delivery = _contextBuilder.deliveryFor(
       context: context,
       capabilities: _capabilities.forModel(settings.provider, settings.model),
@@ -282,8 +283,12 @@ $_schemaInstructions
       additionalInputTokens:
           _estimatedTokens('${AdvisorService.systemPrompt}\n$userPrompt') +
           maxOutputTokens,
+      measuredContextTokens: await client.countContextTokens(
+        key,
+        model: settings.model,
+        contextJson: context.json,
+      ),
     );
-    final client = _clientFactory.create(settings.provider);
     var response = await client.respond(
       key,
       ProviderRequest(

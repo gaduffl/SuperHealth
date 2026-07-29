@@ -135,20 +135,122 @@ void main() {
         throwsA(isA<AiProviderException>()),
       );
 
+      expect(body?['stream'], isTrue);
       final system = body?['system'] as List;
       expect((system.first as Map)['cache_control'], {'type': 'ephemeral'});
-      final message = (body?['messages'] as List).first as Map;
-      final content = message['content'] as List;
+      final messages = body?['messages'] as List;
+      final content = (messages.first as Map)['content'] as List;
       expect(
-        (content.first as Map)['text'],
+        (content.single as Map)['text'],
         contains('<complete_health_context>'),
       );
-      expect((content.first as Map)['cache_control'], {'type': 'ephemeral'});
-      expect((content.last as Map)['text'], 'question');
+      expect((content.single as Map)['cache_control'], {'type': 'ephemeral'});
+      expect(messages.last, {'role': 'user', 'content': 'question'});
       final outputConfig = body?['output_config'] as Map;
       expect(outputConfig['format'], {'type': 'json_schema', 'schema': schema});
     },
   );
+
+  test('Anthropic places native history between context and prompt', () async {
+    final dio = Dio();
+    Map<String, Object?>? body;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          body = Map<String, Object?>.from(options.data as Map);
+          handler.reject(
+            DioException(
+              requestOptions: options,
+              type: DioExceptionType.cancel,
+            ),
+          );
+        },
+      ),
+    );
+    final client = AnthropicClient(dio, ProviderCapabilityRegistry());
+
+    await expectLater(
+      client.respond(
+        'test-key',
+        const ProviderRequest(
+          model: 'claude-opus-5',
+          systemPrompt: 'system',
+          userPrompt: 'question',
+          contextJson: '{}',
+          history: [
+            ProviderChatMessage(role: 'user', content: 'earlier question'),
+            ProviderChatMessage(role: 'assistant', content: 'earlier answer'),
+          ],
+        ),
+      ),
+      throwsA(isA<AiProviderException>()),
+    );
+
+    final messages = body?['messages'] as List;
+    expect(messages, hasLength(4));
+    expect((messages[0] as Map)['role'], 'user');
+    expect(messages[1], {'role': 'user', 'content': 'earlier question'});
+    expect(messages[2], {'role': 'assistant', 'content': 'earlier answer'});
+    expect(messages[3], {'role': 'user', 'content': 'question'});
+  });
+
+  test('Anthropic returns the provider token count or null', () async {
+    final dio = Dio();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (options.path.endsWith('/messages/count_tokens')) {
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: <String, dynamic>{'input_tokens': 4321},
+              ),
+            );
+          } else {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.cancel,
+              ),
+            );
+          }
+        },
+      ),
+    );
+    final client = AnthropicClient(dio, ProviderCapabilityRegistry());
+    expect(
+      await client.countContextTokens(
+        'test-key',
+        model: 'claude-opus-5',
+        contextJson: '{}',
+      ),
+      4321,
+    );
+
+    final failing = Dio();
+    failing.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) => handler.reject(
+          DioException(
+            requestOptions: options,
+            type: DioExceptionType.connectionError,
+          ),
+        ),
+      ),
+    );
+    expect(
+      await AnthropicClient(
+        failing,
+        ProviderCapabilityRegistry(),
+      ).countContextTokens(
+        'test-key',
+        model: 'claude-opus-5',
+        contextJson: '{}',
+      ),
+      isNull,
+    );
+  });
 
   test('Anthropic omits the JSON schema when web search is enabled', () async {
     final dio = Dio();
@@ -290,6 +392,63 @@ void main() {
     );
     expect(body?['text'], {
       'format': {'type': 'json_object'},
+    });
+  });
+
+  test('OpenAI sends message-list input with schema-enforced JSON', () async {
+    final dio = Dio();
+    Map<String, Object?>? body;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          body = Map<String, Object?>.from(options.data as Map);
+          handler.reject(
+            DioException(
+              requestOptions: options,
+              type: DioExceptionType.cancel,
+            ),
+          );
+        },
+      ),
+    );
+    final client = OpenAiClient(dio, ProviderCapabilityRegistry());
+    const schema = <String, Object?>{
+      'type': 'object',
+      'properties': <String, Object?>{},
+      'additionalProperties': false,
+    };
+
+    await expectLater(
+      client.respond(
+        'test-key',
+        const ProviderRequest(
+          model: 'gpt-5.6',
+          systemPrompt: 'system',
+          userPrompt: 'question',
+          contextJson: '{"complete":true}',
+          requireJson: true,
+          jsonSchema: schema,
+          history: [
+            ProviderChatMessage(role: 'assistant', content: 'earlier answer'),
+          ],
+        ),
+      ),
+      throwsA(isA<AiProviderException>()),
+    );
+
+    expect(body?['stream'], isTrue);
+    final input = body?['input'] as List;
+    expect(input, hasLength(3));
+    expect((input[0] as Map)['content'], contains('<complete_health_context>'));
+    expect(input[1], {'role': 'assistant', 'content': 'earlier answer'});
+    expect(input[2], {'role': 'user', 'content': 'question'});
+    expect(body?['text'], {
+      'format': {
+        'type': 'json_schema',
+        'name': 'superhealth_response',
+        'strict': true,
+        'schema': schema,
+      },
     });
   });
 

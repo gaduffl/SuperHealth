@@ -22,6 +22,15 @@ abstract class AiProviderClient {
   Future<List<AiModelInfo>> listModels(String apiKey);
 
   Future<ProviderResponse> respond(String apiKey, ProviderRequest request);
+
+  /// The provider's exact token count for the context payload, or null when
+  /// no documented counting endpoint exists. Implementations never throw;
+  /// callers fall back to the local byte-based estimate on null.
+  Future<int?> countContextTokens(
+    String apiKey, {
+    required String model,
+    required String contextJson,
+  });
 }
 
 class AiProviderClientFactory {
@@ -106,8 +115,19 @@ abstract class _BaseClient implements AiProviderClient {
     }
   }
 
-  Never providerError(String providerName, DioException error) {
-    final responseData = error.response?.data;
+  @override
+  Future<int?> countContextTokens(
+    String apiKey, {
+    required String model,
+    required String contextJson,
+  }) async => null;
+
+  Never providerError(
+    String providerName,
+    DioException error, {
+    Object? decodedBody,
+  }) {
+    final responseData = decodedBody ?? error.response?.data;
     var message = '$providerName request failed.';
     if (responseData is Map) {
       final nested = responseData['error'];
@@ -120,6 +140,69 @@ abstract class _BaseClient implements AiProviderClient {
       }
     }
     throw AiProviderException(message, statusCode: error.response?.statusCode);
+  }
+
+  /// Streamed requests deliver error bodies as a byte stream; decode it so
+  /// [providerError] can surface the provider's own message.
+  Future<Object?> decodeStreamError(DioException error) async {
+    final data = error.response?.data;
+    if (data is! ResponseBody) return null;
+    try {
+      final bytes = <int>[];
+      await for (final chunk in data.stream) {
+        bytes.addAll(chunk);
+      }
+      return jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Retries transient failures (rate limits, overload, server errors) with
+  /// exponential backoff, honoring an explicit retry-after header. Errors
+  /// after a stream has started are not retried; a partial turn is not
+  /// safely repeatable.
+  Future<T> retryTransient<T>(Future<T> Function() send) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return await send();
+      } on DioException catch (error) {
+        final status = error.response?.statusCode;
+        const retryable = {429, 500, 502, 503, 529};
+        if (attempt >= 2 || status == null || !retryable.contains(status)) {
+          rethrow;
+        }
+        final retryAfter = int.tryParse(
+          error.response?.headers.value('retry-after') ?? '',
+        );
+        final delay = retryAfter != null
+            ? Duration(seconds: retryAfter.clamp(1, 60).toInt())
+            : Duration(seconds: 2 << attempt);
+        attempt += 1;
+        await Future<void>.delayed(delay);
+      }
+    }
+  }
+
+  /// Parses a server-sent-event byte stream into its JSON data events.
+  Stream<Map<String, Object?>> sseJsonEvents(ResponseBody body) async* {
+    final lines = body.stream
+        .cast<List<int>>()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+    await for (final line in lines) {
+      if (!line.startsWith('data:')) continue;
+      final payload = line.substring(5).trim();
+      if (payload.isEmpty || payload == '[DONE]') continue;
+      Object? decoded;
+      try {
+        decoded = jsonDecode(payload);
+      } on FormatException {
+        continue; // Keep-alive comments and partial frames are not events.
+      }
+      if (decoded is Map) yield Map<String, Object?>.from(decoded);
+    }
   }
 
   Map<String, Object?> objectMap(Object? value) {
@@ -230,6 +313,7 @@ class OpenAiClient extends _BaseClient {
     ProviderRequest request,
   ) async {
     validate(request);
+    final capabilities = capabilityRegistry.forModel(provider, request.model);
     String? contextFileId;
     try {
       if (request.contextFile) {
@@ -238,15 +322,28 @@ class OpenAiClient extends _BaseClient {
       final body = <String, Object?>{
         'model': request.model,
         'store': false,
+        'stream': true,
         'instructions': request.systemPrompt,
-        'input': request.contextFile
-            ? '${request.userPrompt}\n\nThe complete health evidence package is '
-                  'available in the code-interpreter container. Locate '
-                  'superhealth-context.json, use code to load every section, '
-                  'verify the exact file SHA-256 ${request.contextFileSha256}, and '
-                  'follow the coverage protocol before answering.'
-            : '${request.userPrompt}\n\n<complete_health_context>\n'
-                  '${request.contextJson}\n</complete_health_context>',
+        // The stable context leads and the varying task prompt comes last so
+        // OpenAI's automatic prefix caching serves repeated calls over the
+        // same evidence package. History rides as native chat turns.
+        'input': [
+          {
+            'role': 'user',
+            'content': request.contextFile
+                ? 'The complete health evidence package is available in the '
+                      'code-interpreter container. Locate '
+                      'superhealth-context.json, use code to load every '
+                      'section, verify the exact file SHA-256 '
+                      '${request.contextFileSha256}, and follow the coverage '
+                      'protocol before answering.'
+                : '<complete_health_context>\n${request.contextJson}'
+                      '\n</complete_health_context>',
+          },
+          for (final turn in request.history)
+            {'role': turn.role, 'content': turn.content},
+          {'role': 'user', 'content': request.userPrompt},
+        ],
         'max_output_tokens': request.maxOutputTokens,
       };
       if (request.reasoningLevel != null) {
@@ -265,32 +362,63 @@ class OpenAiClient extends _BaseClient {
         });
       }
       if (tools.isNotEmpty) body['tools'] = tools;
-      if (request.requireJson &&
-          capabilityRegistry
-              .forModel(provider, request.model)
-              .structuredOutput) {
+      if (request.requireJson && capabilities.structuredOutput) {
+        final schema = request.jsonSchema;
         body['text'] = {
-          'format': {'type': 'json_object'},
+          'format': schema == null
+              ? {'type': 'json_object'}
+              : {
+                  'type': 'json_schema',
+                  'name': 'superhealth_response',
+                  'strict': true,
+                  'schema': schema,
+                },
         };
       }
-      final response = await dio.post<Map<String, dynamic>>(
-        '$_baseUrl/responses',
-        data: body,
-        options: _options(apiKey),
-      );
-      final raw = objectMap(response.data);
+      final raw = await _streamResponse(apiKey, body);
+      final status = raw['status']?.toString();
+      if (status == 'failed') {
+        final error = raw['error'];
+        throw AiProviderException(
+          error is Map && error['message'] != null
+              ? 'OpenAI request failed: ${error['message']}'
+              : 'OpenAI request failed.',
+        );
+      }
+      if (status == 'incomplete') {
+        final details = raw['incomplete_details'];
+        final reason = details is Map ? details['reason']?.toString() : null;
+        throw AiProviderException(
+          reason == 'max_output_tokens'
+              ? 'OpenAI stopped at the output token limit, so the answer is '
+                    'incomplete. Retry, or reduce the request scope.'
+              : 'OpenAI returned an incomplete response'
+                    '${reason == null ? '' : ' ($reason)'}.',
+        );
+      }
       final textParts = <String>[];
+      final refusals = <String>[];
       final output = raw['output'];
       if (output is List) {
         for (final item in output.whereType<Map>()) {
+          if (item['type'] != null && item['type'] != 'message') continue;
           final content = item['content'];
           if (content is! List) continue;
           for (final block in content.whereType<Map>()) {
-            if (block['text'] != null) textParts.add(block['text'].toString());
+            if (block['type'] == 'refusal' && block['refusal'] != null) {
+              refusals.add(block['refusal'].toString());
+            } else if (block['text'] != null) {
+              textParts.add(block['text'].toString());
+            }
           }
         }
       }
       final text = textParts.join('\n').trim();
+      if (text.isEmpty && refusals.isNotEmpty) {
+        throw AiProviderException(
+          'OpenAI declined this request: ${refusals.join(' ')}',
+        );
+      }
       if (text.isEmpty) {
         throw const AiProviderException('OpenAI returned no text output.');
       }
@@ -301,7 +429,11 @@ class OpenAiClient extends _BaseClient {
         citations: collectUrls(raw),
       );
     } on DioException catch (error) {
-      providerError('OpenAI', error);
+      providerError(
+        'OpenAI',
+        error,
+        decodedBody: await decodeStreamError(error),
+      );
     } finally {
       if (contextFileId != null) {
         try {
@@ -314,6 +446,39 @@ class OpenAiClient extends _BaseClient {
         }
       }
     }
+  }
+
+  /// Streams a Responses API call and returns the final response object from
+  /// its terminal event, keeping the connection alive through long
+  /// high-effort turns.
+  Future<Map<String, Object?>> _streamResponse(
+    String apiKey,
+    Map<String, Object?> body,
+  ) async {
+    final response = await retryTransient(
+      () => dio.post<ResponseBody>(
+        '$_baseUrl/responses',
+        data: body,
+        options: _options(apiKey).copyWith(responseType: ResponseType.stream),
+      ),
+    );
+    final streamBody = response.data;
+    if (streamBody == null) {
+      throw const AiProviderException('OpenAI returned an empty stream.');
+    }
+    await for (final event in sseJsonEvents(streamBody)) {
+      switch (event['type']) {
+        case 'response.completed' || 'response.incomplete' || 'response.failed':
+          return objectMap(event['response']);
+        case 'error':
+          throw AiProviderException(
+            event['message']?.toString() ?? 'OpenAI stream error.',
+          );
+      }
+    }
+    throw const AiProviderException(
+      'OpenAI ended the stream without a final response.',
+    );
   }
 
   Future<String> _uploadContext(String apiKey, String json) async {
@@ -424,9 +589,11 @@ class AnthropicClient extends _BaseClient {
       final body = <String, Object?>{
         'model': request.model,
         'max_tokens': request.maxOutputTokens,
-        // The stable prefix (system, then the context block below) carries the
-        // cache breakpoints; the varying task prompt comes last so repeated
-        // calls over the same evidence package are served from cache.
+        'stream': true,
+        // The stable prefix (system, then the context turn below) carries the
+        // cache breakpoints; history rides as native chat turns and the
+        // varying task prompt comes last so repeated calls over the same
+        // evidence package are served from cache.
         'system': [
           {
             'type': 'text',
@@ -442,11 +609,11 @@ class AnthropicClient extends _BaseClient {
                     {
                       'type': 'text',
                       'text':
-                          '${request.userPrompt}\n\nThe complete health evidence '
-                          'package is attached as superhealth-context.json. Use '
-                          'code execution to load every section, verify the exact '
-                          'file SHA-256 ${request.contextFileSha256}, and follow '
-                          'the coverage protocol before answering.',
+                          'The complete health evidence package is attached '
+                          'as superhealth-context.json. Use code execution to '
+                          'load every section, verify the exact file SHA-256 '
+                          '${request.contextFileSha256}, and follow the '
+                          'coverage protocol before answering.',
                     },
                     {'type': 'container_upload', 'file_id': contextFileId},
                   ]
@@ -458,9 +625,11 @@ class AnthropicClient extends _BaseClient {
                           '\n</complete_health_context>',
                       'cache_control': {'type': 'ephemeral'},
                     },
-                    {'type': 'text', 'text': request.userPrompt},
                   ],
           },
+          for (final turn in request.history)
+            {'role': turn.role, 'content': turn.content},
+          {'role': 'user', 'content': request.userPrompt},
         ],
       };
       // Adaptive thinking is sent whenever the model documents it. On Opus
@@ -513,9 +682,7 @@ class AnthropicClient extends _BaseClient {
       ];
       final options = _options(apiKey, betas: betas);
 
-      var raw = objectMap(
-        (await _postWithRetry('$_baseUrl/messages', body, options)).data,
-      );
+      var raw = await _streamMessage(body, options);
       final textParts = <String>[..._textBlocks(raw)];
       final citations = <String>{...collectUrls(raw)};
       // A server-tool loop that hits its iteration limit pauses the turn.
@@ -528,9 +695,7 @@ class AnthropicClient extends _BaseClient {
         final messages = List<Object?>.from(body['messages']! as List)
           ..add({'role': 'assistant', 'content': raw['content']});
         body['messages'] = messages;
-        raw = objectMap(
-          (await _postWithRetry('$_baseUrl/messages', body, options)).data,
-        );
+        raw = await _streamMessage(body, options);
         textParts.addAll(_textBlocks(raw));
         citations.addAll(collectUrls(raw));
       }
@@ -570,7 +735,11 @@ class AnthropicClient extends _BaseClient {
         citations: citations.toList(growable: false),
       );
     } on DioException catch (error) {
-      providerError('Anthropic', error);
+      providerError(
+        'Anthropic',
+        error,
+        decodedBody: await decodeStreamError(error),
+      );
     } finally {
       if (contextFileId != null) {
         try {
@@ -595,37 +764,129 @@ class AnthropicClient extends _BaseClient {
     ];
   }
 
-  /// Retries transient Anthropic failures (rate limits, overload, server
-  /// errors) with exponential backoff, honoring an explicit retry-after.
-  Future<Response<Map<String, dynamic>>> _postWithRetry(
-    String url,
+  @override
+  Future<int?> countContextTokens(
+    String apiKey, {
+    required String model,
+    required String contextJson,
+  }) async {
+    try {
+      final response = await retryTransient(
+        () => dio.post<Map<String, dynamic>>(
+          '$_baseUrl/messages/count_tokens',
+          data: {
+            'model': model,
+            'messages': [
+              {'role': 'user', 'content': contextJson},
+            ],
+          },
+          options: _options(apiKey),
+        ),
+      );
+      final tokens = response.data?['input_tokens'];
+      return tokens is num ? tokens.toInt() : null;
+    } on DioException {
+      // Counting is an accuracy upgrade, never a gate; the caller falls back
+      // to the local estimate.
+      return null;
+    }
+  }
+
+  /// Streams a Messages API call over SSE and reassembles the complete
+  /// message, keeping the connection alive through long high-effort turns.
+  Future<Map<String, Object?>> _streamMessage(
     Map<String, Object?> body,
     Options options,
   ) async {
-    var attempt = 0;
-    while (true) {
-      try {
-        return await dio.post<Map<String, dynamic>>(
-          url,
-          data: body,
-          options: options,
-        );
-      } on DioException catch (error) {
-        final status = error.response?.statusCode;
-        const retryable = {429, 500, 502, 503, 529};
-        if (attempt >= 2 || status == null || !retryable.contains(status)) {
-          rethrow;
-        }
-        final retryAfter = int.tryParse(
-          error.response?.headers.value('retry-after') ?? '',
-        );
-        final delay = retryAfter != null
-            ? Duration(seconds: retryAfter.clamp(1, 60).toInt())
-            : Duration(seconds: 2 << attempt);
-        attempt += 1;
-        await Future<void>.delayed(delay);
+    final response = await retryTransient(
+      () => dio.post<ResponseBody>(
+        '$_baseUrl/messages',
+        data: body,
+        options: options.copyWith(responseType: ResponseType.stream),
+      ),
+    );
+    final streamBody = response.data;
+    if (streamBody == null) {
+      throw const AiProviderException('Anthropic returned an empty stream.');
+    }
+    Map<String, Object?>? message;
+    final blocks = <int, Map<String, Object?>>{};
+    final partialJson = <int, StringBuffer>{};
+    await for (final event in sseJsonEvents(streamBody)) {
+      switch (event['type']) {
+        case 'message_start':
+          message = Map<String, Object?>.from(objectMap(event['message']));
+        case 'content_block_start':
+          final index = (event['index'] as num?)?.toInt() ?? 0;
+          blocks[index] = Map<String, Object?>.from(
+            objectMap(event['content_block']),
+          );
+        case 'content_block_delta':
+          final index = (event['index'] as num?)?.toInt() ?? 0;
+          final block = blocks[index];
+          final delta = event['delta'];
+          if (block == null || delta is! Map) break;
+          switch (delta['type']) {
+            case 'text_delta':
+              block['text'] = '${block['text'] ?? ''}${delta['text'] ?? ''}';
+            case 'thinking_delta':
+              block['thinking'] =
+                  '${block['thinking'] ?? ''}${delta['thinking'] ?? ''}';
+            case 'signature_delta':
+              block['signature'] =
+                  '${block['signature'] ?? ''}${delta['signature'] ?? ''}';
+            case 'input_json_delta':
+              (partialJson[index] ??= StringBuffer()).write(
+                delta['partial_json'] ?? '',
+              );
+            case 'citations_delta':
+              final existing = block['citations'];
+              block['citations'] = [
+                if (existing is List) ...existing,
+                if (delta['citation'] != null) delta['citation'],
+              ];
+          }
+        case 'content_block_stop':
+          final index = (event['index'] as num?)?.toInt() ?? 0;
+          final partial = partialJson.remove(index);
+          final block = blocks[index];
+          if (partial != null && block != null && partial.isNotEmpty) {
+            try {
+              block['input'] = jsonDecode(partial.toString());
+            } on FormatException {
+              // Keep the block as announced; a resume echoes it verbatim.
+            }
+          }
+        case 'message_delta':
+          if (message == null) break;
+          final delta = event['delta'];
+          if (delta is Map) {
+            for (final entry in delta.entries) {
+              message[entry.key.toString()] = entry.value;
+            }
+          }
+          final usage = event['usage'];
+          if (usage is Map) {
+            final existing = message['usage'];
+            message['usage'] = {if (existing is Map) ...existing, ...usage};
+          }
+        case 'error':
+          final error = event['error'];
+          throw AiProviderException(
+            error is Map && error['message'] != null
+                ? error['message'].toString()
+                : 'Anthropic reported a stream error.',
+          );
       }
     }
+    if (message == null) {
+      throw const AiProviderException(
+        'Anthropic ended the stream without a message.',
+      );
+    }
+    final ordered = blocks.keys.toList()..sort();
+    message['content'] = [for (final index in ordered) blocks[index]];
+    return message;
   }
 
   Future<String> _uploadContext(String apiKey, String json) async {
@@ -724,13 +985,24 @@ class GeminiClient extends _BaseClient {
     ProviderRequest request,
   ) async {
     validate(request);
+    // This client has no documented native multi-turn wire shape in the app,
+    // so history is serialized between the stable context and the task
+    // prompt; context-first ordering keeps the prefix cache-friendly.
+    final historyAppendix = request.history.isEmpty
+        ? ''
+        : '\n\n<conversation_history>\n'
+              '${jsonEncode([
+                for (final turn in request.history) {'role': turn.role, 'content': turn.content},
+              ])}'
+              '\n</conversation_history>';
     final body = <String, Object?>{
       'model': request.model,
       'store': false,
       'system_instruction': request.systemPrompt,
       'input':
-          '${request.userPrompt}\n\n<complete_health_context>\n'
-          '${request.contextJson}\n</complete_health_context>',
+          '<complete_health_context>\n${request.contextJson}'
+          '\n</complete_health_context>$historyAppendix'
+          '\n\n${request.userPrompt}',
       'generation_config': {
         'max_output_tokens': request.maxOutputTokens,
         if (request.reasoningLevel != null)
@@ -745,10 +1017,12 @@ class GeminiClient extends _BaseClient {
     if (tools.isNotEmpty) body['tools'] = tools;
 
     try {
-      final response = await dio.post<Map<String, dynamic>>(
-        '$_baseUrl/interactions',
-        data: body,
-        options: _options(apiKey),
+      final response = await retryTransient(
+        () => dio.post<Map<String, dynamic>>(
+          '$_baseUrl/interactions',
+          data: body,
+          options: _options(apiKey),
+        ),
       );
       final raw = objectMap(response.data);
       final textParts = <String>[];
