@@ -108,6 +108,139 @@ warnings must be JSON string arrays. If approved is true, blocking_issues must
 be empty. A rejected plan remains a draft and cannot be saved.
 ''';
 
+  /// Schema for the model-echoed integrity receipt. Section names are known
+  /// when the request is built, so the receipt structure itself is enforced;
+  /// hash and count values are still verified byte-exactly after parsing.
+  static Map<String, Object?> _receiptSchema(HealthContextEnvelope context) {
+    final sections = context.sectionNames;
+    return {
+      'type': 'object',
+      'properties': {
+        'sha256': {'type': 'string'},
+        'file_sha256': {'type': 'string'},
+        'record_count': {'type': 'integer'},
+        'reviewed_sections': {
+          'type': 'array',
+          'items': sections.isEmpty
+              ? {'type': 'string'}
+              : {'type': 'string', 'enum': sections},
+        },
+        'section_hashes': {
+          'type': 'object',
+          'properties': {
+            for (final name in sections) name: {'type': 'string'},
+          },
+          'required': sections,
+          'additionalProperties': false,
+        },
+      },
+      'required': [
+        'sha256',
+        'file_sha256',
+        'record_count',
+        'reviewed_sections',
+        'section_hashes',
+      ],
+      'additionalProperties': false,
+    };
+  }
+
+  static Map<String, Object?> _planJsonSchema(HealthContextEnvelope context) =>
+      {
+        'type': 'object',
+        'properties': {
+          'title': {'type': 'string'},
+          'planned_for': {
+            'anyOf': [
+              {'type': 'string'},
+              {'type': 'null'},
+            ],
+          },
+          'warnings': {
+            'type': 'array',
+            'items': {'type': 'string'},
+          },
+          'context_receipt': _receiptSchema(context),
+          'tiers': {
+            'type': 'array',
+            'items': {
+              'type': 'object',
+              'properties': {
+                'tier': {
+                  'type': 'string',
+                  'enum': [for (final tier in LabTier.values) tier.name],
+                },
+                'items': {
+                  'type': 'array',
+                  'items': {
+                    'type': 'object',
+                    'properties': {
+                      'biomarker_id': {'type': 'string'},
+                      'biomarker_name': {'type': 'string'},
+                      'priority': {'type': 'integer'},
+                      'rationale': {'type': 'string'},
+                      'evidence_class': {
+                        'type': 'string',
+                        'enum': [
+                          for (final value in EvidenceClass.values) value.name,
+                        ],
+                      },
+                      'preparation': {'type': 'string'},
+                    },
+                    'required': [
+                      'biomarker_id',
+                      'biomarker_name',
+                      'priority',
+                      'rationale',
+                      'evidence_class',
+                      'preparation',
+                    ],
+                    'additionalProperties': false,
+                  },
+                },
+              },
+              'required': ['tier', 'items'],
+              'additionalProperties': false,
+            },
+          },
+        },
+        'required': [
+          'title',
+          'planned_for',
+          'warnings',
+          'context_receipt',
+          'tiers',
+        ],
+        'additionalProperties': false,
+      };
+
+  static Map<String, Object?> _verificationJsonSchema(
+    HealthContextEnvelope context,
+  ) => {
+    'type': 'object',
+    'properties': {
+      'approved': {'type': 'boolean'},
+      'summary': {'type': 'string'},
+      'blocking_issues': {
+        'type': 'array',
+        'items': {'type': 'string'},
+      },
+      'warnings': {
+        'type': 'array',
+        'items': {'type': 'string'},
+      },
+      'context_receipt': _receiptSchema(context),
+    },
+    'required': [
+      'approved',
+      'summary',
+      'blocking_issues',
+      'warnings',
+      'context_receipt',
+    ],
+    'additionalProperties': false,
+  };
+
   Future<LabPlanGeneration> generate({
     required String profileId,
     required AiTaskSettings settings,
@@ -121,7 +254,10 @@ be empty. A rejected plan remains a draft and cannot be saved.
       );
     }
     final context = await _contextBuilder.build(profileId);
-    const maxOutputTokens = 12000;
+    // Adaptive thinking shares the output budget on current Anthropic models,
+    // so the cap leaves room for reasoning plus the complete plan JSON while
+    // staying inside non-streaming timeout guidance.
+    const maxOutputTokens = 16000;
     final dateText =
         targetDate?.toIso8601String().split('T').first ?? 'not set';
     final userPrompt =
@@ -136,6 +272,7 @@ ${context.coverageInstruction}
 
 $_schemaInstructions
 ''';
+    final client = _clientFactory.create(settings.provider);
     final delivery = _contextBuilder.deliveryFor(
       context: context,
       capabilities: _capabilities.forModel(settings.provider, settings.model),
@@ -146,8 +283,12 @@ $_schemaInstructions
       additionalInputTokens:
           _estimatedTokens('${AdvisorService.systemPrompt}\n$userPrompt') +
           maxOutputTokens,
+      measuredContextTokens: await client.countContextTokens(
+        key,
+        model: settings.model,
+        contextJson: context.json,
+      ),
     );
-    final client = _clientFactory.create(settings.provider);
     var response = await client.respond(
       key,
       ProviderRequest(
@@ -162,6 +303,7 @@ $_schemaInstructions
             delivery == HealthContextDelivery.providerFile,
         maxOutputTokens: maxOutputTokens,
         requireJson: true,
+        jsonSchema: _planJsonSchema(context),
         contextFile: delivery == HealthContextDelivery.providerFile,
         contextFileSha256: delivery == HealthContextDelivery.providerFile
             ? context.fileSha256
@@ -198,6 +340,7 @@ $_schemaInstructions
           codeExecution: delivery == HealthContextDelivery.providerFile,
           maxOutputTokens: maxOutputTokens,
           requireJson: true,
+          jsonSchema: _planJsonSchema(context),
           contextFile: delivery == HealthContextDelivery.providerFile,
           contextFileSha256: delivery == HealthContextDelivery.providerFile
               ? context.fileSha256
@@ -266,6 +409,7 @@ $_verificationSchemaInstructions
             delivery == HealthContextDelivery.providerFile,
         maxOutputTokens: maxOutputTokens,
         requireJson: true,
+        jsonSchema: _verificationJsonSchema(context),
         contextFile: delivery == HealthContextDelivery.providerFile,
         contextFileSha256: delivery == HealthContextDelivery.providerFile
             ? context.fileSha256

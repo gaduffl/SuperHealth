@@ -511,6 +511,10 @@ class DocumentParsingService {
     Uint8List bytes,
     String prompt,
   ) async {
+    final capabilities = _capabilities.forModel(
+      AiProvider.anthropic,
+      settings.model,
+    );
     final response = await _retry(
       () => _dio.post<Map<String, dynamic>>(
         'https://api.anthropic.com/v1/messages',
@@ -520,7 +524,9 @@ class DocumentParsingService {
           'system':
               'You are a precise lab-report extraction engine. Return only valid JSON.',
           if (settings.reasoningLevel != null) ...{
-            'thinking': {'type': 'adaptive'},
+            // Only models documenting adaptive thinking accept the parameter;
+            // Opus 4.5 supports effort but rejects an adaptive thinking value.
+            if (capabilities.adaptiveThinking) 'thinking': {'type': 'adaptive'},
             'output_config': {'effort': settings.reasoningLevel},
           },
           'messages': [

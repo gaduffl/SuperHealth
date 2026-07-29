@@ -5,7 +5,7 @@ void main() {
   final registry = ProviderCapabilityRegistry();
 
   test('registry records the documentation audit date', () {
-    expect(ProviderCapabilityRegistry.version, '2026-07-18');
+    expect(ProviderCapabilityRegistry.version, '2026-07-29');
   });
 
   test('documented model families expose only their audited controls', () {
@@ -47,6 +47,14 @@ void main() {
           (
             provider: AiProvider.anthropic,
             id: 'claude-fable-5',
+            effort: ['low', 'medium', 'high', 'xhigh', 'max'],
+            context: 1000000,
+            web: true,
+            code: true,
+          ),
+          (
+            provider: AiProvider.anthropic,
+            id: 'claude-opus-5',
             effort: ['low', 'medium', 'high', 'xhigh', 'max'],
             context: 1000000,
             web: true,
@@ -214,6 +222,113 @@ void main() {
       expect(value.losslessContextFile, isFalse, reason: item.$2);
       expect(value.structuredOutput, isFalse, reason: item.$2);
       expect(value.contextWindowTokens, isNull, reason: item.$2);
+    }
+  });
+
+  test('Anthropic models expose their audited wire-level capabilities', () {
+    final cases =
+        <
+          ({
+            String id,
+            bool adaptive,
+            String? webTool,
+            bool fallback,
+            bool structured,
+          })
+        >[
+          (
+            id: 'claude-fable-5',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: true,
+            structured: true,
+          ),
+          (
+            id: 'claude-mythos-5',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: true,
+            structured: true,
+          ),
+          (
+            id: 'claude-opus-5',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: true,
+            structured: true,
+          ),
+          (
+            id: 'claude-opus-4-8',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: false,
+            structured: true,
+          ),
+          (
+            id: 'claude-sonnet-5',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: false,
+            structured: true,
+          ),
+          (
+            id: 'claude-opus-4-7',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: false,
+            structured: false,
+          ),
+          (
+            id: 'claude-opus-4-6',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: false,
+            structured: false,
+          ),
+          (
+            id: 'claude-sonnet-4-6',
+            adaptive: true,
+            webTool: 'web_search_20260209',
+            fallback: false,
+            structured: false,
+          ),
+          (
+            id: 'claude-mythos-preview',
+            adaptive: false,
+            webTool: 'web_search_20250305',
+            fallback: false,
+            structured: false,
+          ),
+          (
+            id: 'claude-opus-4-5',
+            adaptive: false,
+            webTool: 'web_search_20250305',
+            fallback: false,
+            structured: true,
+          ),
+          (
+            id: 'claude-haiku-4-5',
+            adaptive: false,
+            webTool: null,
+            fallback: false,
+            structured: true,
+          ),
+          (
+            id: 'claude-sonnet-4-5',
+            adaptive: false,
+            webTool: null,
+            fallback: false,
+            structured: false,
+          ),
+        ];
+
+    for (final item in cases) {
+      final value = registry.forModel(AiProvider.anthropic, item.id);
+      expect(value.adaptiveThinking, item.adaptive, reason: item.id);
+      expect(value.webSearchToolType, item.webTool, reason: item.id);
+      expect(value.refusalFallback, item.fallback, reason: item.id);
+      expect(value.structuredOutput, item.structured, reason: item.id);
+      expect(value.webSearch, item.webTool != null, reason: item.id);
     }
   });
 

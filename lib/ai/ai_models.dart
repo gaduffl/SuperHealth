@@ -24,6 +24,9 @@ class ModelCapabilities {
     this.losslessContextFile = false,
     this.structuredOutput = false,
     this.contextWindowTokens,
+    this.adaptiveThinking = false,
+    this.webSearchToolType,
+    this.refusalFallback = false,
   });
 
   final List<String> reasoningLevels;
@@ -32,6 +35,32 @@ class ModelCapabilities {
   final bool losslessContextFile;
   final bool structuredOutput;
   final int? contextWindowTokens;
+
+  /// Anthropic only: the model documents `thinking: {"type": "adaptive"}`.
+  /// On Opus 4.7/4.8 omitting the parameter disables thinking entirely, so
+  /// supported models always send it instead of coupling it to the effort
+  /// selection.
+  final bool adaptiveThinking;
+
+  /// Anthropic only: the exact documented server-tool type for web search.
+  /// Newer models use the dynamic-filtering variant; older ones the basic
+  /// variant. Null when web search is not documented for the model.
+  final String? webSearchToolType;
+
+  /// Anthropic only: the model documents the server-side `fallbacks`
+  /// parameter, so a safety-classifier refusal is re-served by the
+  /// recommended fallback model inside the same call.
+  final bool refusalFallback;
+}
+
+/// One prior conversation turn, delivered to providers as a native chat
+/// message instead of serialized transcript text.
+class ProviderChatMessage {
+  const ProviderChatMessage({required this.role, required this.content});
+
+  /// Either `user` or `assistant`.
+  final String role;
+  final String content;
 }
 
 class ProviderRequest {
@@ -40,11 +69,13 @@ class ProviderRequest {
     required this.systemPrompt,
     required this.userPrompt,
     required this.contextJson,
+    this.history = const [],
     this.reasoningLevel,
     this.webSearch = false,
     this.codeExecution = false,
     this.maxOutputTokens = 12000,
     this.requireJson = false,
+    this.jsonSchema,
     this.contextFile = false,
     this.contextFileSha256,
   });
@@ -53,11 +84,20 @@ class ProviderRequest {
   final String systemPrompt;
   final String userPrompt;
   final String contextJson;
+
+  /// Prior turns in order. The current question stays in [userPrompt];
+  /// providers place history between the stable context and the prompt.
+  final List<ProviderChatMessage> history;
   final String? reasoningLevel;
   final bool webSearch;
   final bool codeExecution;
   final int maxOutputTokens;
   final bool requireJson;
+
+  /// Optional JSON schema enforced through provider structured outputs when
+  /// [requireJson] is set and the model documents schema-constrained output.
+  /// Providers without a schema path fall back to their JSON-mode controls.
+  final Map<String, Object?>? jsonSchema;
   final bool contextFile;
   final String? contextFileSha256;
 }
@@ -79,7 +119,7 @@ class ProviderResponse {
 /// Versioned from provider documentation. Unknown models intentionally receive
 /// no reasoning/tool controls until their support is known.
 class ProviderCapabilityRegistry {
-  static const version = '2026-07-18';
+  static const version = '2026-07-29';
 
   ModelCapabilities forModel(AiProvider provider, String model) =>
       switch (provider) {
@@ -209,21 +249,50 @@ class ProviderCapabilityRegistry {
   }
 
   ModelCapabilities _anthropic(String id) {
+    // Frontier models with documented server-side refusal fallbacks.
     if (const {
       'claude-fable-5',
       'claude-mythos-5',
-      'claude-opus-4-8',
-      'claude-opus-4-7',
-      'claude-sonnet-5',
+      'claude-opus-5',
     }.contains(id)) {
       return const ModelCapabilities(
         reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         webSearch: true,
         codeExecution: true,
         losslessContextFile: true,
+        structuredOutput: true,
         contextWindowTokens: 1000000,
+        adaptiveThinking: true,
+        webSearchToolType: 'web_search_20260209',
+        refusalFallback: true,
       );
     }
+    if (const {'claude-opus-4-8', 'claude-sonnet-5'}.contains(id)) {
+      return const ModelCapabilities(
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+        webSearch: true,
+        codeExecution: true,
+        losslessContextFile: true,
+        structuredOutput: true,
+        contextWindowTokens: 1000000,
+        adaptiveThinking: true,
+        webSearchToolType: 'web_search_20260209',
+      );
+    }
+    // Structured outputs are not documented for Opus 4.7, unlike 4.8.
+    if (id == 'claude-opus-4-7') {
+      return const ModelCapabilities(
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+        webSearch: true,
+        codeExecution: true,
+        losslessContextFile: true,
+        contextWindowTokens: 1000000,
+        adaptiveThinking: true,
+        webSearchToolType: 'web_search_20260209',
+      );
+    }
+    // Mythos Preview predates adaptive thinking and the dynamic-filtering
+    // web-search variant; it keeps effort control and the basic search tool.
     if (id == 'claude-mythos-preview') {
       return const ModelCapabilities(
         reasoningLevels: ['low', 'medium', 'high', 'max'],
@@ -231,6 +300,7 @@ class ProviderCapabilityRegistry {
         codeExecution: true,
         losslessContextFile: true,
         contextWindowTokens: 1000000,
+        webSearchToolType: 'web_search_20250305',
       );
     }
     if (const {'claude-opus-4-6', 'claude-sonnet-4-6'}.contains(id)) {
@@ -240,6 +310,8 @@ class ProviderCapabilityRegistry {
         codeExecution: true,
         losslessContextFile: true,
         contextWindowTokens: 1000000,
+        adaptiveThinking: true,
+        webSearchToolType: 'web_search_20260209',
       );
     }
     if (const {'claude-opus-4-5', 'claude-opus-4-5-20251101'}.contains(id)) {
@@ -248,14 +320,22 @@ class ProviderCapabilityRegistry {
         webSearch: true,
         codeExecution: true,
         losslessContextFile: true,
+        structuredOutput: true,
+        contextWindowTokens: 200000,
+        webSearchToolType: 'web_search_20250305',
+      );
+    }
+    if (const {'claude-haiku-4-5', 'claude-haiku-4-5-20251001'}.contains(id)) {
+      return const ModelCapabilities(
+        codeExecution: true,
+        losslessContextFile: true,
+        structuredOutput: true,
         contextWindowTokens: 200000,
       );
     }
     if (const {
       'claude-sonnet-4-5',
       'claude-sonnet-4-5-20250929',
-      'claude-haiku-4-5',
-      'claude-haiku-4-5-20251001',
     }.contains(id)) {
       return const ModelCapabilities(
         codeExecution: true,

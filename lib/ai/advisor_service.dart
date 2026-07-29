@@ -91,33 +91,45 @@ Be direct and useful. State what is known from the profile, what is inferred, an
     final key = await _requiredKey(settings.provider);
     final context = await _contextBuilder.build(profileId);
     final conversation = await _repository.messages(profileId, conversationId);
-    final conversationAppendix = conversation.isEmpty
-        ? ''
-        : '\n\n<active_conversation_history>\n'
-              '${HealthRepository.stableJson([
-                for (final message in conversation) {'role': message.role, 'content': message.content, 'created_at': message.createdAt.toUtc().toIso8601String()},
-              ])}'
-              '\n</active_conversation_history>';
+    // Prior turns travel as native chat messages so providers apply their
+    // trained multi-turn handling and can cache the growing prefix.
+    final history = [
+      for (final message in conversation)
+        ProviderChatMessage(
+          role: message.role == 'assistant' ? 'assistant' : 'user',
+          content: message.content,
+        ),
+    ];
     final workspace = await _workspaceService?.contextSnapshot(profileId);
     final workspaceAppendix = workspace == null
         ? ''
         : '\n\n<advisor_workspace>\n${HealthRepository.stableJson(workspace)}'
               '\n</advisor_workspace>';
     final promptAppendix =
-        '$conversationAppendix$workspaceAppendix\n\n'
+        '$workspaceAppendix\n\n'
         '<context_receipt>${context.receiptInstruction}</context_receipt>\n'
         '<coverage_protocol>${context.coverageInstruction}</coverage_protocol>';
-    const maxOutputTokens = 12000;
+    // Thinking shares the output budget on current Anthropic models, and
+    // responses stream, so the cap leaves room for reasoning plus the
+    // visible answer.
+    const maxOutputTokens = 16000;
     final capabilities = _capabilities.forModel(
       settings.provider,
       settings.model,
     );
+    final client = _clientFactory.create(settings.provider);
     final delivery = _contextBuilder.deliveryFor(
       context: context,
       capabilities: capabilities,
       maxOutputTokens: maxOutputTokens,
       additionalInputTokens: _estimatedTokens(
-        '$systemPrompt\n$trimmed$promptAppendix',
+        '$systemPrompt\n$trimmed$promptAppendix\n'
+        '${[for (final turn in history) turn.content].join('\n')}',
+      ),
+      measuredContextTokens: await client.countContextTokens(
+        key,
+        model: settings.model,
+        contextJson: context.json,
       ),
     );
 
@@ -137,6 +149,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       systemPrompt: systemPrompt,
       userPrompt: '$trimmed$promptAppendix',
       contextJson: context.json,
+      history: history,
       reasoningLevel: settings.reasoningLevel,
       webSearch: settings.webSearch,
       codeExecution:
@@ -148,7 +161,6 @@ Be direct and useful. State what is known from the profile, what is inferred, an
           ? context.fileSha256
           : null,
     );
-    final client = _clientFactory.create(settings.provider);
     var response = await client.respond(key, request);
     String verifiedText;
     try {
@@ -165,6 +177,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
               'Prior answer:\n${response.text}\n\n'
               '${context.coverageInstruction}',
           contextJson: context.json,
+          history: history,
           reasoningLevel: settings.reasoningLevel,
           webSearch: false,
           codeExecution:
