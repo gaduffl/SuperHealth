@@ -142,6 +142,10 @@ class _ManageCheckInsState extends State<_ManageCheckIns> {
                               definition.kind == EventKind.symptom
                                   ? strings.symptom
                                   : strings.tag,
+                              if (definition.kind == EventKind.tag)
+                                _tagModeSummary(strings, definition),
+                              if (definition.includeInCheckIn)
+                                strings.pick('in check-in', 'im Check-in'),
                               if (definition.archived)
                                 strings.pick('archived', 'archiviert'),
                             ].join(' · '),
@@ -149,6 +153,15 @@ class _ManageCheckInsState extends State<_ManageCheckIns> {
                           trailing: Wrap(
                             spacing: 0,
                             children: [
+                              if (definition.kind == EventKind.tag)
+                                IconButton(
+                                  tooltip: strings.pick(
+                                    'Tag settings',
+                                    'Tag-Einstellungen',
+                                  ),
+                                  onPressed: () => _editTagSettings(definition),
+                                  icon: const Icon(Icons.tune),
+                                ),
                               IconButton(
                                 tooltip: strings.pick('Rename', 'Umbenennen'),
                                 onPressed: () => _rename(definition),
@@ -292,17 +305,417 @@ class _ManageCheckInsState extends State<_ManageCheckIns> {
     String? name,
     EventKind? kind,
     bool? archived,
+    TagValueMode? valueMode,
+    String? defaultUnit,
+    bool clearDefaultUnit = false,
+    double? portionAmount,
+    bool clearPortionAmount = false,
+    String? portionLabel,
+    bool clearPortionLabel = false,
+    bool? includeInCheckIn,
   }) => HealthEventDefinition(
     id: value.id,
     profileId: value.profileId,
     kind: kind ?? value.kind,
     name: name ?? value.name,
-    defaultUnit: value.defaultUnit,
+    defaultUnit: clearDefaultUnit ? null : defaultUnit ?? value.defaultUnit,
     useScore: value.useScore,
+    valueMode: valueMode ?? value.valueMode,
+    portionAmount: clearPortionAmount
+        ? null
+        : portionAmount ?? value.portionAmount,
+    portionLabel: clearPortionLabel ? null : portionLabel ?? value.portionLabel,
+    includeInCheckIn: includeInCheckIn ?? value.includeInCheckIn,
     colorValue: value.colorValue,
     archived: archived ?? value.archived,
     createdAt: value.createdAt,
     updatedAt: DateTime.now(),
     deleted: value.deleted,
   );
+
+  /// Opens the per-tag settings sheet: what its number means, its canonical
+  /// unit and portion shortcut when it is an amount, and whether it is asked
+  /// about in the daily check-in.
+  Future<void> _editTagSettings(HealthEventDefinition definition) async {
+    var mode = definition.valueMode;
+    final unitField = TextEditingController(text: definition.defaultUnit ?? '');
+    final portionField = TextEditingController(
+      text: definition.portionAmount == null
+          ? ''
+          : _formatSettingsAmount(definition.portionAmount!),
+    );
+    final portionLabelField = TextEditingController(
+      text: definition.portionLabel ?? '',
+    );
+    var includeInCheckIn = definition.includeInCheckIn;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (builderContext, setState) {
+          final strings = AppLocalizations.of(builderContext);
+          final needsUnit = mode == TagValueMode.amount;
+          return AlertDialog(
+            title: Text(strings.pick('Tag settings', 'Tag-Einstellungen')),
+            content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      definition.name,
+                      style: Theme.of(builderContext).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      strings.pick(
+                        'What does the number mean?',
+                        'Was bedeutet die Zahl?',
+                      ),
+                      style: Theme.of(builderContext).textTheme.labelLarge,
+                    ),
+                    RadioGroup<TagValueMode>(
+                      groupValue: mode,
+                      onChanged: (value) =>
+                          setState(() => mode = value ?? mode),
+                      child: Column(
+                        children: [
+                          RadioListTile<TagValueMode>(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            value: TagValueMode.occurrence,
+                            title: Text(
+                              strings.pick(
+                                'Just happened',
+                                'Ist einfach passiert',
+                              ),
+                            ),
+                            subtitle: Text(
+                              strings.pick(
+                                'No number — logging just counts how often.',
+                                'Keine Zahl — die Erfassung zählt nur, wie '
+                                    'oft.',
+                              ),
+                            ),
+                          ),
+                          RadioListTile<TagValueMode>(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            value: TagValueMode.intensity,
+                            title: Text(
+                              strings.pick(
+                                'Felt strength (0-10)',
+                                'Gefühlte Stärke (0-10)',
+                              ),
+                            ),
+                            subtitle: Text(
+                              strings.pick(
+                                'A rating with no physical unit, like a '
+                                    'symptom.',
+                                'Eine Bewertung ohne Einheit, wie bei einem '
+                                    'Symptom.',
+                              ),
+                            ),
+                          ),
+                          RadioListTile<TagValueMode>(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            value: TagValueMode.amount,
+                            title: Text(
+                              strings.pick('A real amount', 'Eine echte Menge'),
+                            ),
+                            subtitle: Text(
+                              strings.pick(
+                                'A quantity in a fixed unit, e.g. grams of '
+                                    'coffee beans.',
+                                'Eine Menge in einer festen Einheit, z. B. '
+                                    'Gramm Kaffeebohnen.',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (needsUnit) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: unitField,
+                              onChanged: (_) => setState(() {}),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                labelText: strings.pick('Unit', 'Einheit'),
+                                hintText: strings.pick('g', 'g'),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: portionField,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                labelText: strings.pick(
+                                  'One portion',
+                                  'Eine Portion',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: portionLabelField,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          labelText: strings.pick(
+                            'What is a portion? (optional)',
+                            'Was ist eine Portion? (optional)',
+                          ),
+                          hintText: strings.pick(
+                            'e.g. filter coffee',
+                            'z. B. Filterkaffee',
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: includeInCheckIn,
+                      title: Text(
+                        strings.pick(
+                          'Ask in daily check-in',
+                          'Im täglichen Check-in abfragen',
+                        ),
+                      ),
+                      onChanged: (value) =>
+                          setState(() => includeInCheckIn = value),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(strings.cancel),
+              ),
+              FilledButton(
+                onPressed: needsUnit && unitField.text.trim().isEmpty
+                    ? null
+                    : () => Navigator.pop(dialogContext, true),
+                child: Text(strings.pick('Save', 'Speichern')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (saved != true) {
+      for (final field in [unitField, portionField, portionLabelField]) {
+        field.dispose();
+      }
+      return;
+    }
+    final newUnit = mode == TagValueMode.amount ? unitField.text.trim() : null;
+    final newPortion = mode == TagValueMode.amount
+        ? double.tryParse(portionField.text.trim().replaceAll(',', '.'))
+        : null;
+    final newPortionLabel = mode == TagValueMode.amount
+        ? (portionLabelField.text.trim().isEmpty
+              ? null
+              : portionLabelField.text.trim())
+        : null;
+    for (final field in [unitField, portionField, portionLabelField]) {
+      field.dispose();
+    }
+    if (!mounted) return;
+
+    var factor = 1.0;
+    if (mode == TagValueMode.amount && newUnit != null && newUnit.isNotEmpty) {
+      final affectedCount = widget.controller.events
+          .where(
+            (event) =>
+                !event.deleted &&
+                event.definitionId == definition.id &&
+                (event.score != null || event.numericValue != null) &&
+                event.unit?.trim().toLowerCase() != newUnit.toLowerCase(),
+          )
+          .length;
+      if (affectedCount > 0) {
+        final resolvedFactor = await _askConversionFactor(
+          definition: definition,
+          newUnit: newUnit,
+          affectedCount: affectedCount,
+        );
+        // The user backed out of committing to a conversion, so the whole
+        // settings change is abandoned rather than leaving the definition
+        // claiming an amount its own history was never reinterpreted for.
+        if (resolvedFactor == null) return;
+        factor = resolvedFactor;
+      }
+    }
+
+    try {
+      await widget.controller.saveEventDefinition(
+        _copy(
+          definition,
+          valueMode: mode,
+          defaultUnit: newUnit,
+          clearDefaultUnit: newUnit == null,
+          portionAmount: newPortion,
+          clearPortionAmount: newPortion == null,
+          portionLabel: newPortionLabel,
+          clearPortionLabel: newPortionLabel == null,
+          includeInCheckIn: includeInCheckIn,
+        ),
+      );
+      if (mode == TagValueMode.amount &&
+          newUnit != null &&
+          newUnit.isNotEmpty) {
+        await widget.controller.reinterpretEventHistory(
+          definition: definition,
+          factor: factor,
+          newUnit: newUnit,
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) await showAppError(context, error);
+    }
+  }
+
+  /// Asks how to convert a tag's existing felt-strength scores or
+  /// previous-unit amounts into the new canonical unit, so switching a
+  /// tag's mode or unit never leaves stale, mis-typed numbers in a series
+  /// correlation relies on.
+  Future<double?> _askConversionFactor({
+    required HealthEventDefinition definition,
+    required String newUnit,
+    required int affectedCount,
+  }) async {
+    final strings = AppLocalizations.of(context);
+    final oldDescriptor = definition.valueMode == TagValueMode.intensity
+        ? strings.pick('rating point', 'Bewertungspunkt')
+        : (definition.defaultUnit?.trim().isNotEmpty ?? false)
+        ? definition.defaultUnit!.trim()
+        : strings.pick('previous entry', 'bisheriger Eintrag');
+    final factorField = TextEditingController(text: '1');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (builderContext, setState) {
+          final strings = AppLocalizations.of(builderContext);
+          final parsed = double.tryParse(
+            factorField.text.trim().replaceAll(',', '.'),
+          );
+          return AlertDialog(
+            title: Text(
+              strings.pick(
+                'Convert existing entries?',
+                'Bestehende Einträge umrechnen?',
+              ),
+            ),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    strings.pick(
+                      '$affectedCount existing ${definition.name} '
+                          '${affectedCount == 1 ? 'entry' : 'entries'} will be '
+                          'rewritten as an amount in $newUnit so correlations '
+                          'stay consistent.',
+                      '$affectedCount bestehende ${definition.name}-Einträge '
+                          'werden als Menge in $newUnit umgeschrieben, damit '
+                          'Korrelationen konsistent bleiben.',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Text('1 $oldDescriptor ='),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 90,
+                        child: TextField(
+                          controller: factorField,
+                          autofocus: true,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(isDense: true),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(newUnit),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(strings.cancel),
+              ),
+              FilledButton(
+                onPressed: parsed == null || parsed <= 0
+                    ? null
+                    : () => Navigator.pop(dialogContext, true),
+                child: Text(
+                  strings.pick('Convert and save', 'Umrechnen und speichern'),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    final factor = confirmed == true
+        ? double.tryParse(factorField.text.trim().replaceAll(',', '.'))
+        : null;
+    factorField.dispose();
+    return factor;
+  }
 }
+
+String _tagModeSummary(
+  AppLocalizations strings,
+  HealthEventDefinition definition,
+) => switch (definition.valueMode) {
+  TagValueMode.occurrence => strings.pick('just happened', 'einfach passiert'),
+  TagValueMode.intensity => strings.pick(
+    'felt strength 0-10',
+    'gefühlte Stärke 0-10',
+  ),
+  TagValueMode.amount =>
+    (definition.defaultUnit?.trim().isEmpty ?? true)
+        ? strings.pick('amount', 'Menge')
+        : strings.pick(
+            'amount in ${definition.defaultUnit}',
+            'Menge in ${definition.defaultUnit}',
+          ),
+};
+
+/// Renders a portion amount without a trailing ".0" for whole numbers.
+String _formatSettingsAmount(double value) => value == value.roundToDouble()
+    ? value.toInt().toString()
+    : value
+          .toStringAsFixed(2)
+          .replaceFirst(RegExp(r'0+$'), '')
+          .replaceFirst(RegExp(r'\.$'), '');

@@ -182,6 +182,210 @@ void main() {
     },
   );
 
+  test(
+    'occurrence-mode tags count daily occurrences, ignoring any stray numeric value',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Occurs');
+      final definition = HealthEventDefinition(
+        id: repository.newId(),
+        profileId: profile.id,
+        kind: EventKind.tag,
+        name: 'Walk outside',
+        valueMode: TagValueMode.occurrence,
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      );
+      await repository.saveEventDefinition(definition);
+      final start = DateTime(2026, 6, 1);
+      final counts = [0, 1, 2, 3, 4, 5, 6];
+      for (var index = 0; index < counts.length; index++) {
+        final day = start.add(Duration(days: index));
+        for (var occurrence = 0; occurrence < counts[index]; occurrence++) {
+          await repository.saveEvent(
+            HealthEvent(
+              id: repository.newId(),
+              profileId: profile.id,
+              definitionId: definition.id,
+              kind: EventKind.tag,
+              name: definition.name,
+              observedAt: day,
+              numericValue: 999,
+              createdAt: day,
+              updatedAt: day,
+            ),
+          );
+        }
+        await _saveSymptom(
+          repository,
+          profile.id,
+          'Mood',
+          day,
+          counts[index] + 1,
+        );
+      }
+
+      final result = (await CorrelationService(
+        repository,
+      ).analyze(profile.id, lags: const [0])).single;
+
+      expect(result.exposure, 'Tag: Walk outside');
+      expect(result.sampleSize, counts.length);
+      expect(result.spearmanCoefficient, closeTo(1, 0.0001));
+      await database.close();
+    },
+  );
+
+  test(
+    'intensity-mode tags average same-day felt-strength scores instead of summing them',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Intensity');
+      final definition = HealthEventDefinition(
+        id: repository.newId(),
+        profileId: profile.id,
+        kind: EventKind.tag,
+        name: 'Stress',
+        valueMode: TagValueMode.intensity,
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      );
+      await repository.saveEventDefinition(definition);
+      final start = DateTime(2026, 7, 1);
+      for (var index = 0; index < 7; index++) {
+        final day = start.add(Duration(days: index));
+        final level = index + 1;
+        if (index == 2) {
+          // Two same-day readings that average back to the plain level, so
+          // a wrongly-summed reduction would break the otherwise-perfect
+          // monotonic pattern below.
+          for (final score in [level - 1, level + 1]) {
+            await repository.saveEvent(
+              HealthEvent(
+                id: repository.newId(),
+                profileId: profile.id,
+                definitionId: definition.id,
+                kind: EventKind.tag,
+                name: definition.name,
+                observedAt: day,
+                score: score,
+                createdAt: day,
+                updatedAt: day,
+              ),
+            );
+          }
+        } else {
+          await repository.saveEvent(
+            HealthEvent(
+              id: repository.newId(),
+              profileId: profile.id,
+              definitionId: definition.id,
+              kind: EventKind.tag,
+              name: definition.name,
+              observedAt: day,
+              score: level,
+              createdAt: day,
+              updatedAt: day,
+            ),
+          );
+        }
+        await _saveSymptom(repository, profile.id, 'Headache', day, level);
+      }
+
+      final result = (await CorrelationService(
+        repository,
+      ).analyze(profile.id, lags: const [0])).single;
+
+      expect(result.exposure, 'Tag: Stress');
+      expect(result.coefficient, closeTo(1, 0.0001));
+      expect(result.spearmanCoefficient, closeTo(1, 0.0001));
+      await database.close();
+    },
+  );
+
+  test(
+    'amount-mode tags sum entries in the canonical unit and ignore mismatched units',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Amount');
+      final definition = HealthEventDefinition(
+        id: repository.newId(),
+        profileId: profile.id,
+        kind: EventKind.tag,
+        name: 'Coffee',
+        valueMode: TagValueMode.amount,
+        defaultUnit: 'g',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      );
+      await repository.saveEventDefinition(definition);
+      final start = DateTime(2026, 8, 1);
+      final grams = [0, 2, 4, 6, 8, 10, 12];
+      for (var index = 0; index < grams.length; index++) {
+        final day = start.add(Duration(days: index));
+        if (grams[index] > 0) {
+          await repository.saveEvent(
+            HealthEvent(
+              id: repository.newId(),
+              profileId: profile.id,
+              definitionId: definition.id,
+              kind: EventKind.tag,
+              name: definition.name,
+              observedAt: day,
+              numericValue: grams[index].toDouble(),
+              unit: 'g',
+              createdAt: day,
+              updatedAt: day,
+            ),
+          );
+        }
+        if (index == 3) {
+          // A mismatched-unit entry that must not contribute to the "g"
+          // series; if it wrongly did, its huge value would break rank
+          // order below.
+          await repository.saveEvent(
+            HealthEvent(
+              id: repository.newId(),
+              profileId: profile.id,
+              definitionId: definition.id,
+              kind: EventKind.tag,
+              name: definition.name,
+              observedAt: day,
+              numericValue: 999,
+              unit: 'ml',
+              createdAt: day,
+              updatedAt: day,
+            ),
+          );
+        }
+        await _saveSymptom(repository, profile.id, 'Jitters', day, index + 1);
+      }
+
+      final result = (await CorrelationService(
+        repository,
+      ).analyze(profile.id, lags: const [0])).single;
+
+      expect(result.exposure, 'Tag: Coffee (g)');
+      expect(result.spearmanCoefficient, closeTo(1, 0.0001));
+      await database.close();
+    },
+  );
+
   test('keeps results isolated to the requested profile', () async {
     sqfliteFfiInit();
     final database = AppDatabase(

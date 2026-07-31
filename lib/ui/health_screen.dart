@@ -7,9 +7,7 @@ import '../app/app_localizations.dart';
 import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
 import 'charts.dart';
-import 'check_in_dialog.dart';
 import 'common.dart';
-import 'design.dart';
 import 'dialogs.dart';
 import 'labs_screen.dart';
 import 'manage_check_ins_dialog.dart';
@@ -162,48 +160,6 @@ class _JournalPaneState extends State<_JournalPane> {
                 ],
               ),
             ),
-            SurfaceCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.self_improvement_outlined,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          strings.pick('Daily check-in', 'Täglicher Check-in'),
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed: () => showDailyCheckInDialog(
-                          context,
-                          controller,
-                          day: DateTime.now(),
-                        ),
-                        icon: const Icon(Icons.edit_note_outlined),
-                        label: Text(strings.pick('Open', 'Öffnen')),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    strings.pick(
-                      'Score every tracked symptom for today in one pass.',
-                      'Bewerte alle erfassten Symptome für heute auf einmal.',
-                    ),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
             if (controller.eventDefinitions.any(
               (item) => !item.archived && !item.deleted,
             ))
@@ -395,16 +351,29 @@ class _JournalPaneState extends State<_JournalPane> {
 
   /// A tap on a quick check-in chip.
   ///
-  /// A tag has nothing to ask about — it either happened or it did not — so it
-  /// is recorded straight away with an undo. A symptom needs its rating, so it
-  /// opens the dialog with the name already filled in.
+  /// An occurrence tag has nothing to ask about — it either happened or it
+  /// did not — so it is recorded straight away with an undo. An amount tag
+  /// with a defined portion logs one portion the same way, matching how a
+  /// quick coffee tap used to work. A symptom needs its 0-10 rating, an
+  /// intensity tag needs the same rating, and an amount tag with no portion
+  /// defined yet has no shortcut to take, so all three open the dialog with
+  /// the name already filled in.
   Future<void> _quickTrack(
     BuildContext context,
     AppController controller,
     HealthEventDefinition definition,
   ) async {
     final strings = AppLocalizations.of(context);
-    if (definition.kind == EventKind.symptom) {
+    final portion = definition.portionAmount;
+    final hasPortionShortcut =
+        definition.valueMode == TagValueMode.amount &&
+        portion != null &&
+        portion > 0;
+    final needsRating =
+        definition.kind == EventKind.symptom ||
+        definition.valueMode == TagValueMode.intensity ||
+        (definition.valueMode == TagValueMode.amount && !hasPortionShortcut);
+    if (needsRating) {
       await showAddEventDialog(
         context,
         controller,
@@ -419,6 +388,8 @@ class _JournalPaneState extends State<_JournalPane> {
         kind: definition.kind,
         name: definition.name,
         definition: definition,
+        value: hasPortionShortcut ? portion : null,
+        unit: hasPortionShortcut ? definition.defaultUnit : null,
       );
     } on Object catch (error) {
       if (context.mounted) await showAppError(context, error);
@@ -431,10 +402,17 @@ class _JournalPaneState extends State<_JournalPane> {
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          strings.pick(
-            '${definition.name} recorded.',
-            '${definition.name} erfasst.',
-          ),
+          hasPortionShortcut
+              ? strings.pick(
+                  '${definition.name} recorded ($portion '
+                      '${definition.defaultUnit}).',
+                  '${definition.name} erfasst ($portion '
+                      '${definition.defaultUnit}).',
+                )
+              : strings.pick(
+                  '${definition.name} recorded.',
+                  '${definition.name} erfasst.',
+                ),
         ),
         action: recorded == null
             ? null
