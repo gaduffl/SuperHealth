@@ -1,6 +1,7 @@
 // All async dialog continuations guard context.mounted before UI access.
 // ignore_for_file: use_build_context_synchronously
 
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 
 import '../app/app_controller.dart';
@@ -1474,6 +1475,31 @@ Future<void> showAddEventDialog(
             )
             .take(8)
             .toList();
+        // Editing an entry keeps its own definition's mode regardless of
+        // in-progress name edits; a new entry adopts an existing tag's mode
+        // the moment its name matches one, and otherwise stays a plain
+        // occurrence tag until its mode is set up in tag settings.
+        final resolvedDefinition = kind != EventKind.tag
+            ? null
+            : (existing?.definitionId == null
+                      ? null
+                      : controller.eventDefinitions.firstWhereOrNull(
+                          (item) => item.id == existing!.definitionId,
+                        )) ??
+                  controller.eventDefinitions.firstWhereOrNull(
+                    (item) =>
+                        item.kind == EventKind.tag &&
+                        item.name.trim().toLowerCase() ==
+                            name.text.trim().toLowerCase(),
+                  );
+        final tagMode =
+            resolvedDefinition?.valueMode ?? TagValueMode.occurrence;
+        final showsRatingSlider =
+            isSymptom || tagMode == TagValueMode.intensity;
+        final showsAmountField =
+            kind == EventKind.tag && tagMode == TagValueMode.amount;
+        final canonicalUnit = resolvedDefinition?.defaultUnit?.trim() ?? '';
+        final portionAmount = resolvedDefinition?.portionAmount;
         return AlertDialog(
           title: Text(
             existing == null
@@ -1566,7 +1592,7 @@ Future<void> showAddEventDialog(
                       ],
                     ),
                   ],
-                  if (isSymptom) ...[
+                  if (showsRatingSlider) ...[
                     const SizedBox(height: 16),
                     Row(
                       children: [
@@ -1589,43 +1615,43 @@ Future<void> showAddEventDialog(
                       label: '${score ?? 0}',
                       onChanged: (next) => setState(() => score = next.round()),
                     ),
-                  ] else ...[
+                  ] else if (showsAmountField) ...[
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: value,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            decoration: InputDecoration(
-                              isDense: true,
-                              labelText: _dialogText(
-                                context,
-                                'How much? (optional)',
-                                'Wie viel? (optional)',
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: TextField(
-                            controller: unit,
-                            decoration: InputDecoration(
-                              isDense: true,
-                              labelText: _dialogText(
-                                context,
-                                'Unit',
-                                'Einheit',
-                              ),
-                              hintText: _dialogText(context, 'cups', 'Tassen'),
-                            ),
-                          ),
-                        ),
-                      ],
+                    TextField(
+                      controller: value,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: _dialogText(context, 'Amount', 'Menge'),
+                        suffixText: canonicalUnit.isEmpty
+                            ? null
+                            : canonicalUnit,
+                      ),
                     ),
+                    if (portionAmount != null && portionAmount > 0) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final count in const [1, 2, 3])
+                            ActionChip(
+                              visualDensity: VisualDensity.compact,
+                              label: Text(
+                                '$count× (${_formatAmount(portionAmount * count)} '
+                                '$canonicalUnit)',
+                              ),
+                              onPressed: () => setState(() {
+                                value.text = _formatAmount(
+                                  portionAmount * count,
+                                );
+                              }),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 6),
                   Align(
@@ -1760,16 +1786,46 @@ Future<void> showAddEventDialog(
 
   if (result == true && name.text.trim().isNotEmpty && context.mounted) {
     try {
-      // A tag carries no rating, so switching kind must not leave a stale one
-      // behind on the saved entry.
-      final resolvedScore = kind == EventKind.symptom ? score : null;
+      final finalDefinition = kind != EventKind.tag
+          ? null
+          : (existing?.definitionId == null
+                    ? null
+                    : controller.eventDefinitions.firstWhereOrNull(
+                        (item) => item.id == existing!.definitionId,
+                      )) ??
+                controller.eventDefinitions.firstWhereOrNull(
+                  (item) =>
+                      item.kind == EventKind.tag &&
+                      item.name.trim().toLowerCase() ==
+                          name.text.trim().toLowerCase(),
+                );
+      final finalTagMode =
+          finalDefinition?.valueMode ?? TagValueMode.occurrence;
+      // A tag carries no rating unless it is in intensity mode, and an
+      // amount always uses its definition's canonical unit rather than any
+      // stray free-text unit, so switching kind or mode never leaves a
+      // stale, wrongly-typed number behind on the saved entry.
+      final resolvedScore =
+          kind == EventKind.symptom || finalTagMode == TagValueMode.intensity
+          ? score
+          : null;
+      final (double? resolvedValue, String? resolvedUnit) = switch (kind) {
+        EventKind.symptom => (parseOptionalDouble(value.text), unit.text),
+        EventKind.tag => switch (finalTagMode) {
+          TagValueMode.amount => (
+            parseOptionalDouble(value.text),
+            finalDefinition?.defaultUnit,
+          ),
+          TagValueMode.occurrence || TagValueMode.intensity => (null, null),
+        },
+      };
       if (existing == null) {
         await controller.addEvent(
           kind: kind,
           name: name.text,
           score: resolvedScore,
-          value: parseOptionalDouble(value.text),
-          unit: unit.text,
+          value: resolvedValue,
+          unit: resolvedUnit,
           observedAt: observedAt,
           durationMinutes: parseOptionalInt(duration.text),
           notes: notes.text,
@@ -1784,8 +1840,8 @@ Future<void> showAddEventDialog(
             name: name.text,
             observedAt: observedAt,
             score: resolvedScore,
-            numericValue: parseOptionalDouble(value.text),
-            unit: unit.text,
+            numericValue: resolvedValue,
+            unit: resolvedUnit,
             durationMinutes: parseOptionalInt(duration.text),
             notes: notes.text,
             colorValue: existing.colorValue,
@@ -1806,6 +1862,14 @@ Future<void> showAddEventDialog(
 
 bool _sameCalendarDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
+
+/// Renders a portion amount without a trailing ".0" for whole numbers.
+String _formatAmount(double value) => value == value.roundToDouble()
+    ? value.toInt().toString()
+    : value
+          .toStringAsFixed(2)
+          .replaceFirst(RegExp(r'0+$'), '')
+          .replaceFirst(RegExp(r'\.$'), '');
 
 Future<void> showAddBiomarkerDialog(
   BuildContext context,

@@ -6,6 +6,26 @@ enum EvidenceClass { guideline, longevity, experimental, unclassified }
 
 enum EventKind { symptom, tag }
 
+/// How a tag definition's number is interpreted for logging and correlation.
+///
+/// Symptoms always behave like [intensity] regardless of this field — it
+/// only distinguishes the three ways a *tag* (an exposure/predictor) can be
+/// quantified, so that occurrence counts, felt-strength ratings, and real
+/// amounts are never summed together into one meaningless series.
+enum TagValueMode {
+  /// It happened or it did not. Logging needs no number; a day's exposure is
+  /// how many times it was logged.
+  occurrence,
+
+  /// A 0-10 felt-strength rating with no physical unit, e.g. how strong a
+  /// tremor felt. Uses the same scale and slider as symptom scores.
+  intensity,
+
+  /// A real quantity in [HealthEventDefinition.defaultUnit], e.g. grams of
+  /// coffee beans. A day's exposure is the sum of that day's amounts.
+  amount,
+}
+
 bool _boolFromDb(Object? value) => value == true || value == 1;
 
 String _iso(DateTime value) => value.toUtc().toIso8601String();
@@ -370,6 +390,10 @@ class HealthEventDefinition {
     required this.updatedAt,
     this.defaultUnit,
     this.useScore = false,
+    this.valueMode = TagValueMode.occurrence,
+    this.portionAmount,
+    this.portionLabel,
+    this.includeInCheckIn = false,
     this.colorValue,
     this.archived = false,
     this.deleted = false,
@@ -379,8 +403,27 @@ class HealthEventDefinition {
   final String profileId;
   final EventKind kind;
   final String name;
+
+  /// For a tag in [TagValueMode.amount], the one fixed unit every entry for
+  /// this definition is stored in, e.g. "g" or "ml". A free-text unit per
+  /// entry is what made correlation impossible, so the unit is now a
+  /// per-definition contract rather than a per-entry suggestion.
   final String? defaultUnit;
   final bool useScore;
+  final TagValueMode valueMode;
+
+  /// One portion in [defaultUnit] — e.g. 6 for "6 g of beans" — powering the
+  /// quick +1-portion logging shortcut. Null means no shortcut has been
+  /// defined yet; exact-amount entry still works.
+  final double? portionAmount;
+
+  /// Free-text description of what one portion means, e.g. "filter coffee".
+  final String? portionLabel;
+
+  /// Whether this tag is asked about in the daily check-in. Symptoms are
+  /// always asked about and ignore this field.
+  final bool includeInCheckIn;
+
   final int? colorValue;
   final bool archived;
   final DateTime createdAt;
@@ -394,6 +437,10 @@ class HealthEventDefinition {
     'name': name,
     'default_unit': defaultUnit,
     'use_score': useScore ? 1 : 0,
+    'value_mode': valueMode.name,
+    'portion_amount': portionAmount,
+    'portion_label': portionLabel,
+    'include_in_check_in': includeInCheckIn ? 1 : 0,
     'color_value': colorValue,
     'archived': archived ? 1 : 0,
     'created_at': _iso(createdAt),
@@ -412,6 +459,13 @@ class HealthEventDefinition {
         name: '${map['name']}',
         defaultUnit: map['default_unit']?.toString(),
         useScore: _boolFromDb(map['use_score']),
+        valueMode: TagValueMode.values.firstWhere(
+          (value) => value.name == map['value_mode'],
+          orElse: () => TagValueMode.occurrence,
+        ),
+        portionAmount: (map['portion_amount'] as num?)?.toDouble(),
+        portionLabel: map['portion_label']?.toString(),
+        includeInCheckIn: _boolFromDb(map['include_in_check_in']),
         colorValue: (map['color_value'] as num?)?.toInt(),
         archived: _boolFromDb(map['archived']),
         createdAt: _date(map['created_at']),

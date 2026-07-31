@@ -48,6 +48,57 @@ Future<void> showDailyCheckInDialog(
   );
   final newSymptomController = TextEditingController();
 
+  // Only tags explicitly opted into the check-in appear here, and an amount
+  // tag needs a defined portion before it has anything quick to ask about —
+  // without one, only the full log dialog can record an exact amount.
+  final tagDefinitions = controller.eventDefinitions
+      .where(
+        (item) =>
+            item.kind == EventKind.tag &&
+            item.includeInCheckIn &&
+            !item.archived &&
+            !item.deleted &&
+            (item.valueMode != TagValueMode.amount ||
+                (item.portionAmount != null && item.portionAmount! > 0)),
+      )
+      .toList();
+  final todaysTagEvents = controller.events
+      .where(
+        (item) =>
+            !item.deleted &&
+            item.kind == EventKind.tag &&
+            _sameDay(item.observedAt, day),
+      )
+      .toList();
+  final existingTagEvent = {
+    for (final event in todaysTagEvents)
+      _keyFor(event.definitionId, event.name): event,
+  };
+  final tagScores = <String, int?>{
+    for (final definition in tagDefinitions)
+      if (definition.valueMode == TagValueMode.intensity)
+        definition.id:
+            existingTagEvent[_keyFor(definition.id, definition.name)]?.score ??
+            _scoreFromValue(
+              existingTagEvent[_keyFor(definition.id, definition.name)],
+            ),
+  };
+  final tagOccurred = <String, bool>{
+    for (final definition in tagDefinitions)
+      if (definition.valueMode == TagValueMode.occurrence)
+        definition.id:
+            existingTagEvent[_keyFor(definition.id, definition.name)] != null,
+  };
+  final tagPortionCount = <String, int>{
+    for (final definition in tagDefinitions)
+      if (definition.valueMode == TagValueMode.amount)
+        definition.id: _portionCount(
+          todaysTagEvents,
+          definition.id,
+          definition.portionAmount!,
+        ),
+  };
+
   final saved = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
@@ -128,6 +179,41 @@ Future<void> showDailyCheckInDialog(
                       ),
                     ],
                   ),
+                  if (tagDefinitions.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      strings.tag,
+                      style: Theme.of(builderContext).textTheme.labelLarge,
+                    ),
+                    for (final definition in tagDefinitions)
+                      switch (definition.valueMode) {
+                        TagValueMode.intensity => _ScoreRow(
+                          name: definition.name,
+                          score: tagScores[definition.id],
+                          onChanged: (value) => setLocalState(
+                            () => tagScores[definition.id] = value,
+                          ),
+                        ),
+                        TagValueMode.occurrence => CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value: tagOccurred[definition.id] ?? false,
+                          title: Text(definition.name),
+                          onChanged: (value) => setLocalState(
+                            () => tagOccurred[definition.id] = value ?? false,
+                          ),
+                        ),
+                        TagValueMode.amount => _PortionRow(
+                          name: definition.name,
+                          unit: definition.defaultUnit ?? '',
+                          portionAmount: definition.portionAmount!,
+                          count: tagPortionCount[definition.id] ?? 0,
+                          onChanged: (value) => setLocalState(
+                            () => tagPortionCount[definition.id] = value,
+                          ),
+                        ),
+                      },
+                  ],
                   const SizedBox(height: 14),
                   TextField(
                     controller: noteController,
@@ -210,6 +296,92 @@ Future<void> showDailyCheckInDialog(
         );
       }
     }
+    for (final definition in tagDefinitions) {
+      final previous =
+          existingTagEvent[_keyFor(definition.id, definition.name)];
+      switch (definition.valueMode) {
+        case TagValueMode.intensity:
+          final score = tagScores[definition.id];
+          if (score == null) {
+            if (previous != null) await controller.deleteEvent(previous);
+            continue;
+          }
+          if (previous == null) {
+            await controller.addEvent(
+              kind: EventKind.tag,
+              name: definition.name,
+              definition: definition,
+              score: score,
+              observedAt: observedAt,
+            );
+          } else {
+            await controller.updateEvent(
+              HealthEvent(
+                id: previous.id,
+                profileId: previous.profileId,
+                definitionId: previous.definitionId ?? definition.id,
+                kind: EventKind.tag,
+                name: definition.name,
+                observedAt: previous.observedAt,
+                score: score,
+                numericValue: previous.numericValue,
+                unit: previous.unit,
+                durationMinutes: previous.durationMinutes,
+                notes: previous.notes,
+                colorValue: previous.colorValue,
+                archived: previous.archived,
+                createdAt: previous.createdAt,
+                updatedAt: DateTime.now(),
+              ),
+            );
+          }
+        case TagValueMode.occurrence:
+          final wants = tagOccurred[definition.id] ?? false;
+          if (wants && previous == null) {
+            await controller.addEvent(
+              kind: EventKind.tag,
+              name: definition.name,
+              definition: definition,
+              observedAt: observedAt,
+            );
+          } else if (!wants && previous != null) {
+            await controller.deleteEvent(previous);
+          }
+        case TagValueMode.amount:
+          // Multiple portions a day are ordinary discrete entries, so the
+          // stepper's target is reached by adding or removing whole
+          // portion-events rather than editing a single running total.
+          final portion = definition.portionAmount!;
+          final todaysEvents =
+              todaysTagEvents
+                  .where((event) => event.definitionId == definition.id)
+                  .toList()
+                ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          final existingCount = _portionCount(
+            todaysTagEvents,
+            definition.id,
+            portion,
+          );
+          final target = tagPortionCount[definition.id] ?? existingCount;
+          final delta = target - existingCount;
+          if (delta > 0) {
+            for (var index = 0; index < delta; index++) {
+              await controller.addEvent(
+                kind: EventKind.tag,
+                name: definition.name,
+                definition: definition,
+                value: portion,
+                unit: definition.defaultUnit,
+                observedAt: observedAt,
+              );
+            }
+          } else if (delta < 0) {
+            for (final event in todaysEvents.take(-delta)) {
+              await controller.deleteEvent(event);
+            }
+          }
+      }
+    }
   } on Object catch (error) {
     if (context.mounted) await showAppError(context, error);
     return;
@@ -278,12 +450,85 @@ class _ScoreRow extends StatelessWidget {
   }
 }
 
+/// A portion stepper for an amount tag: how many portions today, and the
+/// resulting total. Multiple portions a day are ordinary discrete entries —
+/// this only decides how many of them should exist, not their exact amount.
+class _PortionRow extends StatelessWidget {
+  const _PortionRow({
+    required this.name,
+    required this.unit,
+    required this.portionAmount,
+    required this.count,
+    required this.onChanged,
+  });
+
+  final String name;
+  final String unit;
+  final double portionAmount;
+  final int count;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name),
+              Text(
+                '${_formatAmount(portionAmount * count)} $unit',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          onPressed: count <= 0 ? null : () => onChanged(count - 1),
+          icon: const Icon(Icons.remove_circle_outline),
+        ),
+        Text('$count', style: Theme.of(context).textTheme.titleMedium),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          onPressed: () => onChanged(count + 1),
+          icon: const Icon(Icons.add_circle_outline),
+        ),
+      ],
+    ),
+  );
+}
+
 /// A legacy entry may have been stored as a numeric value rather than a score.
 int? _scoreFromValue(HealthEvent? event) {
   final value = event?.numericValue;
   if (value == null || !value.isFinite) return null;
   return value.clamp(0, 10).round();
 }
+
+/// How many whole portions the day's amount entries for [definitionId] add
+/// up to. An entry that isn't an exact portion multiple (logged with the
+/// full dialog rather than the stepper) is rounded to the nearest one.
+int _portionCount(
+  List<HealthEvent> todaysTagEvents,
+  String definitionId,
+  double portionAmount,
+) {
+  final total = todaysTagEvents
+      .where((event) => event.definitionId == definitionId)
+      .fold<double>(0, (sum, event) => sum + (event.numericValue ?? 0));
+  return (total / portionAmount).round();
+}
+
+/// Renders a portion amount without a trailing ".0" for whole numbers.
+String _formatAmount(double value) => value == value.roundToDouble()
+    ? value.toInt().toString()
+    : value
+          .toStringAsFixed(2)
+          .replaceFirst(RegExp(r'0+$'), '')
+          .replaceFirst(RegExp(r'\.$'), '');
 
 String _keyFor(String? definitionId, String name) =>
     definitionId ?? 'name:${name.trim().toLowerCase()}';

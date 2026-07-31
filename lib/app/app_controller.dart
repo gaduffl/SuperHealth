@@ -880,7 +880,13 @@ class AppController extends ChangeNotifier {
         kind: definition.kind,
         name: definition.name.trim(),
         defaultUnit: definition.defaultUnit?.trim(),
-        useScore: definition.useScore,
+        // useScore is redundant with valueMode but kept in sync for anything
+        // still reading it; intensity mode is exactly what useScore meant.
+        useScore: definition.valueMode == TagValueMode.intensity,
+        valueMode: definition.valueMode,
+        portionAmount: definition.portionAmount,
+        portionLabel: definition.portionLabel?.trim(),
+        includeInCheckIn: definition.includeInCheckIn,
         colorValue: definition.colorValue,
         archived: definition.archived,
         createdAt: definition.createdAt,
@@ -888,6 +894,50 @@ class AppController extends ChangeNotifier {
         deleted: definition.deleted,
       ),
     );
+    await refreshActiveData();
+  }
+
+  /// Reinterprets every existing entry for [definition] under a new value
+  /// mode, unit, or portion — e.g. converting felt-strength scores to real
+  /// amounts, or amounts in an old unit to a new one.
+  ///
+  /// This is a deliberate, reviewed, one-time rewrite of one definition's
+  /// history, mirroring the rename/kind-change cascade already used when
+  /// editing a definition. It never touches other definitions' events.
+  Future<void> reinterpretEventHistory({
+    required HealthEventDefinition definition,
+    required double factor,
+    required String newUnit,
+  }) async {
+    final affected = events.where(
+      (event) =>
+          !event.deleted &&
+          event.definitionId == definition.id &&
+          (event.score != null || event.numericValue != null) &&
+          event.unit?.trim().toLowerCase() != newUnit.trim().toLowerCase(),
+    );
+    for (final event in affected) {
+      final source = event.numericValue ?? event.score!.toDouble();
+      await repository.saveEvent(
+        HealthEvent(
+          id: event.id,
+          profileId: event.profileId,
+          definitionId: event.definitionId,
+          kind: event.kind,
+          name: event.name,
+          observedAt: event.observedAt,
+          score: null,
+          numericValue: source * factor,
+          unit: newUnit,
+          durationMinutes: event.durationMinutes,
+          notes: event.notes,
+          colorValue: event.colorValue,
+          archived: event.archived,
+          createdAt: event.createdAt,
+          updatedAt: DateTime.now(),
+        ),
+      );
+    }
     await refreshActiveData();
   }
 

@@ -80,6 +80,21 @@ void main() {
               deleted INTEGER NOT NULL DEFAULT 0
             )
           ''');
+          await db.execute('''
+            CREATE TABLE health_event_definitions (
+              id TEXT PRIMARY KEY,
+              profile_id TEXT NOT NULL REFERENCES profiles(id),
+              kind TEXT NOT NULL CHECK(kind IN ('symptom', 'tag')),
+              name TEXT NOT NULL,
+              default_unit TEXT,
+              use_score INTEGER NOT NULL DEFAULT 0,
+              color_value INTEGER,
+              archived INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              deleted INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
           await db.insert('profiles', {
             'id': 'profile',
             'display_name': 'Legacy',

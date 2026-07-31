@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -180,6 +180,11 @@ class AppDatabase {
           name TEXT NOT NULL,
           default_unit TEXT,
           use_score INTEGER NOT NULL DEFAULT 0,
+          value_mode TEXT NOT NULL DEFAULT 'occurrence'
+            CHECK(value_mode IN ('occurrence', 'intensity', 'amount')),
+          portion_amount REAL,
+          portion_label TEXT,
+          include_in_check_in INTEGER NOT NULL DEFAULT 0,
           color_value INTEGER,
           archived INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL,
@@ -517,6 +522,35 @@ class AppDatabase {
         "ALTER TABLE lab_plans ADD COLUMN verification_citations_json TEXT NOT NULL DEFAULT '[]'",
       );
       await db.execute('ALTER TABLE lab_plans ADD COLUMN verified_at TEXT');
+    }
+    if (oldVersion < 6) {
+      await db.execute(
+        "ALTER TABLE health_event_definitions "
+        "ADD COLUMN value_mode TEXT NOT NULL DEFAULT 'occurrence'",
+      );
+      await db.execute(
+        'ALTER TABLE health_event_definitions ADD COLUMN portion_amount REAL',
+      );
+      await db.execute(
+        'ALTER TABLE health_event_definitions ADD COLUMN portion_label TEXT',
+      );
+      await db.execute(
+        'ALTER TABLE health_event_definitions '
+        'ADD COLUMN include_in_check_in INTEGER NOT NULL DEFAULT 0',
+      );
+      // Existing definitions already encode their number semantics: a
+      // scored definition (symptoms, and any tag rated 0-10) becomes
+      // `intensity`, preserving exactly how it already behaved. A tag with a
+      // stored unit but no score becomes `amount`, keeping that unit as the
+      // canonical one. Everything else keeps the occurrence default.
+      await db.execute('''
+        UPDATE health_event_definitions
+        SET value_mode = CASE
+          WHEN use_score = 1 THEN 'intensity'
+          WHEN default_unit IS NOT NULL AND TRIM(default_unit) != '' THEN 'amount'
+          ELSE 'occurrence'
+        END
+      ''');
     }
   }
 

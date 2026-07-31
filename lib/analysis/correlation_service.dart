@@ -76,6 +76,15 @@ class CorrelationService {
     };
     final intakes = await _repository.intakes(profileId);
     final events = await _repository.events(profileId);
+    // Archived tags keep their history analyzable even though they no
+    // longer appear in logging or the check-in.
+    final definitionsById = {
+      for (final definition in await _repository.eventDefinitions(
+        profileId,
+        includeArchived: true,
+      ))
+        definition.id: definition,
+    };
 
     final exposures = <String, Map<DateTime, double>>{};
     for (final intake in intakes.where((item) => !item.skipped)) {
@@ -84,11 +93,49 @@ class CorrelationService {
       final day = _day(intake.takenAt);
       series[day] = (series[day] ?? 0) + intake.dose;
     }
+    // A tag's raw contributions are collected per day and reduced according
+    // to its definition's value mode, so occurrence counts, felt-strength
+    // ratings, and real amounts are never summed together into one
+    // meaningless series. An event with no resolvable definition (bare data
+    // written outside the normal logging path) falls back to the legacy
+    // sum-of-value-or-one-per-day behavior.
+    final tagRaw = <String, Map<DateTime, List<double>>>{};
+    final tagMode = <String, TagValueMode>{};
     for (final event in events.where((item) => item.kind == EventKind.tag)) {
-      final value = event.numericValue ?? event.score?.toDouble() ?? 1;
-      final series = exposures.putIfAbsent('Tag: ${event.name}', () => {});
+      final definition = definitionsById[event.definitionId];
       final day = _day(event.observedAt);
-      series[day] = (series[day] ?? 0) + value;
+      final String key;
+      final double contribution;
+      final TagValueMode mode;
+      if (definition == null) {
+        key = 'Tag: ${event.name}';
+        mode = TagValueMode.amount; // sum reduction, matching legacy behavior
+        contribution = event.numericValue ?? event.score?.toDouble() ?? 1;
+      } else {
+        key = _tagLabel(definition);
+        mode = definition.valueMode;
+        contribution = switch (mode) {
+          TagValueMode.occurrence => 1,
+          TagValueMode.intensity =>
+            event.score?.toDouble() ?? event.numericValue ?? 0,
+          TagValueMode.amount => _amountContribution(event, definition),
+        };
+      }
+      tagMode[key] = mode;
+      (tagRaw.putIfAbsent(key, () => {}).putIfAbsent(day, () => [])).add(
+        contribution,
+      );
+    }
+    for (final entry in tagRaw.entries) {
+      final mode = tagMode[entry.key]!;
+      exposures[entry.key] = entry.value.map(
+        (day, values) => MapEntry(
+          day,
+          mode == TagValueMode.intensity
+              ? values.reduce((a, b) => a + b) / values.length
+              : values.reduce((a, b) => a + b),
+        ),
+      );
     }
 
     final outcomes = <String, Map<DateTime, List<double>>>{};
@@ -167,6 +214,31 @@ class CorrelationService {
   }
 
   DateTime _day(DateTime value) => DateTime(value.year, value.month, value.day);
+
+  String _tagLabel(HealthEventDefinition definition) {
+    final unit = definition.defaultUnit?.trim();
+    return definition.valueMode == TagValueMode.amount &&
+            unit != null &&
+            unit.isNotEmpty
+        ? 'Tag: ${definition.name} ($unit)'
+        : 'Tag: ${definition.name}';
+  }
+
+  /// An amount-mode entry only contributes when it is in the definition's
+  /// canonical unit. A mismatched or missing unit is excluded rather than
+  /// summed at face value, since a wrong-unit number would silently distort
+  /// the daily total; changing a tag's unit re-normalizes its history
+  /// instead of leaving stale entries to be misread here.
+  double _amountContribution(HealthEvent event, HealthEventDefinition tag) {
+    final canonical = tag.defaultUnit?.trim();
+    if (canonical == null || canonical.isEmpty) return 0;
+    final entryUnit = event.unit?.trim();
+    if (entryUnit == null ||
+        entryUnit.toLowerCase() != canonical.toLowerCase()) {
+      return 0;
+    }
+    return event.numericValue ?? 0;
+  }
 
   double? _pearson(List<double> x, List<double> y) {
     if (x.length != y.length || x.length < 2) return null;
