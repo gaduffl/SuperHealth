@@ -496,6 +496,9 @@ class _OverviewTiles extends StatelessWidget {
     final unavailableCount = latestStatuses
         .where((item) => item.kind == BiomarkerStatusKind.unavailable)
         .length;
+    final noComparisonRangeCount = latestStatuses
+        .where((item) => item.kind == BiomarkerStatusKind.noComparisonRange)
+        .length;
     final neverMeasuredCount = latestStatuses
         .where((item) => item.kind == BiomarkerStatusKind.neverMeasured)
         .length;
@@ -590,11 +593,17 @@ class _OverviewTiles extends StatelessWidget {
       ),
       StatTile(
         label: strings.rangeUnavailable,
-        value: '${unavailableCount + neverMeasuredCount}',
+        value:
+            '${noComparisonRangeCount + unavailableCount + neverMeasuredCount}',
         icon: Icons.help_outline,
-        detail:
-            '${strings.unavailableCount(unavailableCount)} · '
-            '${strings.neverMeasuredCount(neverMeasuredCount)}',
+        detail: [
+          strings.pick(
+            '$noComparisonRangeCount no range',
+            '$noComparisonRangeCount ohne Bereich',
+          ),
+          if (unavailableCount > 0) strings.unavailableCount(unavailableCount),
+          strings.neverMeasuredCount(neverMeasuredCount),
+        ].join(' · '),
         onTap: () => navigation.go(
           AppSection.biomarkers,
           filter: SectionFilter.withoutUsableRange,

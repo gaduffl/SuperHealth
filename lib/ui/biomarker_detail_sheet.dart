@@ -18,6 +18,7 @@ String _detailText(BuildContext context, String english, String german) =>
 String _detailStatusLabel(BuildContext context, BiomarkerStatus status) {
   final german = switch (status.label) {
     'Never measured' => 'Noch nie gemessen',
+    'No comparison range' => 'Kein Vergleichsbereich',
     'Unavailable' => 'Nicht verfügbar',
     'Below personal target' => 'Unter persönlichem Zielbereich',
     'Above personal target' => 'Über persönlichem Zielbereich',
@@ -44,8 +45,12 @@ String _detailStatusDetail(BuildContext context, BiomarkerStatus status) {
         'Der angegebene Wert oder die Einheit kann nicht sicher ausgewertet werden',
       )
       .replaceAll(
-        'No usable personal target, stored reference, or lab range',
-        'Kein verwendbarer persönlicher Ziel-, Referenz- oder Laborbereich',
+        'Result recorded, but no personal target, stored reference, or lab range is available',
+        'Ergebnis gespeichert, aber kein persönlicher Ziel-, Referenz- oder Laborbereich verfügbar',
+      )
+      .replaceAll(
+        'A comparison range exists but cannot be evaluated safely',
+        'Ein Vergleichsbereich ist vorhanden, kann aber nicht sicher ausgewertet werden',
       )
       .replaceAll('Personal target:', 'Persönlicher Zielbereich:')
       .replaceAll('Borderline:', 'Grenzbereich:')
@@ -651,8 +656,8 @@ class _BiomarkerDetail extends StatelessWidget {
                               if (value.conversionStatus == 'unsupported')
                                 _detailText(
                                   context,
-                                  'Unit conversion unavailable',
-                                  'Einheitenumrechnung nicht verfügbar',
+                                  'No safe conversion to standard unit',
+                                  'Keine sichere Umrechnung in die Standardeinheit',
                                 ),
                               _detailStatusLabel(context, status),
                               if (value.notes.isNotEmpty) value.notes,
@@ -804,6 +809,7 @@ IconData _statusIcon(BiomarkerStatus status) => switch (status.kind) {
   BiomarkerStatusKind.withinStoredReference ||
   BiomarkerStatusKind.withinLabRange => Icons.check_circle_outline,
   BiomarkerStatusKind.neverMeasured => Icons.remove_circle_outline,
+  BiomarkerStatusKind.noComparisonRange => Icons.rule_folder_outlined,
   BiomarkerStatusKind.unavailable => Icons.help_outline,
 };
 

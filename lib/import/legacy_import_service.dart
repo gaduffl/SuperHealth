@@ -427,7 +427,11 @@ class LegacyImportService {
             .firstWhere((value) => value.isNotEmpty, orElse: () => '');
     if (displayName.isEmpty) return;
     final canonical = HealthRepository.normalizeName(
-      (row['canonical_name'] ?? row['canonicalName'] ?? displayName).toString(),
+      (row['canonical_name'] ??
+              row['canonicalName'] ??
+              row['id'] ??
+              displayName)
+          .toString(),
     );
     final rawPrice = row['price_eur'] ?? row['price'];
     final price = _nonNegativeOptional(
