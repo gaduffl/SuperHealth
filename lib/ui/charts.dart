@@ -457,11 +457,7 @@ class TrendChart extends StatelessWidget {
     final values = points.map((item) => item.value).toList();
     final finiteRangeLow = rangeLow?.isFinite == true ? rangeLow : null;
     final finiteRangeHigh = rangeHigh?.isFinite == true ? rangeHigh : null;
-    final scaleValues = <double>[
-      ...values,
-      if (finiteRangeLow != null) finiteRangeLow,
-      if (finiteRangeHigh != null) finiteRangeHigh,
-    ];
+    final scaleValues = <double>[...values, ?finiteRangeLow, ?finiteRangeHigh];
     final low = minY ?? scaleValues.reduce(math.min);
     final high = maxY ?? scaleValues.reduce(math.max);
     final span = high == low ? 1.0 : high - low;
