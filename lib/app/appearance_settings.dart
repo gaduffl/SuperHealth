@@ -33,7 +33,7 @@ enum AppLanguage {
 class AppearanceSettings {
   const AppearanceSettings({
     this.themeMode = AppThemeMode.system,
-    this.palette = AppColorPalette.mint,
+    this.palette = AppColorPalette.midnight,
     this.colorMode = AppColorMode.standard,
     this.highContrast = false,
     this.language = AppLanguage.system,
@@ -136,8 +136,8 @@ class AppearanceSettingsStore {
   };
 
   AppColorPalette _palette(String? value) => switch (value) {
-    'midnight' => AppColorPalette.midnight,
-    _ => AppColorPalette.mint,
+    'mint' => AppColorPalette.mint,
+    _ => AppColorPalette.midnight,
   };
 
   AppColorMode _colorMode(String? value) => switch (value) {

@@ -134,8 +134,259 @@ String _localizedStatusDetail(BuildContext context, BiomarkerStatus status) {
   return _labsText(context, status.detail, german);
 }
 
-class LabsScreen extends StatelessWidget {
+class LabsScreen extends StatefulWidget {
   const LabsScreen({super.key});
+
+  @override
+  State<LabsScreen> createState() => _LabsScreenState();
+}
+
+class _LabsScreenState extends State<LabsScreen> {
+  int? _handledRequestToken;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final profile = controller.activeProfile;
+    final latestByBiomarker = _latestMeasurements(controller.measurements);
+    final statuses = profile == null
+        ? const <String, BiomarkerStatus>{}
+        : _biomarkerStatuses(
+            controller: controller,
+            profile: profile,
+            latestByBiomarker: latestByBiomarker,
+          );
+    _openRequestedCatalog(context.watch<ShellNavigation>());
+
+    final latestBiomarkers =
+        controller.biomarkers
+            .where((item) => latestByBiomarker.containsKey(item.id))
+            .toList()
+          ..sort((a, b) => a.displayName.compareTo(b.displayName));
+    final attention = latestBiomarkers.where((item) {
+      final status = statuses[item.id];
+      return status?.isBelow == true || status?.isAbove == true;
+    }).toList();
+
+    return PageBody(
+      child: RefreshIndicator(
+        onRefresh: controller.refreshActiveData,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 110),
+          children: [
+            Text(
+              _labsText(context, 'Quick actions', 'Schnellaktionen'),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _BiomarkerQuickActionCard(
+                    icon: Icons.add,
+                    label: _labsText(
+                      context,
+                      'Add measurement',
+                      'Messwert hinzufügen',
+                    ),
+                    onTap: controller.biomarkers.isEmpty
+                        ? null
+                        : () => _addMeasurement(controller),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _BiomarkerQuickActionCard(
+                    icon: Icons.insights,
+                    label: _labsText(context, 'Dashboard', 'Dashboard'),
+                    onTap: profile == null ? null : () => _openDashboard(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _BiomarkerQuickActionCard(
+                    icon: Icons.list,
+                    label: _labsText(
+                      context,
+                      'Biomarker lists',
+                      'Biomarkerlisten',
+                    ),
+                    onTap: () => showBiomarkerListsSheet(context, controller),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _BiomarkerQuickActionCard(
+                    icon: Icons.warning,
+                    label: _labsText(
+                      context,
+                      'Due biomarkers',
+                      'Fällige Biomarker',
+                    ),
+                    onTap: () => _openWorkspace(initialStatus: 'Due'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 32),
+            Text(
+              _labsText(context, 'Latest values', 'Neueste Werte'),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            if (latestBiomarkers.isEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.timeline, size: 48, color: Colors.grey),
+                      const SizedBox(height: 8),
+                      Text(
+                        _labsText(
+                          context,
+                          'No measurements yet',
+                          'Noch keine Messwerte',
+                        ),
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _labsText(
+                          context,
+                          'Add your first measurement to see the status overview.',
+                          'Füge den ersten Messwert hinzu, um die Statusübersicht zu sehen.',
+                        ),
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else ...[
+              _BiomarkerStatusSummary(
+                statuses: [
+                  for (final item in latestBiomarkers) statuses[item.id]!,
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (attention.isEmpty)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle, color: Colors.green),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _labsText(
+                              context,
+                              'No latest value is outside its selected comparison range.',
+                              'Kein neuester Wert liegt außerhalb seines gewählten Vergleichsbereichs.',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                for (final biomarker in attention)
+                  _BiomarkerHomeTile(
+                    biomarker: biomarker,
+                    measurement: latestByBiomarker[biomarker.id]!,
+                    status: statuses[biomarker.id]!,
+                    controller: controller,
+                  ),
+            ],
+            const SizedBox(height: 24),
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: ListTile(
+                leading: const Icon(Icons.science_outlined),
+                title: Text(
+                  _labsText(
+                    context,
+                    'Lab planning and biomarker management',
+                    'Laborplanung und Biomarkerverwaltung',
+                  ),
+                ),
+                subtitle: Text(
+                  _labsText(
+                    context,
+                    'PDF imports, saved plans, documents, and the complete catalog',
+                    'PDF-Importe, gespeicherte Pläne, Dokumente und der vollständige Katalog',
+                  ),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openWorkspace(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openRequestedCatalog(ShellNavigation navigation) {
+    final navigationRequest = navigation.request;
+    if (navigationRequest == null ||
+        navigationRequest.token == _handledRequestToken) {
+      return;
+    }
+    final statusRequest = _statusRequest(navigation);
+    if (statusRequest == null && navigationRequest.section != AppSection.labs) {
+      return;
+    }
+    _handledRequestToken = navigationRequest.token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _openWorkspace(initialStatus: statusRequest?.status);
+      }
+    });
+  }
+
+  Future<void> _addMeasurement(AppController controller) async {
+    final biomarker = await _chooseBiomarker(context, controller.biomarkers);
+    if (biomarker != null && mounted) {
+      await showAddMeasurementDialog(context, controller, biomarker);
+    }
+  }
+
+  void _openDashboard() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const _BiomarkerDashboardScreen(),
+      ),
+    );
+  }
+
+  void _openWorkspace({String? initialStatus}) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(
+            title: Text(
+              _labsText(context, 'Biomarker management', 'Biomarkerverwaltung'),
+            ),
+          ),
+          body: _BiomarkerWorkspaceScreen(initialStatus: initialStatus),
+        ),
+      ),
+    );
+  }
+}
+
+class _BiomarkerWorkspaceScreen extends StatelessWidget {
+  const _BiomarkerWorkspaceScreen({this.initialStatus});
+
+  final String? initialStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -151,7 +402,7 @@ class LabsScreen extends StatelessWidget {
     }
     return PageBody(
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
         children: [
           SectionHeader(
             title: _labsText(
@@ -424,7 +675,9 @@ class LabsScreen extends StatelessWidget {
               latestByBiomarker: latestByBiomarker,
               profile: activeProfile,
               now: now,
-              statusRequest: _statusRequest(context.watch<ShellNavigation>()),
+              statusRequest: initialStatus == null
+                  ? null
+                  : (token: -1, status: initialStatus!),
             ),
         ],
       ),
@@ -1368,6 +1621,482 @@ class LabsScreen extends StatelessWidget {
       if (context.mounted) await showAppError(context, error);
     }
   }
+}
+
+Map<String, Measurement> _latestMeasurements(
+  Iterable<Measurement> measurements,
+) {
+  final latest = <String, Measurement>{};
+  for (final measurement in measurements) {
+    final existing = latest[measurement.biomarkerId];
+    if (existing == null || measurement.takenAt.isAfter(existing.takenAt)) {
+      latest[measurement.biomarkerId] = measurement;
+    }
+  }
+  return latest;
+}
+
+Map<String, BiomarkerStatus> _biomarkerStatuses({
+  required AppController controller,
+  required Profile profile,
+  required Map<String, Measurement> latestByBiomarker,
+}) {
+  final service = BiomarkerStatusService();
+  final now = DateTime.now();
+  return {
+    for (final biomarker in controller.biomarkers)
+      biomarker.id: service.evaluate(
+        biomarker: biomarker,
+        measurement: latestByBiomarker[biomarker.id],
+        profile: profile,
+        targets: controller.profileTargets,
+        referenceRanges: controller.biomarkerRanges,
+        now: now,
+      ),
+  };
+}
+
+class _BiomarkerQuickActionCard extends StatelessWidget {
+  const _BiomarkerQuickActionCard({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              size: 32,
+              color: onTap == null
+                  ? Theme.of(context).disabledColor
+                  : Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: onTap == null ? Theme.of(context).disabledColor : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _BiomarkerStatusSummary extends StatelessWidget {
+  const _BiomarkerStatusSummary({required this.statuses});
+
+  final List<BiomarkerStatus> statuses;
+
+  @override
+  Widget build(BuildContext context) {
+    final below = statuses.where((item) => item.isBelow).length;
+    final above = statuses.where((item) => item.isAbove).length;
+    final inRange = statuses
+        .where((item) => item.isTargetOrOptimal || item.isReferenceOrLab)
+        .length;
+    final unknown = statuses.length - below - above - inRange;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _labsText(context, 'Status summary', 'Statusübersicht'),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                if (inRange > 0)
+                  _BiomarkerStatusCount(
+                    icon: Icons.check_circle,
+                    color: Colors.green,
+                    count: inRange,
+                    tooltip: _labsText(
+                      context,
+                      'Within selected range',
+                      'Im gewählten Bereich',
+                    ),
+                  ),
+                if (below > 0)
+                  _BiomarkerStatusCount(
+                    icon: Icons.arrow_downward,
+                    color: Colors.red,
+                    count: below,
+                    tooltip: _labsText(context, 'Below', 'Unterhalb'),
+                  ),
+                if (above > 0)
+                  _BiomarkerStatusCount(
+                    icon: Icons.arrow_upward,
+                    color: Colors.red,
+                    count: above,
+                    tooltip: _labsText(context, 'Above', 'Oberhalb'),
+                  ),
+                if (unknown > 0)
+                  _BiomarkerStatusCount(
+                    icon: Icons.help,
+                    color: Colors.grey,
+                    count: unknown,
+                    tooltip: _labsText(
+                      context,
+                      'No usable comparison',
+                      'Kein nutzbarer Vergleich',
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BiomarkerStatusCount extends StatelessWidget {
+  const _BiomarkerStatusCount({
+    required this.icon,
+    required this.color,
+    required this.count,
+    required this.tooltip,
+  });
+
+  final IconData icon;
+  final Color color;
+  final int count;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            border: Border.all(color: color),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        const SizedBox(width: 4),
+        Text('$count', style: Theme.of(context).textTheme.bodySmall),
+      ],
+    ),
+  );
+}
+
+class _BiomarkerHomeTile extends StatelessWidget {
+  const _BiomarkerHomeTile({
+    required this.biomarker,
+    required this.measurement,
+    required this.status,
+    required this.controller,
+  });
+
+  final Biomarker biomarker;
+  final Measurement measurement;
+  final BiomarkerStatus status;
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: const EdgeInsets.symmetric(vertical: 6),
+    child: ListTile(
+      leading: const Icon(Icons.analytics),
+      title: Text(
+        biomarker.displayName,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(
+        '${measurement.value} ${measurement.unit}  •  '
+        '${DateFormat('yyyy-MM-dd').format(measurement.takenAt)}',
+      ),
+      trailing: _BiomarkerStatusBadge(status: status),
+      onTap: () => showBiomarkerDetail(context, controller, biomarker),
+    ),
+  );
+}
+
+class _BiomarkerStatusBadge extends StatelessWidget {
+  const _BiomarkerStatusBadge({required this.status});
+
+  final BiomarkerStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color) = switch (status.kind) {
+      BiomarkerStatusKind.below => (Icons.arrow_downward, Colors.red),
+      BiomarkerStatusKind.above => (Icons.arrow_upward, Colors.red),
+      BiomarkerStatusKind.inPersonalTarget ||
+      BiomarkerStatusKind.inStoredOptimal ||
+      BiomarkerStatusKind.withinStoredReference ||
+      BiomarkerStatusKind.withinLabRange => (Icons.check_circle, Colors.green),
+      BiomarkerStatusKind.neverMeasured ||
+      BiomarkerStatusKind.noComparisonRange ||
+      BiomarkerStatusKind.unavailable => (Icons.help, Colors.grey),
+    };
+    return Tooltip(
+      message: _localizedStatusLabel(context, status),
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: color, size: 16),
+      ),
+    );
+  }
+}
+
+class _BiomarkerDashboardScreen extends StatelessWidget {
+  const _BiomarkerDashboardScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final profile = controller.activeProfile;
+    final latest = _latestMeasurements(controller.measurements);
+    final statuses = profile == null
+        ? const <String, BiomarkerStatus>{}
+        : _biomarkerStatuses(
+            controller: controller,
+            profile: profile,
+            latestByBiomarker: latest,
+          );
+    final groups = <String, List<Biomarker>>{};
+    for (final biomarker in controller.biomarkers) {
+      if (!latest.containsKey(biomarker.id)) continue;
+      final category = biomarker.category.trim().isEmpty
+          ? _labsText(context, 'Other', 'Weitere')
+          : biomarker.category.trim();
+      groups.putIfAbsent(category, () => []).add(biomarker);
+    }
+    final categories = groups.keys.toList()..sort();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Dashboard')),
+      body: PageBody(
+        child: RefreshIndicator(
+          onRefresh: controller.refreshActiveData,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              if (latest.isEmpty)
+                EmptyState(
+                  icon: Icons.insights,
+                  title: _labsText(
+                    context,
+                    'No biomarker dashboard yet',
+                    'Noch kein Biomarker-Dashboard',
+                  ),
+                  message: _labsText(
+                    context,
+                    'Add measurements to see category summaries.',
+                    'Füge Messwerte hinzu, um Kategorieübersichten zu sehen.',
+                  ),
+                )
+              else ...[
+                _BiomarkerStatusSummary(
+                  statuses: [
+                    for (final biomarker in groups.values.expand(
+                      (items) => items,
+                    ))
+                      statuses[biomarker.id]!,
+                  ],
+                ),
+                const SizedBox(height: 8),
+                for (final category in categories)
+                  _BiomarkerCategoryCard(
+                    category: category,
+                    biomarkers: groups[category]!
+                      ..sort((a, b) => a.displayName.compareTo(b.displayName)),
+                    latest: latest,
+                    statuses: statuses,
+                    controller: controller,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BiomarkerCategoryCard extends StatelessWidget {
+  const _BiomarkerCategoryCard({
+    required this.category,
+    required this.biomarkers,
+    required this.latest,
+    required this.statuses,
+    required this.controller,
+  });
+
+  final String category;
+  final List<Biomarker> biomarkers;
+  final Map<String, Measurement> latest;
+  final Map<String, BiomarkerStatus> statuses;
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final categoryStatuses = [
+      for (final biomarker in biomarkers) statuses[biomarker.id]!,
+    ];
+    final hasOutOfRange = categoryStatuses.any(
+      (item) => item.isBelow || item.isAbove,
+    );
+    final hasUnknown = categoryStatuses.any(
+      (item) =>
+          item.kind == BiomarkerStatusKind.noComparisonRange ||
+          item.kind == BiomarkerStatusKind.unavailable,
+    );
+    final color = hasOutOfRange
+        ? Colors.red
+        : hasUnknown
+        ? Colors.grey
+        : Colors.green;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+          ),
+        ),
+        title: Text(
+          category,
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          _labsText(
+            context,
+            '${biomarkers.length} latest value(s)',
+            '${biomarkers.length} neueste Werte',
+          ),
+        ),
+        children: [
+          for (final biomarker in biomarkers)
+            ListTile(
+              title: Text(biomarker.displayName),
+              subtitle: Text(
+                '${latest[biomarker.id]!.value} '
+                '${latest[biomarker.id]!.unit} · '
+                '${DateFormat('yyyy-MM-dd').format(latest[biomarker.id]!.takenAt)}',
+              ),
+              trailing: _BiomarkerStatusBadge(status: statuses[biomarker.id]!),
+              onTap: () => showBiomarkerDetail(context, controller, biomarker),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<Biomarker?> _chooseBiomarker(
+  BuildContext context,
+  List<Biomarker> biomarkers,
+) async {
+  final search = TextEditingController();
+  final result = await showModalBottomSheet<Biomarker>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (sheetContext) => StatefulBuilder(
+      builder: (context, setState) {
+        final query = search.text.trim().toLowerCase();
+        final filtered =
+            biomarkers
+                .where(
+                  (item) =>
+                      query.isEmpty ||
+                      item.displayName.toLowerCase().contains(query) ||
+                      item.synonyms.any(
+                        (synonym) => synonym.toLowerCase().contains(query),
+                      ),
+                )
+                .toList()
+              ..sort((a, b) => a.displayName.compareTo(b.displayName));
+        return SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.78,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: TextField(
+                  controller: search,
+                  autofocus: true,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    labelText: _labsText(
+                      context,
+                      'Choose biomarker',
+                      'Biomarker auswählen',
+                    ),
+                    prefixIcon: const Icon(Icons.search),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: filtered.length,
+                  itemBuilder: (context, index) {
+                    final biomarker = filtered[index];
+                    return ListTile(
+                      leading: const Icon(Icons.science_outlined),
+                      title: Text(biomarker.displayName),
+                      subtitle: biomarker.category.isEmpty
+                          ? null
+                          : Text(biomarker.category),
+                      onTap: () => Navigator.pop(sheetContext, biomarker),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+  search.dispose();
+  return result;
 }
 
 class _DraftPlanCard extends StatelessWidget {

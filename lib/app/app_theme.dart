@@ -15,7 +15,7 @@ ThemeData buildAppTheme({
       ? scheme.onSurfaceVariant
       : scheme.outlineVariant;
   final inputBorder = OutlineInputBorder(
-    borderRadius: BorderRadius.circular(14),
+    borderRadius: BorderRadius.circular(12),
     borderSide: BorderSide(color: outlineVariant),
   );
 
@@ -25,56 +25,32 @@ ThemeData buildAppTheme({
     focusColor: scheme.primary.withValues(
       alpha: settings.highContrast ? 0.30 : 0.18,
     ),
-    textTheme: base.textTheme.copyWith(
-      headlineSmall: base.textTheme.headlineSmall?.copyWith(
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.4,
-      ),
-      headlineMedium: base.textTheme.headlineMedium?.copyWith(
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.5,
-      ),
-      titleLarge: base.textTheme.titleLarge?.copyWith(
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.2,
-      ),
-      titleMedium: base.textTheme.titleMedium?.copyWith(
-        fontWeight: FontWeight.w600,
-      ),
-      labelLarge: base.textTheme.labelLarge?.copyWith(
-        fontWeight: FontWeight.w600,
-      ),
-    ),
     appBarTheme: AppBarTheme(
       centerTitle: false,
       backgroundColor: scheme.surface,
       surfaceTintColor: Colors.transparent,
-      scrolledUnderElevation: 0,
-      titleTextStyle: base.textTheme.titleLarge?.copyWith(
-        color: scheme.onSurface,
-        fontWeight: FontWeight.w700,
-      ),
+      elevation: 0,
+      scrolledUnderElevation: 2,
     ),
     cardTheme: CardThemeData(
-      elevation: 0,
-      color: scheme.surfaceContainerLow,
+      elevation: 4,
+      shadowColor: brightness == Brightness.light
+          ? Colors.black45
+          : Colors.black,
+      surfaceTintColor: brightness == Brightness.light ? Colors.white : null,
       margin: const EdgeInsets.symmetric(vertical: 5),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-        side: BorderSide(
-          color: outlineVariant,
-          width: settings.highContrast ? 1.5 : 1,
-        ),
+        borderRadius: BorderRadius.circular(12),
+        side: settings.highContrast
+            ? BorderSide(color: outline, width: 1.5)
+            : BorderSide.none,
       ),
     ),
     dividerTheme: DividerThemeData(color: outlineVariant, space: 1),
-    listTileTheme: ListTileThemeData(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      minVerticalPadding: 10,
-    ),
+    listTileTheme: const ListTileThemeData(minVerticalPadding: 10),
     chipTheme: ChipThemeData(
       side: BorderSide(color: outlineVariant),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       labelStyle: base.textTheme.labelLarge,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
     ),
@@ -82,7 +58,7 @@ ThemeData buildAppTheme({
       filled: true,
       fillColor: scheme.surfaceContainerLow,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide.none,
       ),
       enabledBorder: inputBorder,
@@ -93,26 +69,12 @@ ThemeData buildAppTheme({
         ),
       ),
     ),
-    navigationBarTheme: NavigationBarThemeData(
-      height: 74,
+    bottomNavigationBarTheme: BottomNavigationBarThemeData(
+      type: BottomNavigationBarType.fixed,
       backgroundColor: scheme.surface,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-      indicatorColor: scheme.primaryContainer,
-      indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: settings.highContrast
-            ? BorderSide(color: outline, width: 1.5)
-            : BorderSide.none,
-      ),
-      labelTextStyle: WidgetStateProperty.resolveWith(
-        (states) => base.textTheme.labelMedium?.copyWith(
-          fontWeight: states.contains(WidgetState.selected)
-              ? FontWeight.w700
-              : FontWeight.w500,
-        ),
-      ),
+      selectedItemColor: scheme.primary,
+      unselectedItemColor: scheme.onSurface.withValues(alpha: 0.6),
+      elevation: 8,
     ),
     tabBarTheme: TabBarThemeData(
       dividerColor: Colors.transparent,
@@ -132,30 +94,12 @@ ThemeData buildAppTheme({
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     ),
     dialogTheme: DialogThemeData(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
     bottomSheetTheme: const BottomSheetThemeData(
       showDragHandle: true,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-      ),
-    ),
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    ),
-    outlinedButtonTheme: OutlinedButtonThemeData(
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        side: BorderSide(color: outline, width: settings.highContrast ? 2 : 1),
-      ),
-    ),
-    textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
     ),
   );
@@ -163,53 +107,43 @@ ThemeData buildAppTheme({
 
 ColorScheme _colorScheme(Brightness brightness, AppearanceSettings settings) {
   final dark = brightness == Brightness.dark;
-  final colors = _schemeColors(
+  var scheme = ColorScheme.fromSeed(
+    seedColor: Colors.blue,
+    brightness: brightness,
+  );
+  final accessibilityColors = _schemeColors(
     dark: dark,
     palette: settings.palette,
     colorMode: settings.colorMode,
   );
+  if (settings.colorMode == AppColorMode.deuteranomalyFriendly) {
+    scheme = scheme.copyWith(
+      error: accessibilityColors.error,
+      onError: accessibilityColors.onError,
+      errorContainer: accessibilityColors.errorContainer,
+      onErrorContainer: accessibilityColors.onErrorContainer,
+    );
+  }
   final highContrastOnSurface = dark
       ? const Color(0xFFFFFFFF)
       : const Color(0xFF000000);
   final onSurface = settings.highContrast
       ? highContrastOnSurface
-      : colors.onSurface;
+      : scheme.onSurface;
   final onSurfaceVariant = settings.highContrast
       ? highContrastOnSurface
-      : colors.onSurfaceVariant;
+      : scheme.onSurfaceVariant;
   final outline = settings.highContrast
       ? highContrastOnSurface
-      : colors.outline;
+      : scheme.outline;
   final outlineVariant = settings.highContrast
       ? highContrastOnSurface
-      : colors.outlineVariant;
-  return ColorScheme(
-    brightness: brightness,
-    primary: colors.primary,
-    onPrimary: colors.onPrimary,
-    primaryContainer: colors.primaryContainer,
-    onPrimaryContainer: colors.onPrimaryContainer,
-    secondary: colors.secondary,
-    onSecondary: colors.onSecondary,
-    secondaryContainer: colors.secondaryContainer,
-    onSecondaryContainer: colors.onSecondaryContainer,
-    tertiary: colors.tertiary,
-    onTertiary: colors.onTertiary,
-    tertiaryContainer: colors.tertiaryContainer,
-    onTertiaryContainer: colors.onTertiaryContainer,
-    error: colors.error,
-    onError: colors.onError,
-    errorContainer: colors.errorContainer,
-    onErrorContainer: colors.onErrorContainer,
-    surface: colors.surface,
+      : scheme.outlineVariant;
+  return scheme.copyWith(
     onSurface: onSurface,
     onSurfaceVariant: onSurfaceVariant,
     outline: outline,
     outlineVariant: outlineVariant,
-    inverseSurface: dark ? const Color(0xFFDFE4E0) : const Color(0xFF2C3230),
-    onInverseSurface: dark ? const Color(0xFF2C3230) : const Color(0xFFDFE4E0),
-    inversePrimary: colors.primaryContainer,
-    surfaceTint: colors.primary,
   );
 }
 
