@@ -705,7 +705,9 @@ class _YourDayCard extends StatelessWidget {
               const SizedBox(width: 12),
               ProgressRing(
                 value: progress,
-                label: progress == null ? '—' : strings.formatPercent(progress),
+                label: progress == null
+                    ? '—'
+                    : strings.formatPercent(progress!),
                 size: 78,
                 strokeWidth: 9,
               ),

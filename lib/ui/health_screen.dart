@@ -9,6 +9,7 @@ import '../domain/entities.dart';
 import 'charts.dart';
 import 'check_in_dialog.dart';
 import 'common.dart';
+import 'design.dart';
 import 'dialogs.dart';
 import 'labs_screen.dart';
 
