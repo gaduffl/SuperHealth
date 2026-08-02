@@ -81,6 +81,14 @@ class _ManageCheckInsState extends State<_ManageCheckIns> {
                   ],
                 ),
               ),
+              IconButton.filledTonal(
+                tooltip: strings.pick(
+                  'Add symptom or tag',
+                  'Symptom oder Tag hinzufügen',
+                ),
+                onPressed: _addDefinition,
+                icon: const Icon(Icons.add),
+              ),
             ],
           ),
         ),
@@ -112,10 +120,10 @@ class _ManageCheckInsState extends State<_ManageCheckIns> {
                       'Noch nichts zu verwalten',
                     ),
                     message: strings.pick(
-                      'Symptoms and tags appear here once you have recorded '
-                          'one.',
-                      'Symptome und Tags erscheinen hier, sobald du eines '
-                          'erfasst hast.',
+                      'Add the symptoms and tags you want to include in your '
+                          'daily check-in.',
+                      'Füge die Symptome und Tags hinzu, die du in deinem '
+                          'täglichen Check-in erfassen möchtest.',
                     ),
                   ),
                 )
@@ -206,6 +214,101 @@ class _ManageCheckInsState extends State<_ManageCheckIns> {
         ),
       ],
     );
+  }
+
+  Future<void> _addDefinition() async {
+    final strings = AppLocalizations.of(context);
+    final field = TextEditingController();
+    var kind = EventKind.symptom;
+    var name = '';
+    final result = await showDialog<(EventKind, String)>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            strings.pick('Add symptom or tag', 'Symptom oder Tag hinzufügen'),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SegmentedButton<EventKind>(
+                  showSelectedIcon: false,
+                  segments: [
+                    ButtonSegment(
+                      value: EventKind.symptom,
+                      label: Text(strings.symptom),
+                      icon: const Icon(Icons.monitor_heart_outlined),
+                    ),
+                    ButtonSegment(
+                      value: EventKind.tag,
+                      label: Text(strings.tag),
+                      icon: const Icon(Icons.sell_outlined),
+                    ),
+                  ],
+                  selected: {kind},
+                  onSelectionChanged: (value) =>
+                      setDialogState(() => kind = value.first),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: field,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.sentences,
+                  onChanged: (value) =>
+                      setDialogState(() => name = value.trim()),
+                  onSubmitted: (_) {
+                    if (name.isNotEmpty) {
+                      Navigator.pop(dialogContext, (kind, name));
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: strings.pick('Name', 'Name'),
+                    hintText: kind == EventKind.symptom
+                        ? strings.pick('Energy', 'Energie')
+                        : strings.pick('Coffee', 'Kaffee'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(strings.cancel),
+            ),
+            FilledButton(
+              onPressed: name.isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, (kind, name)),
+              child: Text(strings.pick('Add', 'Hinzufügen')),
+            ),
+          ],
+        ),
+      ),
+    );
+    field.dispose();
+    if (result == null || !mounted) return;
+
+    final now = DateTime.now();
+    try {
+      await widget.controller.saveEventDefinition(
+        HealthEventDefinition(
+          id: widget.controller.repository.newId(),
+          profileId: widget.controller.activeProfile!.id,
+          kind: result.$1,
+          name: result.$2,
+          useScore: result.$1 == EventKind.symptom,
+          includeInCheckIn: result.$1 == EventKind.tag,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      if (mounted) setState(() {});
+    } on Object catch (error) {
+      if (mounted) await showAppError(context, error);
+    }
   }
 
   Future<void> _rename(HealthEventDefinition definition) async {

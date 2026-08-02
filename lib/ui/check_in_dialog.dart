@@ -47,7 +47,6 @@ Future<void> showDailyCheckInDialog(
             ?.notes ??
         '',
   );
-  final newSymptomController = TextEditingController();
 
   // Only tags explicitly opted into the check-in appear here, and an amount
   // tag needs a defined portion before it has anything quick to ask about —
@@ -102,27 +101,6 @@ Future<void> showDailyCheckInDialog(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (builderContext, setLocalState) {
-        Future<void> addSymptom() async {
-          final name = newSymptomController.text.trim();
-          if (name.isEmpty) return;
-          final now = DateTime.now();
-          final definition = HealthEventDefinition(
-            id: controller.repository.newId(),
-            profileId: controller.activeProfile!.id,
-            kind: EventKind.symptom,
-            name: name,
-            useScore: true,
-            createdAt: now,
-            updatedAt: now,
-          );
-          await controller.saveEventDefinition(definition);
-          newSymptomController.clear();
-          setLocalState(() {
-            definitions.add(definition);
-            scores[definition.id] = null;
-          });
-        }
-
         return AlertDialog(
           title: Row(
             children: [
@@ -256,10 +234,11 @@ Future<void> showDailyCheckInDialog(
                   if (definitions.isEmpty)
                     Text(
                       strings.pick(
-                        'Add the symptoms you want to follow, for example '
-                            'energy, mood, or sleep quality.',
-                        'Lege die Symptome an, die du verfolgen möchtest, '
-                            'zum Beispiel Energie, Stimmung oder Schlafqualität.',
+                        'Use the settings button to add the symptoms you want '
+                            'to follow, for example energy, mood, or sleep quality.',
+                        'Füge über die Einstellungen die Symptome hinzu, die '
+                            'du verfolgen möchtest, zum Beispiel Energie, '
+                            'Stimmung oder Schlafqualität.',
                       ),
                       style: Theme.of(builderContext).textTheme.bodySmall,
                     ),
@@ -271,30 +250,6 @@ Future<void> showDailyCheckInDialog(
                       onChanged: (value) =>
                           setLocalState(() => scores[definition.id] = value),
                     ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: newSymptomController,
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) => addSymptom(),
-                          decoration: InputDecoration(
-                            labelText: strings.pick(
-                              'New symptom',
-                              'Neues Symptom',
-                            ),
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.tonal(
-                        onPressed: addSymptom,
-                        child: Text(strings.pick('Add', 'Hinzufügen')),
-                      ),
-                    ],
-                  ),
                   if (tagDefinitions.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     Text(
@@ -363,7 +318,6 @@ Future<void> showDailyCheckInDialog(
 
   final note = noteController.text.trim();
   noteController.dispose();
-  newSymptomController.dispose();
   if (saved != true) return;
 
   // Timestamp at the current time of day when checking in for today, and at

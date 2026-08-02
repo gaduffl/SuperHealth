@@ -127,77 +127,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
               markerFor: (day) => _completionFor(controller, day),
             ),
             const SizedBox(height: 8),
-            HeroProgressCard(
-              greeting: strings.formatTrackingDate(_selectedDay),
-              subtitle: doses.isEmpty
-                  ? strings.nothingScheduled
-                  : strings.trackingProgress(takenCount, doses.length),
-              progress: progress,
-              centerLabel: progress == null
-                  ? '—'
-                  : strings.formatPercent(progress),
-              semanticLabel: doses.isEmpty
-                  ? strings.nothingScheduled
-                  : strings.trackingProgress(takenCount, doses.length),
-              chips: [
-                Chip(
-                  avatar: const Icon(Icons.medication_outlined, size: 17),
-                  label: Text(strings.doseProgress(takenCount, doses.length)),
-                  visualDensity: VisualDensity.compact,
-                ),
-                if (dayIntakes.length > takenCount)
-                  Chip(
-                    avatar: const Icon(Icons.add_task, size: 17),
-                    label: Text(
-                      strings.pick(
-                        '${dayIntakes.length - takenCount} extra',
-                        '${dayIntakes.length - takenCount} zusätzlich',
-                      ),
-                    ),
-                    visualDensity: VisualDensity.compact,
-                  ),
-              ],
-              trailingAction: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.tonalIcon(
-                    onPressed: controller.supplements.isEmpty
-                        ? () => showAddSupplementDialog(context, controller)
-                        : () => _logManualIntake(context, controller),
-                    icon: const Icon(Icons.add),
-                    label: Text(strings.pick('Log extra', 'Extra loggen')),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => showAddEventDialog(context, controller),
-                    icon: const Icon(Icons.monitor_heart_outlined),
-                    label: Text(strings.symptom),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: doses.isEmpty && dayIntakes.isEmpty
-                        ? null
-                        : () => _analyzeDay(
-                            context,
-                            controller,
-                            navigation,
-                            doses,
-                            dayIntakes,
-                          ),
-                    icon: const Icon(Icons.auto_awesome),
-                    label: Text(strings.pick('Analyze', 'Analysieren')),
-                  ),
-                ],
-              ),
-            ),
-            _QuickLogCard(
+            _YourDayCard(
+              day: _selectedDay,
               doses: doses,
+              dayIntakes: dayIntakes,
+              takenCount: takenCount,
+              progress: progress,
               busy: controller.busy,
               onLogPeriod: (period) =>
                   _logAllForPeriod(context, controller, doses, period),
-            ),
-            _CheckInCard(
-              day: _selectedDay,
-              onOpen: () => showDailyCheckInDialog(
+              onLogExtra: controller.supplements.isEmpty
+                  ? () => showAddSupplementDialog(context, controller)
+                  : () => _logManualIntake(context, controller),
+              onAnalyze: doses.isEmpty && dayIntakes.isEmpty
+                  ? null
+                  : () => _analyzeDay(
+                      context,
+                      controller,
+                      navigation,
+                      doses,
+                      dayIntakes,
+                    ),
+              onOpenCheckIn: () => showDailyCheckInDialog(
                 context,
                 controller,
                 day: _selectedDay,
@@ -565,6 +516,17 @@ class _OverviewTiles extends StatelessWidget {
         )
         .where((item) => item.low)
         .length;
+    final journalDays = controller.events
+        .where((event) => !event.deleted)
+        .map(
+          (event) => DateTime(
+            event.observedAt.year,
+            event.observedAt.month,
+            event.observedAt.day,
+          ),
+        )
+        .toSet()
+        .length;
 
     final tiles = <Widget>[
       StatTile(
@@ -640,9 +602,9 @@ class _OverviewTiles extends StatelessWidget {
       ),
       StatTile(
         label: strings.journal,
-        value: '${controller.events.length}',
+        value: '$journalDays',
         icon: Icons.event_note_outlined,
-        detail: strings.pick('Symptoms and tags', 'Symptome und Tags'),
+        detail: strings.pick('Days recorded', 'Erfasste Tage'),
         onTap: () => navigation.go(AppSection.journal),
       ),
     ];
@@ -659,84 +621,198 @@ class _OverviewTiles extends StatelessWidget {
   }
 }
 
-/// One-tap logging for a whole part of the day.
-class _QuickLogCard extends StatelessWidget {
-  const _QuickLogCard({
+enum _YourDayMenuAction { analyze }
+
+/// One compact home for the selected day's supplement and check-in workflow.
+class _YourDayCard extends StatelessWidget {
+  const _YourDayCard({
+    required this.day,
     required this.doses,
+    required this.dayIntakes,
+    required this.takenCount,
+    required this.progress,
     required this.busy,
     required this.onLogPeriod,
+    required this.onLogExtra,
+    required this.onAnalyze,
+    required this.onOpenCheckIn,
   });
 
+  final DateTime day;
   final List<ScheduledDoseStatus> doses;
+  final List<SupplementIntake> dayIntakes;
+  final int takenCount;
+  final double? progress;
   final bool busy;
   final ValueChanged<DosePeriod> onLogPeriod;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = AppLocalizations.of(context);
-    final available = [
-      for (final period in DosePeriod.values)
-        if (doses.any((item) => item.period == period)) period,
-    ];
-    if (available.isEmpty) return const SizedBox.shrink();
-    return SurfaceCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            strings.pick('Quick actions', 'Schnellaktionen'),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            strings.pick(
-              'Record everything still open in a block with one tap.',
-              'Erfasse alles Offene eines Blocks mit einem Tipp.',
-            ),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final period in available)
-                FilledButton.tonalIcon(
-                  onPressed: busy ? null : () => onLogPeriod(period),
-                  icon: Icon(_periodIcon(period), size: 18),
-                  label: Text(periodLabel(strings, period)),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The daily symptom and selected-tag check-in summary.
-class _CheckInCard extends StatelessWidget {
-  const _CheckInCard({required this.day, required this.onOpen});
-
-  final DateTime day;
-  final VoidCallback onOpen;
+  final VoidCallback onLogExtra;
+  final VoidCallback? onAnalyze;
+  final VoidCallback onOpenCheckIn;
 
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final strings = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
+    final openPeriods = [
+      for (final period in DosePeriod.values)
+        if (doses.any((item) => item.period == period && item.intake == null))
+          period,
+    ];
+    final scheduledIntakeIds = {
+      for (final dose in doses)
+        if (dose.intake != null) dose.intake!.id,
+    };
+    final extraCount = dayIntakes
+        .where(
+          (intake) =>
+              !intake.skipped && !scheduledIntakeIds.contains(intake.id),
+        )
+        .length;
     final entries = _dailyCheckInSummaries(controller, day, strings);
     final symptomCount = entries
         .where((entry) => entry.kind == EventKind.symptom)
         .length;
     final tagCount = entries.length - symptomCount;
+
     return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      strings.formatTrackingDate(day),
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      doses.isEmpty
+                          ? strings.nothingScheduled
+                          : strings.trackingProgress(takenCount, doses.length),
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              ProgressRing(
+                value: progress,
+                label: progress == null ? '—' : strings.formatPercent(progress),
+                size: 78,
+                strokeWidth: 9,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Icon(Icons.medication_outlined, color: colors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  strings.pick('Supplements', 'Supplemente'),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Text(
+                strings.doseProgress(takenCount, doses.length),
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            doses.isEmpty
+                ? strings.nothingScheduled
+                : openPeriods.isEmpty
+                ? strings.pick(
+                    'Every scheduled dose has been recorded.',
+                    'Alle geplanten Dosen wurden erfasst.',
+                  )
+                : strings.pick(
+                    'Record everything still open in a part of the day.',
+                    'Erfasse alles Offene eines Tagesabschnitts.',
+                  ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+          if (openPeriods.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final period in openPeriods)
+                  FilledButton.tonalIcon(
+                    onPressed: busy ? null : () => onLogPeriod(period),
+                    icon: Icon(_periodIcon(period), size: 18),
+                    label: Text(periodLabel(strings, period)),
+                  ),
+              ],
+            ),
+          ],
+          if (extraCount > 0) ...[
+            const SizedBox(height: 8),
+            Chip(
+              avatar: const Icon(Icons.add_task, size: 17),
+              label: Text(
+                strings.pick(
+                  '$extraCount extra recorded',
+                  '$extraCount zusätzlich erfasst',
+                ),
+              ),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: busy ? null : onLogExtra,
+                icon: const Icon(Icons.add),
+                label: Text(strings.pick('Log extra', 'Extra loggen')),
+              ),
+              PopupMenuButton<_YourDayMenuAction>(
+                enabled: onAnalyze != null,
+                tooltip: strings.pick(
+                  'More day actions',
+                  'Weitere Tagesaktionen',
+                ),
+                icon: const Icon(Icons.more_horiz),
+                onSelected: (value) {
+                  if (value == _YourDayMenuAction.analyze) onAnalyze?.call();
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: _YourDayMenuAction.analyze,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.auto_awesome),
+                      title: Text(
+                        strings.pick('Analyze day', 'Tag analysieren'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
           Row(
             children: [
               Icon(Icons.self_improvement_outlined, color: colors.primary),
@@ -747,6 +823,18 @@ class _CheckInCard extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
+              if (entries.isNotEmpty)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_circle, size: 17, color: colors.primary),
+                    const SizedBox(width: 4),
+                    Text(
+                      strings.pick('Done', 'Erledigt'),
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ],
+                ),
             ],
           ),
           const SizedBox(height: 6),
@@ -773,10 +861,15 @@ class _CheckInCard extends StatelessWidget {
               spacing: 6,
               runSpacing: 6,
               children: [
-                for (final event in entries.take(10))
+                for (final event in entries.take(4))
                   Chip(
                     visualDensity: VisualDensity.compact,
                     label: Text(event.label),
+                  ),
+                if (entries.length > 4)
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text('+${entries.length - 4}'),
                   ),
               ],
             ),
@@ -785,7 +878,7 @@ class _CheckInCard extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: FilledButton.icon(
-              onPressed: onOpen,
+              onPressed: onOpenCheckIn,
               icon: const Icon(Icons.edit_note_outlined),
               label: Text(
                 entries.isEmpty
@@ -823,7 +916,7 @@ List<_DailyCheckInSummary> _dailyCheckInSummaries(
   for (final event in controller.events.where(
     (item) =>
         !item.deleted &&
-        _CheckInCard._sameDay(item.observedAt, day) &&
+        _YourDayCard._sameDay(item.observedAt, day) &&
         (item.kind == EventKind.symptom ||
             (definitionsById[item.definitionId]?.includeInCheckIn ?? false)),
   )) {
