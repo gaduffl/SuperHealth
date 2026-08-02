@@ -12,10 +12,13 @@ import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../app/shell_navigation.dart';
 import '../biomarkers/biomarker_status_service.dart';
+import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import '../export/lab_plan_export_service.dart';
+import 'biomarker_category_localization.dart';
 import 'biomarker_detail_sheet.dart';
 import 'biomarker_lists_sheet.dart';
+import 'charts.dart';
 import 'common.dart';
 import 'dialogs.dart';
 import 'temporary_biomarker_resolution_screen.dart';
@@ -1729,7 +1732,7 @@ class _BiomarkerStatusSummary extends StatelessWidget {
                 if (inRange > 0)
                   _BiomarkerStatusCount(
                     icon: Icons.check_circle,
-                    color: Colors.green,
+                    color: _biomarkerOptimalColor(context),
                     count: inRange,
                     tooltip: _labsText(
                       context,
@@ -1740,14 +1743,14 @@ class _BiomarkerStatusSummary extends StatelessWidget {
                 if (below > 0)
                   _BiomarkerStatusCount(
                     icon: Icons.arrow_downward,
-                    color: Colors.red,
+                    color: _biomarkerOutOfRangeColor(context),
                     count: below,
                     tooltip: _labsText(context, 'Below', 'Unterhalb'),
                   ),
                 if (above > 0)
                   _BiomarkerStatusCount(
                     icon: Icons.arrow_upward,
-                    color: Colors.red,
+                    color: _biomarkerOutOfRangeColor(context),
                     count: above,
                     tooltip: _labsText(context, 'Above', 'Oberhalb'),
                   ),
@@ -1846,12 +1849,21 @@ class _BiomarkerStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (status.kind) {
-      BiomarkerStatusKind.below => (Icons.arrow_downward, Colors.red),
-      BiomarkerStatusKind.above => (Icons.arrow_upward, Colors.red),
+      BiomarkerStatusKind.below => (
+        Icons.arrow_downward,
+        _biomarkerOutOfRangeColor(context),
+      ),
+      BiomarkerStatusKind.above => (
+        Icons.arrow_upward,
+        _biomarkerOutOfRangeColor(context),
+      ),
       BiomarkerStatusKind.inPersonalTarget ||
       BiomarkerStatusKind.inStoredOptimal ||
       BiomarkerStatusKind.withinStoredReference ||
-      BiomarkerStatusKind.withinLabRange => (Icons.check_circle, Colors.green),
+      BiomarkerStatusKind.withinLabRange => (
+        Icons.check_circle,
+        _biomarkerOptimalColor(context),
+      ),
       BiomarkerStatusKind.neverMeasured ||
       BiomarkerStatusKind.noComparisonRange ||
       BiomarkerStatusKind.unavailable => (Icons.help, Colors.grey),
@@ -1890,11 +1902,18 @@ class _BiomarkerDashboardScreen extends StatelessWidget {
     for (final biomarker in controller.biomarkers) {
       if (!latest.containsKey(biomarker.id)) continue;
       final category = biomarker.category.trim().isEmpty
-          ? _labsText(context, 'Other', 'Weitere')
+          ? 'other'
           : biomarker.category.trim();
       groups.putIfAbsent(category, () => []).add(biomarker);
     }
-    final categories = groups.keys.toList()..sort();
+    final languageCode = Localizations.localeOf(context).languageCode;
+    final categories = groups.keys.toList()
+      ..sort(
+        (left, right) =>
+            biomarkerCategoryLabel(left, languageCode).toLowerCase().compareTo(
+              biomarkerCategoryLabel(right, languageCode).toLowerCase(),
+            ),
+      );
 
     return Scaffold(
       appBar: AppBar(title: const Text('Dashboard')),
@@ -1966,19 +1985,35 @@ class _BiomarkerCategoryCard extends StatelessWidget {
     final categoryStatuses = [
       for (final biomarker in biomarkers) statuses[biomarker.id]!,
     ];
-    final hasOutOfRange = categoryStatuses.any(
-      (item) => item.isBelow || item.isAbove,
-    );
+    final outOfRangeCount = categoryStatuses
+        .where((item) => item.isBelow || item.isAbove)
+        .length;
     final hasUnknown = categoryStatuses.any(
       (item) =>
           item.kind == BiomarkerStatusKind.noComparisonRange ||
-          item.kind == BiomarkerStatusKind.unavailable,
+          item.kind == BiomarkerStatusKind.unavailable ||
+          item.kind == BiomarkerStatusKind.neverMeasured,
     );
-    final color = hasOutOfRange
-        ? Colors.red
+    final isOptimal = outOfRangeCount == 0 && !hasUnknown;
+    final color = outOfRangeCount > 0
+        ? _biomarkerOutOfRangeColor(context)
         : hasUnknown
         ? Colors.grey
-        : Colors.green;
+        : _biomarkerOptimalColor(context);
+    final icon = outOfRangeCount > 0
+        ? Icons.warning_amber_rounded
+        : hasUnknown
+        ? Icons.help_outline
+        : Icons.check_circle_outline;
+    final statusLabel = outOfRangeCount > 0
+        ? _labsText(context, 'Out of range', 'Außerhalb des Bereichs')
+        : isOptimal
+        ? _labsText(context, 'Optimal', 'Optimal')
+        : _labsText(
+            context,
+            'Comparison unavailable',
+            'Vergleich nicht verfügbar',
+          );
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       clipBehavior: Clip.antiAlias,
@@ -1991,43 +2026,191 @@ class _BiomarkerCategoryCard extends StatelessWidget {
             shape: BoxShape.circle,
           ),
           child: Center(
-            child: Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Icon(
+              icon,
+              key: ValueKey('biomarker-category-status-$category'),
+              color: color,
+              size: 23,
             ),
           ),
         ),
         title: Text(
-          category,
+          biomarkerCategoryLabel(
+            category,
+            Localizations.localeOf(context).languageCode,
+          ),
           style: Theme.of(
             context,
           ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
         subtitle: Text(
-          _labsText(
-            context,
-            '${biomarkers.length} latest value(s)',
-            '${biomarkers.length} neueste Werte',
-          ),
+          statusLabel,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color),
         ),
         children: [
           for (final biomarker in biomarkers)
-            ListTile(
-              title: Text(biomarker.displayName),
-              subtitle: Text(
-                '${latest[biomarker.id]!.value} '
-                '${latest[biomarker.id]!.unit} · '
-                '${DateFormat('yyyy-MM-dd').format(latest[biomarker.id]!.takenAt)}',
-              ),
-              trailing: _BiomarkerStatusBadge(status: statuses[biomarker.id]!),
-              onTap: () => showBiomarkerDetail(context, controller, biomarker),
+            _BiomarkerDashboardSection(
+              biomarker: biomarker,
+              latest: latest[biomarker.id]!,
+              status: statuses[biomarker.id]!,
+              controller: controller,
             ),
         ],
       ),
     );
   }
 }
+
+class _BiomarkerDashboardSection extends StatelessWidget {
+  const _BiomarkerDashboardSection({
+    required this.biomarker,
+    required this.latest,
+    required this.status,
+    required this.controller,
+  });
+
+  final Biomarker biomarker;
+  final Measurement latest;
+  final BiomarkerStatus status;
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final measurements = controller.measurements
+        .where((item) => item.biomarkerId == biomarker.id)
+        .toList(growable: false);
+    final trend = _dashboardTrendData(
+      biomarker: biomarker,
+      measurements: measurements,
+      status: status,
+    );
+    return InkWell(
+      onTap: () => showBiomarkerDetail(context, controller, biomarker),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+              color: Theme.of(
+                context,
+              ).colorScheme.outlineVariant.withValues(alpha: 0.6),
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        biomarker.displayName,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${latest.value} ${latest.unit} · '
+                        '${DateFormat('yyyy-MM-dd').format(latest.takenAt)}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _BiomarkerStatusBadge(status: status),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _labsText(
+                context,
+                'Trend · ${trend.unit}',
+                'Verlauf · ${trend.unit}',
+              ),
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 4),
+            TrendChart(
+              key: ValueKey('biomarker-trend-${biomarker.id}'),
+              points: trend.points,
+              dayLabel: (day) => DateFormat('MM/yy').format(day),
+              semanticLabel: _labsText(
+                context,
+                '${biomarker.displayName} measurement trend in ${trend.unit}',
+                'Messwertverlauf für ${biomarker.displayName} in ${trend.unit}',
+              ),
+              color: status.isBelow || status.isAbove
+                  ? _biomarkerOutOfRangeColor(context)
+                  : _biomarkerOptimalColor(context),
+              height: 150,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+({List<({DateTime day, double value})> points, String unit})
+_dashboardTrendData({
+  required Biomarker biomarker,
+  required List<Measurement> measurements,
+  required BiomarkerStatus status,
+}) {
+  final sorted = measurements.toList()
+    ..sort((left, right) => left.takenAt.compareTo(right.takenAt));
+  final latest = sorted.last;
+  final conversions = UnitConversionService();
+  final keys = <String>[
+    biomarker.id,
+    biomarker.canonicalName,
+    biomarker.displayName,
+    ...biomarker.synonyms,
+  ];
+
+  ({List<({DateTime day, double value})> points, String unit}) build(
+    String unit,
+  ) {
+    final normalizedUnit = conversions.normalizeUnit(unit);
+    final points = <({DateTime day, double value})>[];
+    for (final measurement in sorted) {
+      if (!measurement.value.isFinite) continue;
+      final value = conversions.convertValueForBiomarkerKeys(
+        measurement.value,
+        measurement.unit,
+        normalizedUnit,
+        keys,
+      );
+      if (value?.isFinite == true) {
+        points.add((day: measurement.takenAt, value: value!));
+      }
+    }
+    return (points: points, unit: normalizedUnit);
+  }
+
+  final preferredUnit = status.unit?.trim();
+  if (preferredUnit != null && preferredUnit.isNotEmpty) {
+    final preferred = build(preferredUnit);
+    if (preferred.points.isNotEmpty) return preferred;
+  }
+  return build(latest.unit);
+}
+
+Color _biomarkerOptimalColor(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? const Color(0xFF56B4E9)
+    : const Color(0xFF0072B2);
+
+Color _biomarkerOutOfRangeColor(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? const Color(0xFFFFC857)
+    : const Color(0xFF9C6500);
 
 Future<Biomarker?> _chooseBiomarker(
   BuildContext context,

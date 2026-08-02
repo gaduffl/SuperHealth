@@ -462,8 +462,8 @@ class TrendChart extends StatelessWidget {
         height: height,
         child: LineChart(
           LineChartData(
-            minX: 0,
-            maxX: (points.length - 1).toDouble(),
+            minX: points.length == 1 ? -1 : 0,
+            maxX: points.length == 1 ? 1 : (points.length - 1).toDouble(),
             minY: low - span * 0.1,
             maxY: high + span * 0.1,
             gridData: FlGridData(
