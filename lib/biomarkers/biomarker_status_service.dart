@@ -7,6 +7,7 @@ import 'unit_conversion_service.dart';
 /// makes no diagnostic or medical-normality claim.
 enum BiomarkerStatusKind {
   neverMeasured,
+  noComparisonRange,
   below,
   above,
   inPersonalTarget,
@@ -151,11 +152,20 @@ class BiomarkerStatusService {
             )
             .toList()
           ..sort(_targetOrder);
+    var unusableComparisonFound = false;
     for (final target in targetCandidates) {
       final bounds = _usableBounds(target.low, target.high);
-      if (bounds == null || target.unit.trim().isEmpty) continue;
+      if (bounds == null || target.unit.trim().isEmpty) {
+        if (_hasAnyBound(target.low, target.high)) {
+          unusableComparisonFound = true;
+        }
+        continue;
+      }
       final converted = _convert(measurement, target.unit, biomarker);
-      if (converted == null) continue;
+      if (converted == null) {
+        unusableComparisonFound = true;
+        continue;
+      }
       return _againstTarget(converted, target, bounds);
     }
 
@@ -168,10 +178,21 @@ class BiomarkerStatusService {
       final reference = _usableBounds(range.low, range.high);
       final optimal = _usableBounds(range.optimalLow, range.optimalHigh);
       if ((reference == null && optimal == null) || range.unit.trim().isEmpty) {
+        if (_hasAnyBound(
+          range.low,
+          range.high,
+          range.optimalLow,
+          range.optimalHigh,
+        )) {
+          unusableComparisonFound = true;
+        }
         continue;
       }
       final converted = _convert(measurement, range.unit, biomarker);
-      if (converted == null) continue;
+      if (converted == null) {
+        unusableComparisonFound = true;
+        continue;
+      }
       return _againstStoredRange(converted, range, reference, optimal);
     }
 
@@ -182,12 +203,20 @@ class BiomarkerStatusService {
     if (labBounds != null) {
       return _againstLab(measurement.value, measurement.unit, labBounds);
     }
-    return const BiomarkerStatus(
-      kind: BiomarkerStatusKind.unavailable,
-      source: BiomarkerStatusSource.none,
-      label: 'Unavailable',
-      detail: 'No usable personal target, stored reference, or lab range',
-    );
+    return unusableComparisonFound
+        ? const BiomarkerStatus(
+            kind: BiomarkerStatusKind.unavailable,
+            source: BiomarkerStatusSource.none,
+            label: 'Unavailable',
+            detail: 'A comparison range exists but cannot be evaluated safely',
+          )
+        : const BiomarkerStatus(
+            kind: BiomarkerStatusKind.noComparisonRange,
+            source: BiomarkerStatusSource.none,
+            label: 'No comparison range',
+            detail:
+                'Result recorded, but no personal target, stored reference, or lab range is available',
+          );
   }
 
   BiomarkerStatus _againstTarget(
@@ -364,18 +393,13 @@ class BiomarkerStatusService {
     String toUnit,
     Biomarker biomarker,
   ) {
-    final primary = _conversions.convertValue(
+    final primary = _conversions.convertValueForBiomarkerKeys(
       value,
       fromUnit,
       toUnit,
-      biomarker.canonicalName,
+      [biomarker.canonicalName, ...biomarker.synonyms, biomarker.id],
     );
-    final fallback =
-        primary ??
-        (biomarker.id == biomarker.canonicalName
-            ? null
-            : _conversions.convertValue(value, fromUnit, toUnit, biomarker.id));
-    return fallback != null && _finite(fallback) ? fallback : null;
+    return primary != null && _finite(primary) ? primary : null;
   }
 
   bool _applies(
@@ -436,8 +460,21 @@ class BiomarkerStatusService {
 
   static String? _normalizeSex(String? value) {
     final normalized = value?.trim().toLowerCase();
-    return normalized == null || normalized.isEmpty ? null : normalized;
+    return normalized == null ||
+            normalized.isEmpty ||
+            normalized == 'any' ||
+            normalized == 'all' ||
+            normalized == '*'
+        ? null
+        : normalized;
   }
+
+  static bool _hasAnyBound(
+    double? first,
+    double? second, [
+    double? third,
+    double? fourth,
+  ]) => first != null || second != null || third != null || fourth != null;
 
   static _Bounds? _usableBounds(double? low, double? high) {
     if (low == null && high == null) return null;

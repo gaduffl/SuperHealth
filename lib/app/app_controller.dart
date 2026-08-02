@@ -377,6 +377,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refreshProfiles() async {
+    await repository.repairUnsupportedMeasurementConversions();
     profiles = await repository.profiles();
     final preferences = await SharedPreferences.getInstance();
     final preferredId = preferences.getString('active_profile_id');

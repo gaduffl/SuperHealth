@@ -45,7 +45,11 @@ const Map<String, Map<String, double>> unitConversionRegistry = {
   'testosterone': {'ng/dL_to_nmol/L': 0.0347, 'nmol/L_to_ng/dL': 28.84},
   'cortisol': {'ug/dL_to_nmol/L': 27.59, 'nmol/L_to_ug/dL': 0.03623},
   'dhea_s': {'ug/dL_to_umol/L': 0.02714, 'umol/L_to_ug/dL': 36.85},
-  'insulin': {'uIU/mL_to_pmol/L': 6.0, 'pmol/L_to_uIU/mL': 0.1666667},
+  'insulin': {
+    'uIU/mL_to_pmol/L': 6.0,
+    'pmol/L_to_uIU/mL': 0.1666667,
+    'uU/mL_to_uIU/mL': 1.0,
+  },
   'homocysteine': {'umol/L_to_mg/L': 0.135, 'mg/L_to_umol/L': 7.407},
   'uric_acid': {'mg/dL_to_umol/L': 59.48, 'umol/L_to_mg/dL': 0.01682},
   'iodine': {'ug/L_to_umol/L': 0.00788, 'umol/L_to_ug/L': 126.904},
@@ -108,7 +112,14 @@ const Map<String, Map<String, double>> unitConversionRegistry = {
   'urine_albumin': {'mg/L_to_mg/dL': 0.1, 'mg/dL_to_mg/L': 10.0},
   'cystatin_c': {'mg/L_to_mg/dL': 0.1, 'mg/dL_to_mg/L': 10.0},
   'acr': {'mg/g_to_mg/mmol': 0.113, 'mg/mmol_to_mg/g': 8.85},
-  'thyroid_tsh': {'mIU/L_to_uIU/mL': 1.0, 'uIU/mL_to_mIU/L': 1.0},
+  'thyroid_tsh': {
+    'mIU/L_to_uIU/mL': 1.0,
+    'uIU/mL_to_mIU/L': 1.0,
+    'mU/L_to_mIU/L': 1.0,
+    'uU/mL_to_uIU/mL': 1.0,
+    'uU/mL_to_mIU/L': 1.0,
+  },
   'thyroid_ft4': {'ng/dL_to_pmol/L': 12.87, 'pmol/L_to_ng/dL': 0.0777},
   'thyroid_ft3': {'pg/mL_to_pmol/L': 1.536, 'pmol/L_to_pg/mL': 0.651},
+  'egfr': {'mL/min_to_mL/min/1.73 m^2': 1.0},
 };

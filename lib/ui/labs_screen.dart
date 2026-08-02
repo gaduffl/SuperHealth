@@ -35,7 +35,7 @@ String _labsText(BuildContext context, String english, String german) =>
     SectionFilter.dueBiomarkers => 'Due',
     SectionFilter.belowTarget => 'Below',
     SectionFilter.aboveTarget => 'Above',
-    SectionFilter.withoutUsableRange => 'Unavailable',
+    SectionFilter.withoutUsableRange => 'No comparison range',
     _ => null,
   };
   if (status == null) return null;
@@ -54,6 +54,11 @@ String _localizedStatusLabel(
   BiomarkerStatus status,
 ) => switch (status.label) {
   'Never measured' => _labsText(context, status.label, 'Noch nie gemessen'),
+  'No comparison range' => _labsText(
+    context,
+    status.label,
+    'Kein Vergleichsbereich',
+  ),
   'Unavailable' => _labsText(context, status.label, 'Nicht verfügbar'),
   'Below personal target' => _labsText(
     context,
@@ -114,8 +119,12 @@ String _localizedStatusDetail(BuildContext context, BiomarkerStatus status) {
         'Der angegebene Wert oder die Einheit kann nicht sicher ausgewertet werden',
       )
       .replaceAll(
-        'No usable personal target, stored reference, or lab range',
-        'Kein verwendbarer persönlicher Ziel-, Referenz- oder Laborbereich',
+        'Result recorded, but no personal target, stored reference, or lab range is available',
+        'Ergebnis gespeichert, aber kein persönlicher Ziel-, Referenz- oder Laborbereich verfügbar',
+      )
+      .replaceAll(
+        'A comparison range exists but cannot be evaluated safely',
+        'Ein Vergleichsbereich ist vorhanden, kann aber nicht sicher ausgewertet werden',
       )
       .replaceAll('Personal target:', 'Persönlicher Zielbereich:')
       .replaceAll('Borderline:', 'Grenzbereich:')
@@ -1735,6 +1744,9 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
           statusByBiomarker[biomarker.id]!.isTargetOrOptimal,
         'Within reference/lab' =>
           statusByBiomarker[biomarker.id]!.isReferenceOrLab,
+        'No comparison range' =>
+          statusByBiomarker[biomarker.id]!.kind ==
+              BiomarkerStatusKind.noComparisonRange,
         'Unavailable' =>
           statusByBiomarker[biomarker.id]!.kind ==
               BiomarkerStatusKind.unavailable,
@@ -1831,6 +1843,16 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
                         context,
                         'Within reference/lab',
                         'Im Referenz-/Laborbereich',
+                      ),
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'No comparison range',
+                    child: Text(
+                      _labsText(
+                        context,
+                        'No comparison range',
+                        'Kein Vergleichsbereich',
                       ),
                     ),
                   ),
@@ -1945,8 +1967,8 @@ class _BiomarkerTile extends StatelessWidget {
           if (latest?.conversionStatus == 'unsupported')
             _labsText(
               context,
-              'Conversion unavailable',
-              'Umrechnung nicht verfügbar',
+              'No safe conversion to standard unit',
+              'Keine sichere Umrechnung in die Standardeinheit',
             ),
         ].join(' · '),
       ),
@@ -1976,6 +1998,7 @@ class _BiomarkerTile extends StatelessWidget {
     BiomarkerStatusKind.withinStoredReference ||
     BiomarkerStatusKind.withinLabRange => Icons.check_circle_outline,
     BiomarkerStatusKind.neverMeasured => Icons.remove_circle_outline,
+    BiomarkerStatusKind.noComparisonRange => Icons.rule_folder_outlined,
     BiomarkerStatusKind.unavailable => Icons.help_outline,
   };
 }

@@ -35,6 +35,63 @@ void main() {
     expect(result, closeTo(5500, 1e-6));
   });
 
+  test('legacy lab unit spellings normalize without changing values', () {
+    final cases = <(double, String, String, String)>[
+      (2.4, 'Tsd/µl', '10^9/L', 'lymphs'),
+      (5.6, '/nl', '10^9/L', 'wbc'),
+      (4.8, '/pl', '10^12/L', 'rbc'),
+      (4.8, 'Mio/µl', '10^12/L', 'rbc'),
+      (91, 'fl', 'fL', 'mcv'),
+      (1.2, 'ng/l', 'pg/mL', 'ft3'),
+      (1.1, 'IU/ml', 'IU/mL', 'tpo_ak'),
+      (35, 'mg2/dl2', 'mg^2/dL^2', 'ca_po4_produkt'),
+    ];
+
+    for (final (value, from, to, biomarker) in cases) {
+      expect(
+        service.convertValue(value, from, to, biomarker),
+        closeTo(value, 1e-9),
+        reason: '$biomarker: $from → $to',
+      );
+    }
+  });
+
+  test('legacy biomarker synonyms unlock biomarker-specific conversions', () {
+    final phosphate = service.convertValueForBiomarkerKeys(
+      1,
+      'mg/dl',
+      'mmol/L',
+      const ['phosphat_anorganisch', 'phosphate'],
+    );
+    final insulin = service.convertValueForBiomarkerKeys(
+      4.6,
+      'µU/ml',
+      'µIU/mL',
+      const ['insulin_nüchtern', 'ins'],
+    );
+    final tsh = service.convertValueForBiomarkerKeys(
+      1.7,
+      'mU/l',
+      'mIU/L',
+      const ['tsh'],
+    );
+    final egfr = service.convertValueForBiomarkerKeys(
+      98,
+      'ml/min',
+      'mL/min/1.73 m^2',
+      const ['gfr_ckd_epi_2021', 'gfr'],
+    );
+    expect(phosphate, closeTo(0.3229, 1e-9));
+    expect(insulin, closeTo(4.6, 1e-9));
+    expect(tsh, closeTo(1.7, 1e-9));
+    expect(egfr, closeTo(98, 1e-9));
+    expect(
+      service.convertValue(12, 'U/ml', 'IU/mL', 'thyreoglobulin_ak'),
+      isNull,
+      reason: 'assay units must not be treated as international units',
+    );
+  });
+
   test('amount per volume conversion with suffix preserved', () {
     final result = service.convertValue(
       120,

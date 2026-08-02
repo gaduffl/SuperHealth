@@ -225,6 +225,57 @@ void main() {
   });
 
   test(
+    'Biomarkers import keeps stable legacy IDs for unit conversion',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Me');
+      final service = LegacyImportService(database, repository);
+
+      Uint8List jsonBytes(Object value) =>
+          Uint8List.fromList(utf8.encode(jsonEncode(value)));
+      final preview = await service.preview([
+        ImportSourceFile(
+          name: 'biomarkers.json',
+          bytes: jsonBytes([
+            {
+              'id': 'lymphs',
+              'display_name': 'Lymphozyten (absolut)',
+              'unit_primary': '10^9/L',
+              'common_abbr': ['LYMPHS', 'lymphs'],
+            },
+          ]),
+        ),
+        ImportSourceFile(
+          name: 'measurements.json',
+          bytes: jsonBytes([
+            {
+              'id': 'lymph-measurement',
+              'biomarker_id': 'lymphs',
+              'value': 2.4,
+              'unit_reported': 'Tsd/µl',
+            },
+          ]),
+        ),
+      ], fallbackProfile: profile);
+
+      await service.commit(preview);
+
+      final biomarker = (await repository.biomarkers()).single;
+      final measurement = (await repository.measurements(profile.id)).single;
+      expect(biomarker.canonicalName, 'lymphs');
+      expect(measurement.canonicalValue, closeTo(2.4, 1e-9));
+      expect(measurement.canonicalUnit, '10^9/L');
+      expect(measurement.conversionStatus, 'converted');
+      await database.close();
+    },
+  );
+
+  test(
     'Biomarkers import aliases duplicate canonical names within one bundle',
     () async {
       sqfliteFfiInit();

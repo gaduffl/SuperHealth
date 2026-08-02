@@ -1137,7 +1137,6 @@ class HealthRepository {
     final map = measurement.toMap();
     final rows = await db.query(
       'biomarkers',
-      columns: ['canonical_name', 'default_unit'],
       where: 'id = ? AND deleted = 0',
       whereArgs: [measurement.biomarkerId],
       limit: 1,
@@ -1148,10 +1147,9 @@ class HealthRepository {
       map['canonical_unit'] = null;
       return map;
     }
-    final biomarker = rows.single;
-    final canonicalName = biomarker['canonical_name']?.toString() ?? '';
+    final biomarker = Biomarker.fromMap(rows.single);
     final preferredUnit = _unitConversion.normalizeUnit(
-      biomarker['default_unit']?.toString() ?? measurement.unit,
+      biomarker.defaultUnit.isEmpty ? measurement.unit : biomarker.defaultUnit,
     );
     final reportedUnit = _unitConversion.normalizeUnit(measurement.unit);
     map['unit_reported'] = reportedUnit;
@@ -1161,11 +1159,11 @@ class HealthRepository {
       map['conversion_status'] = 'not_required';
       return map;
     }
-    final converted = _unitConversion.convertValue(
+    final converted = _unitConversion.convertValueForBiomarkerKeys(
       measurement.value,
       reportedUnit,
       preferredUnit,
-      canonicalName,
+      _biomarkerConversionKeys(biomarker),
     );
     // A finite reported measurement can still overflow during a unit
     // conversion.  Do not let that derived value bypass the persistence
@@ -1177,6 +1175,91 @@ class HealthRepository {
         ? 'unsupported'
         : 'converted';
     return map;
+  }
+
+  /// Recomputes only derived canonical values that an older converter could
+  /// not resolve. Reported values, provenance, and timestamps remain intact.
+  Future<int> repairUnsupportedMeasurementConversions() async {
+    final db = await _database.database;
+    final rows = await db.rawQuery('''
+      SELECT
+        m.id AS measurement_id,
+        m.value AS reported_value,
+        m.unit_reported,
+        m.canonical_unit,
+        b.id AS biomarker_id,
+        b.canonical_name,
+        b.display_name,
+        b.default_unit,
+        b.synonyms_json,
+        b.created_at AS biomarker_created_at,
+        b.updated_at AS biomarker_updated_at,
+        b.deleted AS biomarker_deleted
+      FROM measurements m
+      INNER JOIN biomarkers b ON b.id = m.biomarker_id
+      WHERE m.deleted = 0
+        AND b.deleted = 0
+        AND m.conversion_status = 'unsupported'
+    ''');
+    if (rows.isEmpty) return 0;
+
+    var repaired = 0;
+    await db.transaction((txn) async {
+      for (final row in rows) {
+        final value = (row['reported_value'] as num?)?.toDouble();
+        final reportedUnit = row['unit_reported']?.toString() ?? '';
+        final preferredUnit = _unitConversion.normalizeUnit(
+          row['canonical_unit']?.toString().trim().isNotEmpty == true
+              ? row['canonical_unit'].toString()
+              : row['default_unit']?.toString() ?? '',
+        );
+        if (value == null ||
+            !value.isFinite ||
+            reportedUnit.trim().isEmpty ||
+            preferredUnit.isEmpty) {
+          continue;
+        }
+        final biomarker = Biomarker.fromMap({
+          'id': row['biomarker_id'],
+          'canonical_name': row['canonical_name'],
+          'display_name': row['display_name'],
+          'default_unit': row['default_unit'],
+          'synonyms_json': row['synonyms_json'],
+          'created_at': row['biomarker_created_at'],
+          'updated_at': row['biomarker_updated_at'],
+          'deleted': row['biomarker_deleted'],
+        });
+        final normalizedReported = _unitConversion.normalizeUnit(reportedUnit);
+        final notRequired = normalizedReported == preferredUnit;
+        final converted = notRequired
+            ? value
+            : _unitConversion.convertValueForBiomarkerKeys(
+                value,
+                normalizedReported,
+                preferredUnit,
+                _biomarkerConversionKeys(biomarker),
+              );
+        if (converted?.isFinite != true) continue;
+        await txn.update(
+          'measurements',
+          {
+            'canonical_value': converted,
+            'canonical_unit': preferredUnit,
+            'conversion_status': notRequired ? 'not_required' : 'converted',
+          },
+          where: 'id = ?',
+          whereArgs: [row['measurement_id']],
+        );
+        repaired++;
+      }
+    });
+    return repaired;
+  }
+
+  Iterable<String> _biomarkerConversionKeys(Biomarker biomarker) sync* {
+    yield biomarker.canonicalName;
+    yield* biomarker.synonyms;
+    yield biomarker.id;
   }
 
   Future<List<NamedHealthRecord>> namedRecords(

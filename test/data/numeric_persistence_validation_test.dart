@@ -237,4 +237,60 @@ void main() {
     expect(row['canonical_value'], isNull);
     expect(row['conversion_status'], 'unsupported');
   });
+
+  test(
+    'repairs unsupported legacy conversions without changing evidence',
+    () async {
+      final legacyBiomarker = Biomarker(
+        id: repository.newId(),
+        canonicalName: 'lymphozyten_absolut',
+        displayName: 'Lymphozyten (absolut)',
+        defaultUnit: '10^9/L',
+        synonyms: const ['LYMPHS', 'lymphs'],
+        createdAt: now,
+        updatedAt: now,
+      );
+      await repository.saveBiomarker(legacyBiomarker);
+      final source = Measurement(
+        id: repository.newId(),
+        profileId: profile.id,
+        biomarkerId: legacyBiomarker.id,
+        takenAt: now,
+        value: 2.4,
+        unit: 'Tsd/µl',
+        canonicalUnit: '10^9/L',
+        conversionStatus: 'unsupported',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final db = await database.database;
+      await db.insert('measurements', source.toMap());
+      final persistedTimestampBefore = (await db.query(
+        'measurements',
+        columns: const ['updated_at'],
+        where: 'id = ?',
+        whereArgs: [source.id],
+      )).single['updated_at'];
+
+      final repaired = await repository
+          .repairUnsupportedMeasurementConversions();
+      final result = (await repository.measurements(
+        profile.id,
+      )).singleWhere((item) => item.id == source.id);
+      final persistedTimestampAfter = (await db.query(
+        'measurements',
+        columns: const ['updated_at'],
+        where: 'id = ?',
+        whereArgs: [source.id],
+      )).single['updated_at'];
+
+      expect(repaired, 1);
+      expect(result.value, 2.4);
+      expect(result.unit, 'Tsd/µl');
+      expect(result.canonicalValue, closeTo(2.4, 1e-9));
+      expect(result.canonicalUnit, '10^9/L');
+      expect(result.conversionStatus, 'converted');
+      expect(persistedTimestampAfter, persistedTimestampBefore);
+    },
+  );
 }

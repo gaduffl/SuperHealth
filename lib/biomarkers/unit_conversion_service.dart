@@ -38,6 +38,8 @@ class UnitConversionService {
     'ug/dl': 'ug/dL',
     'ug/l': 'ug/L',
     'ug/ml': 'ug/mL',
+    'ng/dl': 'ng/dL',
+    'ng/l': 'ng/L',
     'ng/ml': 'ng/mL',
     'pg/ml': 'pg/mL',
     'pmol/l': 'pmol/L',
@@ -56,10 +58,25 @@ class UnitConversionService {
     '10^12/l': '10^12/L',
     'cells/ul': 'cells/uL',
     'cells/mm^3': 'cells/uL',
+    'tsd/ul': '10^3/uL',
+    'mio/ul': '10^6/uL',
+    '/nl': '10^9/L',
+    '/pl': '10^12/L',
+    'fl': 'fL',
     'pl': 'pL',
     'u/l': 'U/L',
     'u/ml': 'U/mL',
+    'iu/l': 'IU/L',
+    'iu/ml': 'IU/mL',
+    'mu/l': 'mU/L',
+    'uu/ml': 'uU/mL',
     'ukat/l': 'ukat/L',
+    'ml/min': 'mL/min',
+    'ml/min/1,73m2kof': 'mL/min/1.73 m^2',
+    'ml/min/1.73m2': 'mL/min/1.73 m^2',
+    'ml/min/1.73 m^2': 'mL/min/1.73 m^2',
+    'mg2/dl2': 'mg^2/dL^2',
+    'mg^2/dl^2': 'mg^2/dL^2',
     'umol trolox-eq./l': 'umol/L Trolox-eq.',
     'mg trolox/l': 'mg/L Trolox',
     'ratio': 'ratio',
@@ -162,6 +179,8 @@ class UnitConversionService {
     'tsh': 'thyroid_tsh',
     'ft4': 'thyroid_ft4',
     'ft3': 'thyroid_ft3',
+    'gfr': 'egfr',
+    'gfr_capa': 'egfr',
   };
   double? convertValue(
     double value,
@@ -221,6 +240,27 @@ class UnitConversionService {
       return unitResult;
     }
 
+    return null;
+  }
+
+  /// Tries all stable IDs and aliases known for one biomarker.
+  ///
+  /// Legacy exports localized the display name but retained their stable
+  /// catalog ID among the synonyms. Trying those keys keeps biomarker-specific
+  /// conversions deterministic without guessing from the display language.
+  double? convertValueForBiomarkerKeys(
+    double value,
+    String fromUnit,
+    String toUnit,
+    Iterable<String> biomarkerKeys,
+  ) {
+    final seen = <String>{};
+    for (final key in biomarkerKeys) {
+      final normalizedKey = key.trim().toLowerCase();
+      if (normalizedKey.isEmpty || !seen.add(normalizedKey)) continue;
+      final converted = convertValue(value, fromUnit, toUnit, normalizedKey);
+      if (converted != null) return converted;
+    }
     return null;
   }
 
@@ -366,7 +406,7 @@ class UnitConversionService {
   }
 
   String? getBiomarkerCategory(String biomarkerId) {
-    final key = biomarkerId.toLowerCase();
+    final key = biomarkerId.trim().toLowerCase();
     return _biomarkerCategories[key];
   }
 

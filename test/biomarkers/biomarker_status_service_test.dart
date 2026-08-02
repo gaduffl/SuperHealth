@@ -6,11 +6,16 @@ void main() {
   final now = DateTime.utc(2026, 7, 18, 10);
   final service = BiomarkerStatusService();
 
-  Biomarker biomarker({String id = 'apo', String name = 'apo_b'}) => Biomarker(
+  Biomarker biomarker({
+    String id = 'apo',
+    String name = 'apo_b',
+    List<String> synonyms = const [],
+  }) => Biomarker(
     id: id,
     canonicalName: name,
     displayName: 'ApoB',
     defaultUnit: 'mg/dL',
+    synonyms: synonyms,
     createdAt: now,
     updatedAt: now,
   );
@@ -135,6 +140,34 @@ void main() {
     expect(status.usedHigh, 90);
   });
 
+  test('legacy synonym converts a localized imported cell count', () {
+    final item = biomarker(
+      id: 'imported-hash',
+      name: 'lymphozyten_absolut',
+      synonyms: const ['Lymphozyten (absolut)', 'lymphs'],
+    );
+    final status = evaluate(
+      item: item,
+      result: measurement(biomarkerId: item.id, value: 2.4, unit: 'Tsd/µl'),
+      ranges: [
+        BiomarkerReferenceRange(
+          id: 'lymph-range',
+          biomarkerId: item.id,
+          rangeType: 'reference',
+          sex: 'any',
+          low: 1,
+          high: 4,
+          unit: '10^9/L',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ],
+    );
+
+    expect(status.kind, BiomarkerStatusKind.withinStoredReference);
+    expect(status.value, closeTo(2.4, 1e-9));
+  });
+
   test(
     'selected band converts using canonical name then biomarker id fallback',
     () {
@@ -249,6 +282,16 @@ void main() {
     expect(onBirthday.detail, contains('30.0–40.0'));
   });
 
+  test('legacy any-sex ranges apply to every profile sex', () {
+    final status = evaluate(
+      result: measurement(value: 10),
+      activeProfile: profile(sex: 'male'),
+      ranges: [range(sex: 'any', low: 8, high: 12)],
+    );
+
+    expect(status.kind, BiomarkerStatusKind.withinStoredReference);
+  });
+
   test('most specific range and then most recently updated range wins', () {
     final specific = evaluate(
       result: measurement(value: 3.5),
@@ -316,7 +359,7 @@ void main() {
     },
   );
 
-  test('never measured and unresolved non-finite inputs are explicit', () {
+  test('missing ranges and unresolved non-finite inputs are distinct', () {
     final never = evaluate(result: null);
     final noBounds = evaluate(result: measurement());
     final nonFiniteValue = evaluate(result: measurement(value: double.nan));
@@ -326,7 +369,8 @@ void main() {
     );
 
     expect(never.kind, BiomarkerStatusKind.neverMeasured);
-    expect(noBounds.kind, BiomarkerStatusKind.unavailable);
+    expect(noBounds.kind, BiomarkerStatusKind.noComparisonRange);
+    expect(noBounds.label, 'No comparison range');
     expect(nonFiniteValue.kind, BiomarkerStatusKind.unavailable);
     expect(nonFiniteBounds.kind, BiomarkerStatusKind.unavailable);
   });
