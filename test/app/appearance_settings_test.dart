@@ -173,18 +173,21 @@ void main() {
     }
   });
 
-  test('Mint and Midnight remain distinct in both brightnesses', () {
+  test('uses the old Biomarkers blue theme and elevated card treatment', () {
     for (final brightness in Brightness.values) {
-      final mint = buildAppTheme(
+      final theme = buildAppTheme(
         brightness: brightness,
-        settings: const AppearanceSettings(palette: AppColorPalette.mint),
+        settings: AppearanceSettings.defaults,
       );
-      final midnight = buildAppTheme(
+      final oldBiomarkersScheme = ColorScheme.fromSeed(
+        seedColor: Colors.blue,
         brightness: brightness,
-        settings: const AppearanceSettings(palette: AppColorPalette.midnight),
       );
 
-      expect(mint.colorScheme.primary, isNot(midnight.colorScheme.primary));
+      expect(theme.colorScheme.primary, oldBiomarkersScheme.primary);
+      expect(theme.cardTheme.elevation, 4);
+      final shape = theme.cardTheme.shape! as RoundedRectangleBorder;
+      expect(shape.borderRadius, BorderRadius.circular(12));
     }
   });
 

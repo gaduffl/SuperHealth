@@ -165,8 +165,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: controller,
             onThemeModeChanged: (value) =>
                 _saveAppearance(() => controller.setThemeMode(value)),
-            onPaletteChanged: (value) =>
-                _saveAppearance(() => controller.setColorPalette(value)),
             onColorModeChanged: (value) =>
                 _saveAppearance(() => controller.setColorMode(value)),
             onHighContrastChanged: (value) =>
@@ -1706,7 +1704,6 @@ class _AppearanceCard extends StatelessWidget {
   const _AppearanceCard({
     required this.controller,
     required this.onThemeModeChanged,
-    required this.onPaletteChanged,
     required this.onColorModeChanged,
     required this.onHighContrastChanged,
     required this.onLanguageChanged,
@@ -1714,7 +1711,6 @@ class _AppearanceCard extends StatelessWidget {
 
   final AppController controller;
   final ValueChanged<AppThemeMode> onThemeModeChanged;
-  final ValueChanged<AppColorPalette> onPaletteChanged;
   final ValueChanged<AppColorMode> onColorModeChanged;
   final ValueChanged<bool> onHighContrastChanged;
   final ValueChanged<AppLanguage> onLanguageChanged;
@@ -1763,25 +1759,6 @@ class _AppearanceCard extends StatelessWidget {
             title: strings.dark,
             enabled: !disabled,
             onChanged: onThemeModeChanged,
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.palette_outlined),
-            title: Text(strings.colorPalette),
-          ),
-          _AppearanceRadio<AppColorPalette>(
-            value: AppColorPalette.mint,
-            groupValue: controller.colorPalette,
-            title: strings.mint,
-            enabled: !disabled,
-            onChanged: onPaletteChanged,
-          ),
-          _AppearanceRadio<AppColorPalette>(
-            value: AppColorPalette.midnight,
-            groupValue: controller.colorPalette,
-            title: strings.midnight,
-            enabled: !disabled,
-            onChanged: onPaletteChanged,
           ),
           const Divider(height: 1),
           ListTile(

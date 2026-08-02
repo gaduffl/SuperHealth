@@ -194,6 +194,34 @@ void main() {
     expect(find.text('Edit daily check-in'), findsOneWidget);
   });
 
+  testWidgets('biomarker tab opens with the old Biomarkers home structure', (
+    tester,
+  ) async {
+    final controller = _seededController();
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(900, 3200);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(_healthApp(controller, navigation));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Biomarkers'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick actions'), findsOneWidget);
+    expect(find.text('Add measurement'), findsOneWidget);
+    expect(find.text('Dashboard'), findsOneWidget);
+    expect(find.text('Biomarker lists'), findsOneWidget);
+    expect(find.text('Due biomarkers'), findsOneWidget);
+    expect(find.text('Latest values'), findsOneWidget);
+    expect(find.text('Lab planning and biomarker management'), findsOneWidget);
+  });
+
   testWidgets('overview tiles deep-link into the section that owns them', (
     tester,
   ) async {

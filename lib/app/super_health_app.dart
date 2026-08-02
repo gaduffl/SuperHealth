@@ -307,33 +307,29 @@ class _HomeShellBody extends StatelessWidget {
             : null,
       ),
       body: IndexedStack(index: index, children: _screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        onDestinationSelected: navigation.selectTab,
-        destinations: [
-          NavigationDestination(
-            icon: Icon(Icons.today_outlined),
-            selectedIcon: Icon(Icons.today),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: index,
+        onTap: navigation.selectTab,
+        type: BottomNavigationBarType.fixed,
+        items: [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.today),
             label: strings.today,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.medication_outlined),
-            selectedIcon: Icon(Icons.medication),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.medication),
             label: strings.supplements,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.monitor_heart_outlined),
-            selectedIcon: Icon(Icons.monitor_heart),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.monitor_heart),
             label: strings.health,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.psychology_outlined),
-            selectedIcon: Icon(Icons.psychology),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.psychology),
             label: strings.advisor,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
             label: strings.settings,
           ),
         ],

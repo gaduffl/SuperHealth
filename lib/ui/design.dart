@@ -17,8 +17,8 @@ class AppRadius {
   const AppRadius._();
 
   static const small = 12.0;
-  static const medium = 18.0;
-  static const large = 24.0;
+  static const medium = 12.0;
+  static const large = 12.0;
   static const pill = 999.0;
 }
 
@@ -166,17 +166,21 @@ class SurfaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     final content = Padding(padding: padding, child: child);
-    final card = Container(
+    final radius = BorderRadius.circular(AppRadius.large);
+    final card = Card(
       margin: margin,
-      decoration: BoxDecoration(
-        color: color ?? colors.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(AppRadius.large),
-        border: Border.all(color: borderColor ?? colors.outlineVariant),
+      color: color,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: borderColor == null
+            ? BorderSide.none
+            : BorderSide(color: borderColor!),
       ),
       clipBehavior: Clip.antiAlias,
-      child: onTap == null ? content : InkWell(onTap: onTap, child: content),
+      child: onTap == null
+          ? content
+          : InkWell(onTap: onTap, borderRadius: radius, child: content),
     );
     if (semanticLabel == null) return card;
     return Semantics(label: semanticLabel, button: onTap != null, child: card);
@@ -216,64 +220,54 @@ class HeroProgressCard extends StatelessWidget {
     final colors = theme.colorScheme;
     return Semantics(
       label: semanticLabel,
-      child: Container(
+      child: Card(
         margin: const EdgeInsets.symmetric(vertical: 5),
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppRadius.large),
-          border: Border.all(color: colors.outlineVariant),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              colors.primaryContainer.withValues(alpha: 0.75),
-              colors.surfaceContainerLow,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      greeting,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    if (chips.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Wrap(
+                        spacing: AppSpacing.sm,
+                        runSpacing: 6,
+                        children: chips,
+                      ),
+                    ],
+                    if (trailingAction != null) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      trailingAction!,
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              ProgressRing(
+                value: progress,
+                label: centerLabel,
+                size: 104,
+                strokeWidth: 11,
+              ),
             ],
           ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    greeting,
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    subtitle,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                  if (chips.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    Wrap(
-                      spacing: AppSpacing.sm,
-                      runSpacing: 6,
-                      children: chips,
-                    ),
-                  ],
-                  if (trailingAction != null) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    trailingAction!,
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            ProgressRing(
-              value: progress,
-              label: centerLabel,
-              size: 104,
-              strokeWidth: 11,
-            ),
-          ],
         ),
       ),
     );
