@@ -265,12 +265,24 @@ void main() {
       );
       final db = await database.database;
       await db.insert('measurements', source.toMap());
+      final persistedTimestampBefore = (await db.query(
+        'measurements',
+        columns: const ['updated_at'],
+        where: 'id = ?',
+        whereArgs: [source.id],
+      )).single['updated_at'];
 
       final repaired = await repository
           .repairUnsupportedMeasurementConversions();
       final result = (await repository.measurements(
         profile.id,
       )).singleWhere((item) => item.id == source.id);
+      final persistedTimestampAfter = (await db.query(
+        'measurements',
+        columns: const ['updated_at'],
+        where: 'id = ?',
+        whereArgs: [source.id],
+      )).single['updated_at'];
 
       expect(repaired, 1);
       expect(result.value, 2.4);
@@ -278,7 +290,7 @@ void main() {
       expect(result.canonicalValue, closeTo(2.4, 1e-9));
       expect(result.canonicalUnit, '10^9/L');
       expect(result.conversionStatus, 'converted');
-      expect(result.updatedAt, now);
+      expect(persistedTimestampAfter, persistedTimestampBefore);
     },
   );
 }
