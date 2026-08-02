@@ -222,6 +222,67 @@ void main() {
     expect(find.text('Lab planning and biomarker management'), findsOneWidget);
   });
 
+  testWidgets(
+    'biomarker dashboard labels collapsed status and reveals every chart',
+    (tester) async {
+      final controller = _seededController(recordBiomarkers: true);
+      final navigation = ShellNavigation();
+      addTearDown(() {
+        controller.dispose();
+        navigation.dispose();
+      });
+
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(900, 3200);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(_healthApp(controller, navigation));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Biomarkers'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dashboard'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Metabolic Health'), findsOneWidget);
+      expect(find.text('Optimal'), findsOneWidget);
+      expect(find.text('Complete Blood Count'), findsOneWidget);
+      expect(find.text('Out of range'), findsOneWidget);
+      expect(
+        tester
+            .widget<Icon>(
+              find.byKey(const ValueKey('biomarker-category-status-metabolic')),
+            )
+            .color,
+        const Color(0xFF0072B2),
+      );
+      expect(
+        tester
+            .widget<Icon>(
+              find.byKey(const ValueKey('biomarker-category-status-cbc')),
+            )
+            .color,
+        const Color(0xFF9C6500),
+      );
+      expect(
+        find.byKey(const ValueKey('biomarker-trend-glucose')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('biomarker-trend-wbc')), findsNothing);
+
+      await tester.tap(find.text('Metabolic Health'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('biomarker-trend-glucose')),
+        findsOneWidget,
+      );
+      expect(find.text('Trend · mg/dL'), findsOneWidget);
+
+      await tester.tap(find.text('Complete Blood Count'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('biomarker-trend-wbc')), findsOneWidget);
+      expect(find.text('Trend · 10^9/L'), findsOneWidget);
+    },
+  );
+
   testWidgets('overview tiles deep-link into the section that owns them', (
     tester,
   ) async {
@@ -392,6 +453,7 @@ AppController _seededController({
   bool recordTodaysDose = false,
   bool recordUnplannedIntake = false,
   bool recordDailyCheckIn = false,
+  bool recordBiomarkers = false,
 }) {
   final today = DateTime.now();
   final profile = Profile(
@@ -432,6 +494,24 @@ AppController _seededController({
     createdAt: _now,
     updatedAt: _now,
   );
+  final glucose = Biomarker(
+    id: 'glucose',
+    canonicalName: 'glucose',
+    displayName: 'Glucose',
+    category: 'metabolic',
+    defaultUnit: 'mg/dL',
+    createdAt: _now,
+    updatedAt: _now,
+  );
+  final whiteBloodCells = Biomarker(
+    id: 'wbc',
+    canonicalName: 'wbc',
+    displayName: 'White blood cells',
+    category: 'cbc',
+    defaultUnit: '10^9/L',
+    createdAt: _now,
+    updatedAt: _now,
+  );
   final controller = _controller()
     ..initialized = true
     ..profiles = [profile]
@@ -440,6 +520,51 @@ AppController _seededController({
     ..schedules = [_morningSchedule]
     ..householdSchedules = [_morningSchedule]
     ..stockLevels = {_magnesium.id: 4}
+    ..biomarkers = [
+      if (recordBiomarkers) glucose,
+      if (recordBiomarkers) whiteBloodCells,
+    ]
+    ..measurements = [
+      if (recordBiomarkers)
+        Measurement(
+          id: 'glucose-old',
+          profileId: profile.id,
+          biomarkerId: glucose.id,
+          takenAt: DateTime(2026, 6, 1),
+          value: 95,
+          unit: 'mg/dL',
+          labRefLow: 70,
+          labRefHigh: 110,
+          createdAt: _now,
+          updatedAt: _now,
+        ),
+      if (recordBiomarkers)
+        Measurement(
+          id: 'glucose-latest',
+          profileId: profile.id,
+          biomarkerId: glucose.id,
+          takenAt: DateTime(2026, 7, 1),
+          value: 90,
+          unit: 'mg/dL',
+          labRefLow: 70,
+          labRefHigh: 110,
+          createdAt: _now,
+          updatedAt: _now,
+        ),
+      if (recordBiomarkers)
+        Measurement(
+          id: 'wbc-latest',
+          profileId: profile.id,
+          biomarkerId: whiteBloodCells.id,
+          takenAt: DateTime(2026, 7, 1),
+          value: 14,
+          unit: '10^9/L',
+          labRefLow: 4,
+          labRefHigh: 10,
+          createdAt: _now,
+          updatedAt: _now,
+        ),
+    ]
     ..eventDefinitions = [
       if (recordDailyCheckIn) energyDefinition,
       if (recordDailyCheckIn) coffeeDefinition,
