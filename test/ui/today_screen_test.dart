@@ -54,6 +54,8 @@ void main() {
     // The whole-block shortcut only appears for a block that has doses in it.
     expect(find.widgetWithText(FilledButton, 'Morning'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Bedtime'), findsNothing);
+    expect(find.text('Quick actions'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'Symptom'), findsNothing);
     // Both per-dose actions are offered while the dose is still open.
     expect(find.byTooltip('Mark as taken'), findsOneWidget);
     expect(find.byTooltip('Skip this dose'), findsOneWidget);
@@ -126,6 +128,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Manage symptoms and tags'), findsOneWidget);
+    expect(find.text('New symptom'), findsNothing);
     final ratingSliders = tester.widgetList<Slider>(find.byType(Slider));
     expect(ratingSliders, hasLength(2));
     for (final slider in ratingSliders) {
@@ -135,7 +138,8 @@ void main() {
 
     await tester.tap(find.byTooltip('Manage symptoms and tags'));
     await tester.pumpAndSettle();
-    expect(find.text('Symptoms and tags'), findsNWidgets(2));
+    expect(find.text('Symptoms and tags'), findsOneWidget);
+    expect(find.byTooltip('Add symptom or tag'), findsOneWidget);
   });
 
   testWidgets('health journal no longer exposes the quick check-in area', (
@@ -156,6 +160,38 @@ void main() {
 
     expect(find.text('Quick check-in'), findsNothing);
     expect(find.byTooltip('Manage symptoms and tags'), findsNothing);
+  });
+
+  testWidgets('health journal groups check-in events into one compact day', (
+    tester,
+  ) async {
+    final controller = _seededController(recordDailyCheckIn: true);
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(900, 3200);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(_healthApp(controller, navigation));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 recorded day(s) · 4 entries'), findsOneWidget);
+    expect(find.text('1 symptom · 2 tags'), findsOneWidget);
+    expect(find.text('Energy 4/5'), findsOneWidget);
+    expect(find.text('Coffee · 2× filter coffee · 12 g'), findsOneWidget);
+    expect(find.text('Trends and correlations'), findsOneWidget);
+    expect(find.text('Add entry'), findsNothing);
+
+    final today = DateTime.now();
+    final dayKey = ValueKey(
+      'journal-${DateTime(today.year, today.month, today.day).toIso8601String()}',
+    );
+    await tester.tap(find.byKey(dayKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit daily check-in'), findsOneWidget);
   });
 
   testWidgets('overview tiles deep-link into the section that owns them', (
@@ -206,7 +242,9 @@ void main() {
 
     await _pumpToday(tester, controller, navigation);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Analyze'));
+    await tester.tap(find.byTooltip('More day actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Analyze day'));
     await tester.pumpAndSettle();
 
     expect(navigation.tabIndex, 3);
