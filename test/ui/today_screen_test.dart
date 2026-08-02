@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +24,7 @@ import 'package:super_health/export/lab_plan_export_service.dart';
 import 'package:super_health/import/legacy_import_service.dart';
 import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
+import 'package:super_health/ui/charts.dart';
 import 'package:super_health/ui/dashboard_screen.dart';
 import 'package:super_health/ui/health_screen.dart';
 import 'package:super_health/workspace/safe_workspace_service.dart';
@@ -275,11 +277,46 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Trend · mg/dL'), findsOneWidget);
+      final glucoseTrend = tester.widget<TrendChart>(
+        find.byKey(const ValueKey('biomarker-trend-glucose')),
+      );
+      expect(glucoseTrend.rangeLow, 70);
+      expect(glucoseTrend.rangeHigh, 110);
+      final glucoseLineChart = tester.widget<LineChart>(
+        find.descendant(
+          of: find.byKey(const ValueKey('biomarker-trend-glucose')),
+          matching: find.byType(LineChart),
+        ),
+      );
+      final glucoseBand = glucoseLineChart
+          .data
+          .rangeAnnotations
+          .horizontalRangeAnnotations
+          .single;
+      expect(glucoseBand.y1, 70);
+      expect(glucoseBand.y2, 110);
+      expect(glucoseLineChart.data.minY, lessThan(70));
+      expect(glucoseLineChart.data.maxY, greaterThan(110));
 
       await tester.tap(find.text('Complete Blood Count'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('biomarker-trend-wbc')), findsOneWidget);
       expect(find.text('Trend · 10^9/L'), findsOneWidget);
+      final wbcTrend = tester.widget<TrendChart>(
+        find.byKey(const ValueKey('biomarker-trend-wbc')),
+      );
+      expect(wbcTrend.rangeLow, isNull);
+      expect(wbcTrend.rangeHigh, 10);
+      final wbcLineChart = tester.widget<LineChart>(
+        find.descendant(
+          of: find.byKey(const ValueKey('biomarker-trend-wbc')),
+          matching: find.byType(LineChart),
+        ),
+      );
+      final wbcBand =
+          wbcLineChart.data.rangeAnnotations.horizontalRangeAnnotations.single;
+      expect(wbcBand.y1, wbcLineChart.data.minY);
+      expect(wbcBand.y2, 10);
     },
   );
 
@@ -559,7 +596,6 @@ AppController _seededController({
           takenAt: DateTime(2026, 7, 1),
           value: 14,
           unit: '10^9/L',
-          labRefLow: 4,
           labRefHigh: 10,
           createdAt: _now,
           updatedAt: _now,

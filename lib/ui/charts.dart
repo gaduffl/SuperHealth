@@ -432,6 +432,9 @@ class TrendChart extends StatelessWidget {
     this.minY,
     this.maxY,
     this.color,
+    this.rangeLow,
+    this.rangeHigh,
+    this.rangeColor,
     this.height = 200,
     super.key,
   });
@@ -442,6 +445,9 @@ class TrendChart extends StatelessWidget {
   final double? minY;
   final double? maxY;
   final Color? color;
+  final double? rangeLow;
+  final double? rangeHigh;
+  final Color? rangeColor;
   final double height;
 
   @override
@@ -449,11 +455,23 @@ class TrendChart extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     if (points.isEmpty) return const SizedBox.shrink();
     final values = points.map((item) => item.value).toList();
-    final low = minY ?? values.reduce(math.min);
-    final high = maxY ?? values.reduce(math.max);
+    final finiteRangeLow = rangeLow?.isFinite == true ? rangeLow : null;
+    final finiteRangeHigh = rangeHigh?.isFinite == true ? rangeHigh : null;
+    final scaleValues = <double>[...values, ?finiteRangeLow, ?finiteRangeHigh];
+    final low = minY ?? scaleValues.reduce(math.min);
+    final high = maxY ?? scaleValues.reduce(math.max);
     final span = high == low ? 1.0 : high - low;
+    final chartLow = low - span * 0.1;
+    final chartHigh = high + span * 0.1;
     final accent = color ?? scheme.primary;
     final labelStride = math.max(1, (points.length / 5).ceil());
+    final hasRange = finiteRangeLow != null || finiteRangeHigh != null;
+    final annotationLow = (finiteRangeLow ?? chartLow)
+        .clamp(chartLow, chartHigh)
+        .toDouble();
+    final annotationHigh = (finiteRangeHigh ?? chartHigh)
+        .clamp(chartLow, chartHigh)
+        .toDouble();
 
     return Semantics(
       label: semanticLabel,
@@ -464,8 +482,21 @@ class TrendChart extends StatelessWidget {
           LineChartData(
             minX: points.length == 1 ? -1 : 0,
             maxX: points.length == 1 ? 1 : (points.length - 1).toDouble(),
-            minY: low - span * 0.1,
-            maxY: high + span * 0.1,
+            minY: chartLow,
+            maxY: chartHigh,
+            rangeAnnotations: RangeAnnotations(
+              horizontalRangeAnnotations:
+                  hasRange && annotationLow <= annotationHigh
+                  ? [
+                      HorizontalRangeAnnotation(
+                        y1: annotationLow,
+                        y2: annotationHigh,
+                        color: (rangeColor ?? scheme.secondaryContainer)
+                            .withValues(alpha: 0.45),
+                      ),
+                    ]
+                  : const [],
+            ),
             gridData: FlGridData(
               drawVerticalLine: false,
               horizontalInterval: span / 4,
