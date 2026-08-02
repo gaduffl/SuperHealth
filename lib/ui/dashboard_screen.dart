@@ -895,11 +895,19 @@ String _amountCheckInLabel(
       portion > 0 &&
       portionLabel != null &&
       portionLabel.isNotEmpty) {
-    parts.add('${strings.formatNumber(total / portion)}× $portionLabel');
+    parts.add(
+      '${_formatCheckInNumber(strings, total / portion)}× $portionLabel',
+    );
   }
-  parts.add('${strings.formatNumber(total)} $unit'.trim());
+  parts.add('${_formatCheckInNumber(strings, total)} $unit'.trim());
   return parts.join(' · ');
 }
+
+String _formatCheckInNumber(AppLocalizations strings, double value) =>
+    strings.formatNumber(
+      value,
+      decimalDigits: value == value.truncateToDouble() ? 0 : 1,
+    );
 
 String _savedCheckInSummary(
   AppLocalizations strings, {

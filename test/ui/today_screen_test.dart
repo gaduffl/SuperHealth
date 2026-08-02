@@ -135,7 +135,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Manage symptoms and tags'));
     await tester.pumpAndSettle();
-    expect(find.text('Symptoms and tags'), findsOneWidget);
+    expect(find.text('Symptoms and tags'), findsNWidgets(2));
   });
 
   testWidgets('health journal no longer exposes the quick check-in area', (
