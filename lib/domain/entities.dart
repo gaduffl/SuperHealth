@@ -17,8 +17,9 @@ enum TagValueMode {
   /// how many times it was logged.
   occurrence,
 
-  /// A 0-10 felt-strength rating with no physical unit, e.g. how strong a
-  /// tremor felt. Uses the same scale and slider as symptom scores.
+  /// A 0-5 felt-strength rating with no physical unit, e.g. how strong a
+  /// tremor felt. Legacy entries above 5 remain readable without being
+  /// rewritten.
   intensity,
 
   /// A real quantity in [HealthEventDefinition.defaultUnit], e.g. grams of

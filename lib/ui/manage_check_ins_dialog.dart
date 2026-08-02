@@ -406,8 +406,8 @@ class _ManageCheckInsState extends State<_ManageCheckIns> {
                             value: TagValueMode.intensity,
                             title: Text(
                               strings.pick(
-                                'Felt strength (0-10)',
-                                'Gefühlte Stärke (0-10)',
+                                'Felt strength (0-5)',
+                                'Gefühlte Stärke (0-5)',
                               ),
                             ),
                             subtitle: Text(
@@ -700,8 +700,8 @@ String _tagModeSummary(
 ) => switch (definition.valueMode) {
   TagValueMode.occurrence => strings.pick('just happened', 'einfach passiert'),
   TagValueMode.intensity => strings.pick(
-    'felt strength 0-10',
-    'gefühlte Stärke 0-10',
+    'felt strength 0-5',
+    'gefühlte Stärke 0-5',
   ),
   TagValueMode.amount =>
     (definition.defaultUnit?.trim().isEmpty ?? true)

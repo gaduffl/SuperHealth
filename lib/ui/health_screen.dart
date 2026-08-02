@@ -10,7 +10,6 @@ import 'charts.dart';
 import 'common.dart';
 import 'dialogs.dart';
 import 'labs_screen.dart';
-import 'manage_check_ins_dialog.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -136,62 +135,6 @@ class _JournalPaneState extends State<_JournalPane> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
           children: [
-            SectionHeader(
-              title: strings.quickCheckIn,
-              subtitle: strings.quickCheckInDescription,
-              action: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton.outlined(
-                    tooltip: strings.pick(
-                      'Manage symptoms and tags',
-                      'Symptome und Tags verwalten',
-                    ),
-                    onPressed: () =>
-                        showManageCheckInsDialog(context, controller),
-                    icon: const Icon(Icons.tune),
-                  ),
-                  const SizedBox(width: 6),
-                  IconButton.filled(
-                    tooltip: strings.trackHealthEvent,
-                    onPressed: () => showAddEventDialog(context, controller),
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
-            ),
-            if (controller.eventDefinitions.any(
-              (item) => !item.archived && !item.deleted,
-            ))
-              Wrap(
-                spacing: 7,
-                runSpacing: 7,
-                children: [
-                  for (final definition
-                      in controller.eventDefinitions
-                          .where((item) => !item.archived && !item.deleted)
-                          .take(16))
-                    ActionChip(
-                      avatar: Icon(
-                        definition.kind == EventKind.symptom
-                            ? Icons.monitor_heart_outlined
-                            : Icons.sell_outlined,
-                        size: 18,
-                      ),
-                      label: Text(definition.name),
-                      onPressed: () =>
-                          _quickTrack(context, controller, definition),
-                    ),
-                ],
-              )
-            else
-              Card(
-                child: ListTile(
-                  leading: Icon(Icons.lightbulb_outline),
-                  title: Text(strings.reusableCheckIns),
-                  subtitle: Text(strings.reusableCheckInsExamples),
-                ),
-              ),
             if (trendEvents.isNotEmpty)
               ChartCard(
                 title: strings.symptomTrend,
@@ -215,13 +158,15 @@ class _JournalPaneState extends State<_JournalPane> {
                       ),
                   ],
                   dayLabel: strings.formatShortDate,
-                  // Scores are on a fixed 0-10 scale, so pinning the axis keeps
-                  // a flat week from looking like dramatic swings.
+                  // New symptom scores use 0-5. Preserve a readable chart for
+                  // historical 0-10 entries without rewriting that history.
                   minY: trendEvents.every((event) => event.score != null)
                       ? 0
                       : null,
                   maxY: trendEvents.every((event) => event.score != null)
-                      ? 10
+                      ? trendEvents.any((event) => (event.score ?? 0) > 5)
+                            ? 10
+                            : 5
                       : null,
                   semanticLabel: strings.trendSemantics(
                     trendEvents.first.name,
@@ -349,81 +294,6 @@ class _JournalPaneState extends State<_JournalPane> {
     );
   }
 
-  /// A tap on a quick check-in chip.
-  ///
-  /// An occurrence tag has nothing to ask about — it either happened or it
-  /// did not — so it is recorded straight away with an undo. An amount tag
-  /// with a defined portion logs one portion the same way, matching how a
-  /// quick coffee tap used to work. A symptom needs its 0-10 rating, an
-  /// intensity tag needs the same rating, and an amount tag with no portion
-  /// defined yet has no shortcut to take, so all three open the dialog with
-  /// the name already filled in.
-  Future<void> _quickTrack(
-    BuildContext context,
-    AppController controller,
-    HealthEventDefinition definition,
-  ) async {
-    final strings = AppLocalizations.of(context);
-    final portion = definition.portionAmount;
-    final hasPortionShortcut =
-        definition.valueMode == TagValueMode.amount &&
-        portion != null &&
-        portion > 0;
-    final needsRating =
-        definition.kind == EventKind.symptom ||
-        definition.valueMode == TagValueMode.intensity ||
-        (definition.valueMode == TagValueMode.amount && !hasPortionShortcut);
-    if (needsRating) {
-      await showAddEventDialog(
-        context,
-        controller,
-        initialKind: definition.kind,
-        initialName: definition.name,
-      );
-      return;
-    }
-    final messenger = ScaffoldMessenger.of(context)..clearSnackBars();
-    try {
-      await controller.addEvent(
-        kind: definition.kind,
-        name: definition.name,
-        definition: definition,
-        value: hasPortionShortcut ? portion : null,
-        unit: hasPortionShortcut ? definition.defaultUnit : null,
-      );
-    } on Object catch (error) {
-      if (context.mounted) await showAppError(context, error);
-      return;
-    }
-    final recorded = controller.events.firstWhereOrNull(
-      (event) => !event.deleted && event.definitionId == definition.id,
-    );
-    if (!context.mounted) return;
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          hasPortionShortcut
-              ? strings.pick(
-                  '${definition.name} recorded ($portion '
-                      '${definition.defaultUnit}).',
-                  '${definition.name} erfasst ($portion '
-                      '${definition.defaultUnit}).',
-                )
-              : strings.pick(
-                  '${definition.name} recorded.',
-                  '${definition.name} erfasst.',
-                ),
-        ),
-        action: recorded == null
-            ? null
-            : SnackBarAction(
-                label: strings.pick('Undo', 'Rückgängig'),
-                onPressed: () => controller.deleteEvent(recorded),
-              ),
-      ),
-    );
-  }
-
   Widget _eventTile(
     BuildContext context,
     AppController controller,
@@ -443,7 +313,7 @@ class _JournalPaneState extends State<_JournalPane> {
               context,
             ).formatTrackingDateTime(event.observedAt),
             if (event.score != null)
-              AppLocalizations.of(context).scoreOutOfTen(event.score!),
+              _scoreLabel(AppLocalizations.of(context), event),
             if (event.numericValue != null)
               '${AppLocalizations.of(context).formatNumber(event.numericValue!)} ${event.unit ?? ''}',
             if (event.durationMinutes != null)
@@ -486,6 +356,14 @@ class _JournalPaneState extends State<_JournalPane> {
       const Divider(height: 1),
     ],
   );
+}
+
+String _scoreLabel(AppLocalizations strings, HealthEvent event) {
+  final score = event.score!;
+  if (score > 5) {
+    return strings.pick('Score $score/10 (legacy)', 'Wert $score/10 (alt)');
+  }
+  return strings.pick('Score $score/5', 'Wert $score/5');
 }
 
 class _ContextPane extends StatelessWidget {

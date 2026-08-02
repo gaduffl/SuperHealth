@@ -24,6 +24,7 @@ import 'package:super_health/import/legacy_import_service.dart';
 import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
 import 'package:super_health/ui/dashboard_screen.dart';
+import 'package:super_health/ui/health_screen.dart';
 import 'package:super_health/workspace/safe_workspace_service.dart';
 
 void main() {
@@ -87,6 +88,74 @@ void main() {
 
     expect(find.textContaining('unplanned'), findsOneWidget);
     expect(find.text('Vitamin D'), findsOneWidget);
+  });
+
+  testWidgets('daily check-in summarizes symptoms and portion tags', (
+    tester,
+  ) async {
+    final controller = _seededController(recordDailyCheckIn: true);
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    await _pumpToday(tester, controller, navigation);
+
+    expect(
+      find.text('1 symptom score(s) and 2 tag(s) saved for this day.'),
+      findsOneWidget,
+    );
+    expect(find.text('Energy 4/5'), findsOneWidget);
+    expect(find.text('Stress 4/5'), findsOneWidget);
+    expect(find.text('Coffee · 2× filter coffee · 12 g'), findsOneWidget);
+  });
+
+  testWidgets('daily check-in owns management and uses a 0-5 symptom scale', (
+    tester,
+  ) async {
+    final controller = _seededController(recordDailyCheckIn: true);
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    await _pumpToday(tester, controller, navigation);
+    await tester.tap(find.widgetWithText(FilledButton, 'Edit check-in'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Manage symptoms and tags'), findsOneWidget);
+    final ratingSliders = tester.widgetList<Slider>(find.byType(Slider));
+    expect(ratingSliders, hasLength(2));
+    for (final slider in ratingSliders) {
+      expect(slider.max, 5);
+      expect(slider.divisions, 5);
+    }
+
+    await tester.tap(find.byTooltip('Manage symptoms and tags'));
+    await tester.pumpAndSettle();
+    expect(find.text('Symptoms and tags'), findsNWidgets(2));
+  });
+
+  testWidgets('health journal no longer exposes the quick check-in area', (
+    tester,
+  ) async {
+    final controller = _seededController(recordDailyCheckIn: true);
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(900, 3200);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(_healthApp(controller, navigation));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick check-in'), findsNothing);
+    expect(find.byTooltip('Manage symptoms and tags'), findsNothing);
   });
 
   testWidgets('overview tiles deep-link into the section that owns them', (
@@ -185,6 +254,25 @@ Widget _app(AppController controller, ShellNavigation navigation) =>
       ),
     );
 
+Widget _healthApp(AppController controller, ShellNavigation navigation) =>
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: controller),
+        ChangeNotifierProvider.value(value: navigation),
+      ],
+      child: const MaterialApp(
+        locale: Locale('en'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: Scaffold(body: HealthScreen()),
+      ),
+    );
+
 final _now = DateTime(2026, 7, 27);
 
 final _magnesium = Supplement(
@@ -237,11 +325,44 @@ final _morningSchedule = SupplementSchedule(
 AppController _seededController({
   bool recordTodaysDose = false,
   bool recordUnplannedIntake = false,
+  bool recordDailyCheckIn = false,
 }) {
   final today = DateTime.now();
   final profile = Profile(
     id: 'profile',
     displayName: 'Alex',
+    createdAt: _now,
+    updatedAt: _now,
+  );
+  final energyDefinition = HealthEventDefinition(
+    id: 'energy',
+    profileId: profile.id,
+    kind: EventKind.symptom,
+    name: 'Energy',
+    useScore: true,
+    createdAt: _now,
+    updatedAt: _now,
+  );
+  final coffeeDefinition = HealthEventDefinition(
+    id: 'coffee',
+    profileId: profile.id,
+    kind: EventKind.tag,
+    name: 'Coffee',
+    defaultUnit: 'g',
+    valueMode: TagValueMode.amount,
+    portionAmount: 6,
+    portionLabel: 'filter coffee',
+    includeInCheckIn: true,
+    createdAt: _now,
+    updatedAt: _now,
+  );
+  final stressDefinition = HealthEventDefinition(
+    id: 'stress',
+    profileId: profile.id,
+    kind: EventKind.tag,
+    name: 'Stress',
+    valueMode: TagValueMode.intensity,
+    includeInCheckIn: true,
     createdAt: _now,
     updatedAt: _now,
   );
@@ -253,6 +374,50 @@ AppController _seededController({
     ..schedules = [_morningSchedule]
     ..householdSchedules = [_morningSchedule]
     ..stockLevels = {_magnesium.id: 4}
+    ..eventDefinitions = [
+      if (recordDailyCheckIn) energyDefinition,
+      if (recordDailyCheckIn) coffeeDefinition,
+      if (recordDailyCheckIn) stressDefinition,
+    ]
+    ..events = [
+      if (recordDailyCheckIn)
+        HealthEvent(
+          id: 'energy-event',
+          profileId: profile.id,
+          definitionId: energyDefinition.id,
+          kind: EventKind.symptom,
+          name: energyDefinition.name,
+          observedAt: DateTime(today.year, today.month, today.day, 9),
+          score: 4,
+          createdAt: _now,
+          updatedAt: _now,
+        ),
+      for (var index = 0; index < (recordDailyCheckIn ? 2 : 0); index++)
+        HealthEvent(
+          id: 'coffee-event-$index',
+          profileId: profile.id,
+          definitionId: coffeeDefinition.id,
+          kind: EventKind.tag,
+          name: coffeeDefinition.name,
+          observedAt: DateTime(today.year, today.month, today.day, 10 + index),
+          numericValue: 6,
+          unit: 'g',
+          createdAt: _now,
+          updatedAt: _now,
+        ),
+      if (recordDailyCheckIn)
+        HealthEvent(
+          id: 'stress-event',
+          profileId: profile.id,
+          definitionId: stressDefinition.id,
+          kind: EventKind.tag,
+          name: stressDefinition.name,
+          observedAt: DateTime(today.year, today.month, today.day, 12),
+          score: 4,
+          createdAt: _now,
+          updatedAt: _now,
+        ),
+    ]
     ..intakes = [
       if (recordTodaysDose)
         SupplementIntake(

@@ -716,7 +716,7 @@ class _QuickLogCard extends StatelessWidget {
   }
 }
 
-/// The daily symptom check-in summary.
+/// The daily symptom and selected-tag check-in summary.
 class _CheckInCard extends StatelessWidget {
   const _CheckInCard({required this.day, required this.onOpen});
 
@@ -728,14 +728,11 @@ class _CheckInCard extends StatelessWidget {
     final controller = context.watch<AppController>();
     final strings = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
-    final entries = controller.events
-        .where(
-          (event) =>
-              !event.deleted &&
-              event.kind == EventKind.symptom &&
-              _sameDay(event.observedAt, day),
-        )
-        .toList();
+    final entries = _dailyCheckInSummaries(controller, day, strings);
+    final symptomCount = entries
+        .where((entry) => entry.kind == EventKind.symptom)
+        .length;
+    final tagCount = entries.length - symptomCount;
     return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -756,15 +753,15 @@ class _CheckInCard extends StatelessWidget {
           Text(
             entries.isEmpty
                 ? strings.pick(
-                    'Score your symptoms once a day to build up trends and '
-                        'correlations.',
-                    'Bewerte deine Symptome einmal täglich, um Trends und '
-                        'Korrelationen aufzubauen.',
+                    'Record symptoms and selected tags once a day to build '
+                        'up trends and correlations.',
+                    'Erfasse Symptome und ausgewählte Tags einmal täglich, '
+                        'um Trends und Korrelationen aufzubauen.',
                   )
-                : strings.pick(
-                    '${entries.length} symptom score(s) saved for this day.',
-                    '${entries.length} Symptombewertung(en) für diesen Tag '
-                        'gespeichert.',
+                : _savedCheckInSummary(
+                    strings,
+                    symptomCount: symptomCount,
+                    tagCount: tagCount,
                   ),
             style: Theme.of(
               context,
@@ -779,11 +776,7 @@ class _CheckInCard extends StatelessWidget {
                 for (final event in entries.take(10))
                   Chip(
                     visualDensity: VisualDensity.compact,
-                    label: Text(
-                      event.score == null
-                          ? event.name
-                          : '${event.name} ${event.score}/10',
-                    ),
+                    label: Text(event.label),
                   ),
               ],
             ),
@@ -808,6 +801,135 @@ class _CheckInCard extends StatelessWidget {
 
   static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+class _DailyCheckInSummary {
+  const _DailyCheckInSummary({required this.kind, required this.label});
+
+  final EventKind kind;
+  final String label;
+}
+
+List<_DailyCheckInSummary> _dailyCheckInSummaries(
+  AppController controller,
+  DateTime day,
+  AppLocalizations strings,
+) {
+  final definitionsById = {
+    for (final definition in controller.eventDefinitions)
+      definition.id: definition,
+  };
+  final grouped = <String, List<HealthEvent>>{};
+  for (final event in controller.events.where(
+    (item) =>
+        !item.deleted &&
+        _CheckInCard._sameDay(item.observedAt, day) &&
+        (item.kind == EventKind.symptom ||
+            (definitionsById[item.definitionId]?.includeInCheckIn ?? false)),
+  )) {
+    final key =
+        event.definitionId ??
+        '${event.kind.name}:${event.name.trim().toLowerCase()}';
+    grouped.putIfAbsent(key, () => []).add(event);
+  }
+
+  final result = <_DailyCheckInSummary>[];
+  for (final entry in grouped.entries) {
+    final events = entry.value
+      ..sort((a, b) => a.observedAt.compareTo(b.observedAt));
+    final latest = events.last;
+    final definition = definitionsById[latest.definitionId];
+    if (latest.kind == EventKind.symptom) {
+      final score = latest.score ?? latest.numericValue?.round();
+      final scoreLabel = score == null
+          ? latest.name
+          : score > 5
+          ? strings.pick(
+              '${latest.name} $score/10 (legacy)',
+              '${latest.name} $score/10 (alt)',
+            )
+          : '${latest.name} $score/5';
+      result.add(
+        _DailyCheckInSummary(kind: EventKind.symptom, label: scoreLabel),
+      );
+      continue;
+    }
+
+    final label = switch (definition?.valueMode ?? TagValueMode.occurrence) {
+      TagValueMode.occurrence => latest.name,
+      TagValueMode.intensity =>
+        latest.score == null
+            ? latest.name
+            : latest.score! > 5
+            ? strings.pick(
+                '${latest.name} ${latest.score}/10 (legacy)',
+                '${latest.name} ${latest.score}/10 (alt)',
+              )
+            : '${latest.name} ${latest.score}/5',
+      TagValueMode.amount => _amountCheckInLabel(strings, definition, events),
+    };
+    result.add(_DailyCheckInSummary(kind: EventKind.tag, label: label));
+  }
+  result.sort((a, b) {
+    if (a.kind != b.kind) return a.kind == EventKind.symptom ? -1 : 1;
+    return a.label.toLowerCase().compareTo(b.label.toLowerCase());
+  });
+  return result;
+}
+
+String _amountCheckInLabel(
+  AppLocalizations strings,
+  HealthEventDefinition? definition,
+  List<HealthEvent> events,
+) {
+  final name = definition?.name ?? events.last.name;
+  final unit = definition?.defaultUnit ?? events.last.unit ?? '';
+  final total = events.fold<double>(
+    0,
+    (sum, event) => sum + (event.numericValue ?? 0),
+  );
+  final parts = <String>[name];
+  final portion = definition?.portionAmount;
+  final portionLabel = definition?.portionLabel?.trim();
+  if (portion != null &&
+      portion > 0 &&
+      portionLabel != null &&
+      portionLabel.isNotEmpty) {
+    parts.add(
+      '${_formatCheckInNumber(strings, total / portion)}× $portionLabel',
+    );
+  }
+  parts.add('${_formatCheckInNumber(strings, total)} $unit'.trim());
+  return parts.join(' · ');
+}
+
+String _formatCheckInNumber(AppLocalizations strings, double value) =>
+    strings.formatNumber(
+      value,
+      decimalDigits: value == value.truncateToDouble() ? 0 : 1,
+    );
+
+String _savedCheckInSummary(
+  AppLocalizations strings, {
+  required int symptomCount,
+  required int tagCount,
+}) {
+  if (symptomCount > 0 && tagCount > 0) {
+    return strings.pick(
+      '$symptomCount symptom score(s) and $tagCount tag(s) saved for this day.',
+      '$symptomCount Symptombewertung(en) und $tagCount Tag(s) für diesen Tag gespeichert.',
+    );
+  }
+  if (symptomCount > 0) {
+    return strings.pick(
+      '$symptomCount symptom score(s) saved for this day.',
+      '$symptomCount Symptombewertung(en) für diesen Tag gespeichert.',
+    );
+  }
+  return strings.pick(
+    '$tagCount tag(s) saved for this day.',
+    '$tagCount Tag(s) für diesen Tag gespeichert.',
+  );
 }
 
 /// One part of the day, with its scheduled doses and any extra intakes.

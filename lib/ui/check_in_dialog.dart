@@ -5,6 +5,7 @@ import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
+import 'manage_check_ins_dialog.dart';
 
 /// Scores every tracked symptom for one day in a single pass.
 ///
@@ -35,9 +36,9 @@ Future<void> showDailyCheckInDialog(
 
   final scores = <String, int?>{
     for (final definition in definitions)
-      definition.id:
-          existing[_keyFor(definition.id, definition.name)]?.score ??
-          _scoreFromValue(existing[_keyFor(definition.id, definition.name)]),
+      definition.id: _scoreFromEvent(
+        existing[_keyFor(definition.id, definition.name)],
+      ),
   };
   final noteController = TextEditingController(
     text:
@@ -77,11 +78,9 @@ Future<void> showDailyCheckInDialog(
   final tagScores = <String, int?>{
     for (final definition in tagDefinitions)
       if (definition.valueMode == TagValueMode.intensity)
-        definition.id:
-            existingTagEvent[_keyFor(definition.id, definition.name)]?.score ??
-            _scoreFromValue(
-              existingTagEvent[_keyFor(definition.id, definition.name)],
-            ),
+        definition.id: _scoreFromEvent(
+          existingTagEvent[_keyFor(definition.id, definition.name)],
+        ),
   };
   final tagOccurred = <String, bool>{
     for (final definition in tagDefinitions)
@@ -125,7 +124,123 @@ Future<void> showDailyCheckInDialog(
         }
 
         return AlertDialog(
-          title: Text(strings.pick('Daily check-in', 'Täglicher Check-in')),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  strings.pick('Daily check-in', 'Täglicher Check-in'),
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: strings.pick(
+                  'Manage symptoms and tags',
+                  'Symptome und Tags verwalten',
+                ),
+                onPressed: () async {
+                  final previousTagDefinitions = {
+                    for (final definition in tagDefinitions)
+                      definition.id: definition,
+                  };
+                  await showManageCheckInsDialog(builderContext, controller);
+                  if (!builderContext.mounted) return;
+
+                  final refreshedSymptoms = controller.eventDefinitions
+                      .where(
+                        (item) =>
+                            item.kind == EventKind.symptom &&
+                            !item.archived &&
+                            !item.deleted,
+                      )
+                      .toList();
+                  final refreshedTags = controller.eventDefinitions
+                      .where(
+                        (item) =>
+                            item.kind == EventKind.tag &&
+                            item.includeInCheckIn &&
+                            !item.archived &&
+                            !item.deleted &&
+                            (item.valueMode != TagValueMode.amount ||
+                                (item.portionAmount != null &&
+                                    item.portionAmount! > 0)),
+                      )
+                      .toList();
+                  final currentDayEvents = controller.events.where(
+                    (item) => !item.deleted && _sameDay(item.observedAt, day),
+                  );
+                  final currentSymptoms = {
+                    for (final event in currentDayEvents.where(
+                      (item) => item.kind == EventKind.symptom,
+                    ))
+                      _keyFor(event.definitionId, event.name): event,
+                  };
+                  final currentTagEvents = currentDayEvents
+                      .where((item) => item.kind == EventKind.tag)
+                      .toList();
+                  final currentTags = {
+                    for (final event in currentTagEvents)
+                      _keyFor(event.definitionId, event.name): event,
+                  };
+
+                  setLocalState(() {
+                    definitions
+                      ..clear()
+                      ..addAll(refreshedSymptoms);
+                    for (final definition in refreshedSymptoms) {
+                      scores.putIfAbsent(
+                        definition.id,
+                        () => _scoreFromEvent(
+                          currentSymptoms[_keyFor(
+                            definition.id,
+                            definition.name,
+                          )],
+                        ),
+                      );
+                    }
+
+                    tagDefinitions
+                      ..clear()
+                      ..addAll(refreshedTags);
+                    for (final definition in refreshedTags) {
+                      final event =
+                          currentTags[_keyFor(definition.id, definition.name)];
+                      final previousDefinition =
+                          previousTagDefinitions[definition.id];
+                      switch (definition.valueMode) {
+                        case TagValueMode.intensity:
+                          if (previousDefinition?.valueMode !=
+                                  TagValueMode.intensity ||
+                              !tagScores.containsKey(definition.id)) {
+                            tagScores[definition.id] = _scoreFromEvent(event);
+                          }
+                        case TagValueMode.occurrence:
+                          if (previousDefinition?.valueMode !=
+                                  TagValueMode.occurrence ||
+                              !tagOccurred.containsKey(definition.id)) {
+                            tagOccurred[definition.id] = event != null;
+                          }
+                        case TagValueMode.amount:
+                          if (previousDefinition?.valueMode !=
+                                  TagValueMode.amount ||
+                              previousDefinition?.portionAmount !=
+                                  definition.portionAmount ||
+                              previousDefinition?.defaultUnit !=
+                                  definition.defaultUnit ||
+                              !tagPortionCount.containsKey(definition.id)) {
+                            tagPortionCount[definition.id] = _portionCount(
+                              currentTagEvents,
+                              definition.id,
+                              definition.portionAmount!,
+                            );
+                          }
+                      }
+                    }
+                  });
+                },
+                icon: const Icon(Icons.settings_outlined),
+              ),
+            ],
+          ),
           content: SizedBox(
             width: 460,
             child: SingleChildScrollView(
@@ -152,6 +267,7 @@ Future<void> showDailyCheckInDialog(
                     _ScoreRow(
                       name: definition.name,
                       score: scores[definition.id],
+                      maxScore: 5,
                       onChanged: (value) =>
                           setLocalState(() => scores[definition.id] = value),
                     ),
@@ -190,6 +306,7 @@ Future<void> showDailyCheckInDialog(
                         TagValueMode.intensity => _ScoreRow(
                           name: definition.name,
                           score: tagScores[definition.id],
+                          maxScore: 5,
                           onChanged: (value) => setLocalState(
                             () => tagScores[definition.id] = value,
                           ),
@@ -207,6 +324,7 @@ Future<void> showDailyCheckInDialog(
                           name: definition.name,
                           unit: definition.defaultUnit ?? '',
                           portionAmount: definition.portionAmount!,
+                          portionLabel: definition.portionLabel,
                           count: tagPortionCount[definition.id] ?? 0,
                           onChanged: (value) => setLocalState(
                             () => tagPortionCount[definition.id] = value,
@@ -406,11 +524,13 @@ class _ScoreRow extends StatelessWidget {
   const _ScoreRow({
     required this.name,
     required this.score,
+    required this.maxScore,
     required this.onChanged,
   });
 
   final String name;
   final int? score;
+  final int maxScore;
   final ValueChanged<int?> onChanged;
 
   @override
@@ -425,7 +545,11 @@ class _ScoreRow extends StatelessWidget {
             children: [
               Expanded(child: Text(name)),
               Text(
-                score == null ? '—' : '$score/10',
+                score == null
+                    ? '—'
+                    : score! > maxScore
+                    ? '$score/10 (${strings.pick('legacy', 'alt')})'
+                    : '$score/$maxScore',
                 style: Theme.of(context).textTheme.labelLarge,
               ),
               IconButton(
@@ -437,11 +561,11 @@ class _ScoreRow extends StatelessWidget {
             ],
           ),
           Slider(
-            value: (score ?? 0).toDouble(),
+            value: (score ?? 0).clamp(0, maxScore).toDouble(),
             min: 0,
-            max: 10,
-            divisions: 10,
-            label: '${score ?? 0}',
+            max: maxScore.toDouble(),
+            divisions: maxScore,
+            label: '${(score ?? 0).clamp(0, maxScore)}',
             onChanged: (value) => onChanged(value.round()),
           ),
         ],
@@ -458,6 +582,7 @@ class _PortionRow extends StatelessWidget {
     required this.name,
     required this.unit,
     required this.portionAmount,
+    required this.portionLabel,
     required this.count,
     required this.onChanged,
   });
@@ -465,6 +590,7 @@ class _PortionRow extends StatelessWidget {
   final String name;
   final String unit;
   final double portionAmount;
+  final String? portionLabel;
   final int count;
   final ValueChanged<int> onChanged;
 
@@ -479,7 +605,11 @@ class _PortionRow extends StatelessWidget {
             children: [
               Text(name),
               Text(
-                '${_formatAmount(portionAmount * count)} $unit',
+                [
+                  if (portionLabel?.trim().isNotEmpty ?? false)
+                    '$count× ${portionLabel!.trim()}',
+                  '${_formatAmount(portionAmount * count)} $unit',
+                ].join(' · '),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -502,8 +632,8 @@ class _PortionRow extends StatelessWidget {
 }
 
 /// A legacy entry may have been stored as a numeric value rather than a score.
-int? _scoreFromValue(HealthEvent? event) {
-  final value = event?.numericValue;
+int? _scoreFromEvent(HealthEvent? event) {
+  final value = event?.score?.toDouble() ?? event?.numericValue;
   if (value == null || !value.isFinite) return null;
   return value.clamp(0, 10).round();
 }
