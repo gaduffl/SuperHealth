@@ -226,176 +226,183 @@ class _JournalInsightsCard extends StatelessWidget {
     final strings = AppLocalizations.of(context);
     return SurfaceCard(
       padding: EdgeInsets.zero,
-      child: ExpansionTile(
-        leading: const Icon(Icons.insights_outlined),
-        title: Text(
-          strings.pick('Trends and correlations', 'Trends und Korrelationen'),
-        ),
-        subtitle: Text(
-          strings.pick(
-            'Open insights only when you need them.',
-            'Öffne Auswertungen nur bei Bedarf.',
+      child: Material(
+        type: MaterialType.transparency,
+        child: ExpansionTile(
+          leading: const Icon(Icons.insights_outlined),
+          title: Text(
+            strings.pick('Trends and correlations', 'Trends und Korrelationen'),
           ),
-        ),
-        children: [
-          if (trendEvents.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  strings.pick(
-                    'Record symptom scores to display a trend.',
-                    'Erfasse Symptombewertungen, um einen Trend anzuzeigen.',
+          subtitle: Text(
+            strings.pick(
+              'Open insights only when you need them.',
+              'Öffne Auswertungen nur bei Bedarf.',
+            ),
+          ),
+          children: [
+            if (trendEvents.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    strings.pick(
+                      'Record symptom scores to display a trend.',
+                      'Erfasse Symptombewertungen, um einen Trend anzuzeigen.',
+                    ),
                   ),
                 ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            strings.symptomTrend,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        DropdownButton<String>(
+                          value: selectedTrend,
+                          underline: const SizedBox.shrink(),
+                          items: [
+                            for (final name in trendNames)
+                              DropdownMenuItem(value: name, child: Text(name)),
+                          ],
+                          onChanged: onTrendChanged,
+                        ),
+                      ],
+                    ),
+                    Text(
+                      strings.lastDays(rangeDays),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TrendChart(
+                      points: [
+                        for (final event in trendEvents)
+                          (
+                            day: event.observedAt,
+                            value:
+                                event.score?.toDouble() ??
+                                event.numericValue ??
+                                0,
+                          ),
+                      ],
+                      dayLabel: strings.formatShortDate,
+                      minY: trendEvents.every((event) => event.score != null)
+                          ? 0
+                          : null,
+                      maxY: trendEvents.every((event) => event.score != null)
+                          ? trendEvents.any((event) => (event.score ?? 0) > 5)
+                                ? 10
+                                : 5
+                          : null,
+                      semanticLabel: strings.trendSemantics(
+                        trendEvents.first.name,
+                        trendEvents.length,
+                        trendEvents
+                            .map(
+                              (event) =>
+                                  event.score?.toDouble() ??
+                                  event.numericValue ??
+                                  0,
+                            )
+                            .reduce((a, b) => a < b ? a : b),
+                        trendEvents
+                            .map(
+                              (event) =>
+                                  event.score?.toDouble() ??
+                                  event.numericValue ??
+                                  0,
+                            )
+                            .reduce((a, b) => a > b ? a : b),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            )
-          else
+            const Divider(height: 1),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          strings.symptomTrend,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          strings.exploratoryCorrelations,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
-                      ),
-                      DropdownButton<String>(
-                        value: selectedTrend,
-                        underline: const SizedBox.shrink(),
-                        items: [
-                          for (final name in trendNames)
-                            DropdownMenuItem(value: name, child: Text(name)),
-                        ],
-                        onChanged: onTrendChanged,
-                      ),
-                    ],
-                  ),
-                  Text(
-                    strings.lastDays(rangeDays),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TrendChart(
-                    points: [
-                      for (final event in trendEvents)
-                        (
-                          day: event.observedAt,
-                          value:
-                              event.score?.toDouble() ??
-                              event.numericValue ??
-                              0,
+                        Text(
+                          strings.correlationsDescription,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                         ),
-                    ],
-                    dayLabel: strings.formatShortDate,
-                    minY: trendEvents.every((event) => event.score != null)
-                        ? 0
-                        : null,
-                    maxY: trendEvents.every((event) => event.score != null)
-                        ? trendEvents.any((event) => (event.score ?? 0) > 5)
-                              ? 10
-                              : 5
-                        : null,
-                    semanticLabel: strings.trendSemantics(
-                      trendEvents.first.name,
-                      trendEvents.length,
-                      trendEvents
-                          .map(
-                            (event) =>
-                                event.score?.toDouble() ??
-                                event.numericValue ??
-                                0,
-                          )
-                          .reduce((a, b) => a < b ? a : b),
-                      trendEvents
-                          .map(
-                            (event) =>
-                                event.score?.toDouble() ??
-                                event.numericValue ??
-                                0,
-                          )
-                          .reduce((a, b) => a > b ? a : b),
+                      ],
                     ),
+                  ),
+                  TextButton.icon(
+                    onPressed: controller.busy
+                        ? null
+                        : () async {
+                            try {
+                              await controller.analyzeCorrelations();
+                            } on Object catch (error) {
+                              if (context.mounted) {
+                                await showAppError(context, error);
+                              }
+                            }
+                          },
+                    icon: const Icon(Icons.analytics_outlined),
+                    label: Text(strings.analyze),
                   ),
                 ],
               ),
             ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        strings.exploratoryCorrelations,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      Text(
-                        strings.correlationsDescription,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: controller.busy
-                      ? null
-                      : () async {
-                          try {
-                            await controller.analyzeCorrelations();
-                          } on Object catch (error) {
-                            if (context.mounted) {
-                              await showAppError(context, error);
-                            }
-                          }
-                        },
-                  icon: const Icon(Icons.analytics_outlined),
-                  label: Text(strings.analyze),
-                ),
-              ],
-            ),
-          ),
-          if (controller.correlations.isEmpty)
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: Text(strings.minimumCorrelationDays),
-              subtitle: Text(strings.minimumCorrelationDaysDescription),
-            )
-          else ...[
-            for (final result in controller.correlations.take(20))
+            if (controller.correlations.isEmpty)
               ListTile(
-                isThreeLine: true,
-                title: Text('${result.exposure} → ${result.outcome}'),
-                subtitle: Text(
-                  strings.correlationSummary(
-                    lagDays: result.lagDays,
-                    sampleSize: result.sampleSize,
-                    strength: result.strength,
-                    spearman: result.spearmanCoefficient,
-                    adjustedQ: result.adjustedPValue,
-                    statisticallySignificant: result.isStatisticallySignificant,
+                leading: const Icon(Icons.info_outline),
+                title: Text(strings.minimumCorrelationDays),
+                subtitle: Text(strings.minimumCorrelationDaysDescription),
+              )
+            else ...[
+              for (final result in controller.correlations.take(20))
+                ListTile(
+                  isThreeLine: true,
+                  title: Text('${result.exposure} → ${result.outcome}'),
+                  subtitle: Text(
+                    strings.correlationSummary(
+                      lagDays: result.lagDays,
+                      sampleSize: result.sampleSize,
+                      strength: result.strength,
+                      spearman: result.spearmanCoefficient,
+                      adjustedQ: result.adjustedPValue,
+                      statisticallySignificant:
+                          result.isStatisticallySignificant,
+                    ),
                   ),
+                  trailing: Text(strings.pearson(result.coefficient)),
                 ),
-                trailing: Text(strings.pearson(result.coefficient)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: Text(strings.correlationCaveat),
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-              child: Text(strings.correlationCaveat),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -452,76 +459,79 @@ class _JournalDayCard extends StatelessWidget {
 
     return SurfaceCard(
       padding: EdgeInsets.zero,
-      child: ExpansionTile(
-        key: ValueKey('journal-${day.toIso8601String()}'),
-        leading: const Icon(Icons.calendar_today_outlined),
-        title: Text(strings.formatTrackingDate(day)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_journalDayCount(strings, symptomCount, tagCount)),
-            if (summaries.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 5,
-                runSpacing: 5,
-                children: [
-                  for (final summary in summaries.take(3))
-                    Chip(
-                      label: Text(summary.label),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  if (summaries.length > 3)
-                    Chip(
-                      label: Text('+${summaries.length - 3}'),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                ],
-              ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: ExpansionTile(
+          key: ValueKey('journal-${day.toIso8601String()}'),
+          leading: const Icon(Icons.calendar_today_outlined),
+          title: Text(strings.formatTrackingDate(day)),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_journalDayCount(strings, symptomCount, tagCount)),
+              if (summaries.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 5,
+                  runSpacing: 5,
+                  children: [
+                    for (final summary in summaries.take(3))
+                      Chip(
+                        label: Text(summary.label),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    if (summaries.length > 3)
+                      Chip(
+                        label: Text('+${summaries.length - 3}'),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                  ],
+                ),
+              ],
             ],
-          ],
-        ),
-        children: [
-          if (notes.isNotEmpty)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
+          ),
+          children: [
+            if (notes.isNotEmpty)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      notes.length == 1
+                          ? strings.pick('Day note', 'Tagesnotiz')
+                          : strings.pick('Notes', 'Notizen'),
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    for (final note in notes) Text(note),
+                  ],
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    notes.length == 1
-                        ? strings.pick('Day note', 'Tagesnotiz')
-                        : strings.pick('Notes', 'Notizen'),
-                    style: Theme.of(context).textTheme.labelLarge,
+            for (final event in events)
+              _JournalEventRow(controller: controller, event: event),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonalIcon(
+                  onPressed: () =>
+                      showDailyCheckInDialog(context, controller, day: day),
+                  icon: const Icon(Icons.edit_note_outlined),
+                  label: Text(
+                    strings.pick('Edit daily check-in', 'Check-in bearbeiten'),
                   ),
-                  const SizedBox(height: 4),
-                  for (final note in notes) Text(note),
-                ],
-              ),
-            ),
-          for (final event in events)
-            _JournalEventRow(controller: controller, event: event),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonalIcon(
-                onPressed: () =>
-                    showDailyCheckInDialog(context, controller, day: day),
-                icon: const Icon(Icons.edit_note_outlined),
-                label: Text(
-                  strings.pick('Edit daily check-in', 'Check-in bearbeiten'),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

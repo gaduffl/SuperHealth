@@ -138,7 +138,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Manage symptoms and tags'));
     await tester.pumpAndSettle();
-    expect(find.text('Symptoms and tags'), findsNWidgets(2));
+    expect(find.text('Symptoms and tags'), findsOneWidget);
     expect(find.byTooltip('Add symptom or tag'), findsOneWidget);
   });
 
