@@ -1432,7 +1432,7 @@ bool _isValidScheduleTime(String value) =>
 
 /// Records a symptom or a tag.
 ///
-/// A symptom is normally just a name and a 0-10 rating, and a tag is normally
+/// A symptom is normally just a name and a 0-5 rating, and a tag is normally
 /// just "this happened". Asking for a score, a numeric value, a unit, and a
 /// duration on every entry made the quick check-ins anything but quick, so the
 /// dialog now shows only what the chosen kind actually needs and keeps the
@@ -1496,10 +1496,12 @@ Future<void> showAddEventDialog(
             resolvedDefinition?.valueMode ?? TagValueMode.occurrence;
         final showsRatingSlider =
             isSymptom || tagMode == TagValueMode.intensity;
+        const ratingMaximum = 5;
         final showsAmountField =
             kind == EventKind.tag && tagMode == TagValueMode.amount;
         final canonicalUnit = resolvedDefinition?.defaultUnit?.trim() ?? '';
         final portionAmount = resolvedDefinition?.portionAmount;
+        final portionLabel = resolvedDefinition?.portionLabel?.trim();
         return AlertDialog(
           title: Text(
             existing == null
@@ -1603,16 +1605,21 @@ Future<void> showAddEventDialog(
                           ),
                         ),
                         Text(
-                          score == null ? '—' : '$score/10',
+                          score == null
+                              ? '—'
+                              : score! > ratingMaximum
+                              ? '$score/10 '
+                                    '(${_dialogText(context, 'legacy', 'alt')})'
+                              : '$score/$ratingMaximum',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ],
                     ),
                     Slider(
-                      value: (score ?? 0).toDouble(),
-                      max: 10,
-                      divisions: 10,
-                      label: '${score ?? 0}',
+                      value: (score ?? 0).clamp(0, ratingMaximum).toDouble(),
+                      max: ratingMaximum.toDouble(),
+                      divisions: ratingMaximum,
+                      label: '${(score ?? 0).clamp(0, ratingMaximum)}',
                       onChanged: (next) => setState(() => score = next.round()),
                     ),
                   ] else if (showsAmountField) ...[
@@ -1640,8 +1647,13 @@ Future<void> showAddEventDialog(
                             ActionChip(
                               visualDensity: VisualDensity.compact,
                               label: Text(
-                                '$count× (${_formatAmount(portionAmount * count)} '
-                                '$canonicalUnit)',
+                                [
+                                  '$count×',
+                                  if (portionLabel?.isNotEmpty ?? false)
+                                    portionLabel!,
+                                  '(${_formatAmount(portionAmount * count)} '
+                                      '$canonicalUnit)',
+                                ].join(' '),
                               ),
                               onPressed: () => setState(() {
                                 value.text = _formatAmount(
