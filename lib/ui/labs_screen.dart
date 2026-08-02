@@ -2148,6 +2148,9 @@ class _BiomarkerDashboardSection extends StatelessWidget {
               color: status.isBelow || status.isAbove
                   ? _biomarkerOutOfRangeColor(context)
                   : _biomarkerOptimalColor(context),
+              rangeLow: trend.rangeLow,
+              rangeHigh: trend.rangeHigh,
+              rangeColor: Theme.of(context).colorScheme.secondaryContainer,
               height: 150,
             ),
           ],
@@ -2157,7 +2160,12 @@ class _BiomarkerDashboardSection extends StatelessWidget {
   }
 }
 
-({List<({DateTime day, double value})> points, String unit})
+({
+  List<({DateTime day, double value})> points,
+  String unit,
+  double? rangeLow,
+  double? rangeHigh,
+})
 _dashboardTrendData({
   required Biomarker biomarker,
   required List<Measurement> measurements,
@@ -2194,12 +2202,25 @@ _dashboardTrendData({
     return (points: points, unit: normalizedUnit);
   }
 
+  ({List<({DateTime day, double value})> points, String unit}) selected;
   final preferredUnit = status.unit?.trim();
   if (preferredUnit != null && preferredUnit.isNotEmpty) {
     final preferred = build(preferredUnit);
-    if (preferred.points.isNotEmpty) return preferred;
+    selected = preferred.points.isNotEmpty ? preferred : build(latest.unit);
+  } else {
+    selected = build(latest.unit);
   }
-  return build(latest.unit);
+  final range = BiomarkerStatusService().convertUsedBand(
+    status: status,
+    biomarker: biomarker,
+    toUnit: selected.unit,
+  );
+  return (
+    points: selected.points,
+    unit: selected.unit,
+    rangeLow: range?.low,
+    rangeHigh: range?.high,
+  );
 }
 
 Color _biomarkerOptimalColor(BuildContext context) =>
