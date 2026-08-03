@@ -165,9 +165,14 @@ breaks that. Land your own PR once `verify` is green rather than leaving it open
 — but green first: a PR that has not passed CI is not ready to merge, and a
 stale green on a superseded commit does not count.
 
-Bump `version:` in `pubspec.yaml` when a change should ship as an installable
-build — the release job refuses to reuse a version tag, because Android will not
-install an update carrying the same versionCode.
+**Bump `version:` in `pubspec.yaml` in every PR**, both parts — `0.8.4+19` →
+`0.9.0+20`. This is not optional and not only for user-facing work. Merging to
+`main` runs the release job, which publishes a GitHub Release tagged from that
+version and *fails the build* if the tag already exists, because Android refuses
+to install an update carrying a versionCode it already has. Forget it and `main`
+goes red after the merge, when the PR that caused it is already closed. Raise
+the minor for a feature or a schema migration, the patch for a fix or a
+refinement; the build number always increments by exactly one.
 
 **Keep this file current.** When a change adds, removes, or alters a convention
 described here — a new layer under `lib/`, a different verification command, a
