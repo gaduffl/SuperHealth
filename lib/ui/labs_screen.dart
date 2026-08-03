@@ -2172,9 +2172,9 @@ class _BiomarkerDashboardSection extends StatelessWidget {
               const SizedBox(height: 4),
               DoseUnderlayPicker(
                 underlay: underlay,
-                onChanged: (ingredient) => controller.setTrendDoseLink(
+                onChanged: (target) => controller.setTrendDoseLink(
                   biomarkerId: biomarker.id,
-                  ingredient: ingredient,
+                  target: target,
                 ),
               ),
             ],

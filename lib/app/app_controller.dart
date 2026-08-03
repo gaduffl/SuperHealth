@@ -16,6 +16,7 @@ import '../ai/lab_planner_service.dart';
 import '../ai/provider_clients.dart';
 import '../ai/supplement_label_service.dart';
 import '../analysis/correlation_service.dart';
+import '../analysis/supplement_insights.dart';
 import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
@@ -538,7 +539,7 @@ class AppController extends ChangeNotifier {
   Future<void> setTrendDoseLink({
     String? biomarkerId,
     String? definitionId,
-    ({String name, String unit})? ingredient,
+    DoseTarget? target,
   }) async {
     assert(
       (biomarkerId == null) != (definitionId == null),
@@ -554,7 +555,7 @@ class AppController extends ChangeNotifier {
     if (existing != null) {
       await repository.softDelete('trend_dose_links', existing.id);
     }
-    if (ingredient != null) {
+    if (target != null) {
       final now = DateTime.now();
       await repository.saveTrendDoseLink(
         TrendDoseLink(
@@ -562,8 +563,9 @@ class AppController extends ChangeNotifier {
           profileId: profile.id,
           biomarkerId: biomarkerId,
           definitionId: definitionId,
-          ingredientName: ingredient.name,
-          ingredientUnit: ingredient.unit,
+          supplementId: target.supplementId,
+          ingredientName: target.name,
+          ingredientUnit: target.unit,
           createdAt: now,
           updatedAt: now,
         ),

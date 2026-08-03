@@ -358,9 +358,9 @@ class _JournalInsightsCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       DoseUnderlayPicker(
                         underlay: _trendUnderlay(controller, trendEvents),
-                        onChanged: (ingredient) => controller.setTrendDoseLink(
+                        onChanged: (target) => controller.setTrendDoseLink(
                           definitionId: trendEvents.first.definitionId,
-                          ingredient: ingredient,
+                          target: target,
                         ),
                       ),
                     ],

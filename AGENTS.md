@@ -102,6 +102,17 @@ axes rather than a shared scale, as the `TrendChart` dose underlay does.
 **Missing data is not zero.** A day with nothing logged and a day with a
 deliberate zero must not render identically; `DoseBucket.tracked` carries that
 distinction and the chart shades untracked spans instead of drawing a zero bar.
+By the same rule, a chosen option that yields nothing to draw has to say so —
+an empty chart is indistinguishable from a broken feature.
+
+**Ingredient fields are optional, and products need not have ingredients at
+all.** `IngredientEditor` omits the `unit` key entirely when the box is left
+empty, and omits `amount` likewise, so anything requiring them silently drops
+real entries. An intake logged before its product was broken down carries an
+empty `ingredientSnapshot` and needs the product's current ingredients as a
+fallback. Treat a supplement with no ingredient rows as a first-class case: it
+is still logged as a dose in some unit, which is what `DoseTarget.supplement`
+follows.
 
 **Charts are plotted against real dates.** `TrendChart` positions points by
 timestamp, not list index, because measurements arrive at irregular intervals

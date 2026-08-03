@@ -91,8 +91,7 @@ void main() {
         rangeLow: 30,
         rangeHigh: 70,
         doseSeries: DoseSeries(
-          ingredientName: 'Vitamin D3',
-          unit: 'IU',
+          target: const DoseTarget.ingredient(name: 'Vitamin D3', unit: 'IU'),
           bucketDays: 7,
           buckets: [
             DoseBucket(
@@ -148,8 +147,7 @@ void main() {
         dayLabel: (day) => '${day.month}',
         semanticLabel: 'trend',
         doseSeries: DoseSeries(
-          ingredientName: 'Vitamin D3',
-          unit: 'IU',
+          target: const DoseTarget.ingredient(name: 'Vitamin D3', unit: 'IU'),
           bucketDays: 7,
           buckets: [
             DoseBucket(
@@ -187,8 +185,7 @@ void main() {
         dayLabel: (day) => '${day.month}',
         semanticLabel: 'trend',
         doseSeries: DoseSeries(
-          ingredientName: 'Vitamin D3',
-          unit: 'IU',
+          target: const DoseTarget.ingredient(name: 'Vitamin D3', unit: 'IU'),
           bucketDays: 7,
           buckets: [
             DoseBucket(
