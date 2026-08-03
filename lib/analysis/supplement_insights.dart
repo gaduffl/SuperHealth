@@ -135,6 +135,60 @@ class IngredientExposure {
   final double total;
 }
 
+/// One bucket of the dose underlay drawn beneath a trend.
+///
+/// [averageDailyDose] divides by every calendar day in the bucket, not only the
+/// days with an intake, because what moves a biomarker is sustained intake: a
+/// week with one capsule must read lower than a week with seven.
+class DoseBucket {
+  const DoseBucket({
+    required this.start,
+    required this.end,
+    required this.averageDailyDose,
+    required this.tracked,
+  });
+
+  /// Local calendar day the bucket starts on, inclusive.
+  final DateTime start;
+
+  /// Local calendar day the bucket ends on, exclusive.
+  final DateTime end;
+
+  final double averageDailyDose;
+
+  /// Whether any intake at all was recorded in this bucket. A bucket the user
+  /// simply never logged and a bucket where they genuinely took nothing both
+  /// have a zero dose, and presenting them identically would invite reading an
+  /// untracked gap as a deliberate pause.
+  final bool tracked;
+}
+
+/// The dose underlay for one ingredient over one span.
+class DoseSeries {
+  const DoseSeries({
+    required this.ingredientName,
+    required this.unit,
+    required this.buckets,
+    required this.bucketDays,
+  });
+
+  final String ingredientName;
+  final String unit;
+  final List<DoseBucket> buckets;
+
+  /// Calendar days each bucket covers, so callers can label the underlay
+  /// honestly ("weekly average") instead of implying daily resolution.
+  final int bucketDays;
+
+  double get peakAverageDailyDose => buckets.fold(
+    0,
+    (peak, bucket) =>
+        bucket.averageDailyDose > peak ? bucket.averageDailyDose : peak,
+  );
+
+  bool get hasDose => peakAverageDailyDose > 0;
+}
+
 /// Exposure is intentionally separated by reported unit. The app never adds
 /// e.g. milligrams and capsules as if they were interchangeable.
 class SupplementExposure {
@@ -627,6 +681,186 @@ class SupplementInsights {
     ];
     result.sort(_compareExposure);
     return result;
+  }
+
+  /// Average daily dose of one ingredient, bucketed across [from]..[through]
+  /// so a multi-year span stays readable instead of collapsing into hundreds
+  /// of one-pixel bars.
+  ///
+  /// [ingredientUnit] is part of the lookup, never converted: an ingredient
+  /// recorded in IU and one recorded in µg are separate series.
+  DoseSeries doseSeries({
+    required List<SupplementIntake> intakes,
+    required String ingredientName,
+    required String ingredientUnit,
+    required DateTime from,
+    required DateTime through,
+    int targetBuckets = 40,
+  }) {
+    final start = _calendarDay(from);
+    final end = _calendarDay(through);
+    final spanDays = end.difference(start).inDays + 1;
+    final safeSpan = spanDays < 1 ? 1 : spanDays;
+    final safeTarget = targetBuckets < 1 ? 1 : targetBuckets;
+    final bucketDays = (safeSpan / safeTarget).ceil().clamp(1, safeSpan);
+    final key =
+        '${ingredientName.toLowerCase()}|${ingredientUnit.toLowerCase()}';
+
+    final totals = <int, double>{};
+    final tracked = <int>{};
+    for (final intake in intakes) {
+      if (intake.deleted) continue;
+      final day = _calendarDay(intake.takenAt);
+      if (day.isBefore(start) || day.isAfter(end)) continue;
+      final index = day.difference(start).inDays ~/ bucketDays;
+      // A skipped intake still proves the user was tracking that day, so it
+      // marks the bucket as tracked while contributing no dose.
+      tracked.add(index);
+      if (intake.skipped || !intake.dose.isFinite) continue;
+      for (final ingredient in intake.ingredientSnapshot) {
+        final name = ingredient['name']?.toString().trim() ?? '';
+        final unit = ingredient['unit']?.toString().trim() ?? '';
+        if ('${name.toLowerCase()}|${unit.toLowerCase()}' != key) continue;
+        final amount = _asDouble(ingredient['amount']);
+        if (amount == null) continue;
+        final contribution = amount * intake.dose;
+        if (!contribution.isFinite) continue;
+        final next = (totals[index] ?? 0) + contribution;
+        if (!next.isFinite) continue;
+        totals[index] = next;
+      }
+    }
+
+    final bucketCount = (safeSpan / bucketDays).ceil();
+    final buckets = <DoseBucket>[];
+    for (var index = 0; index < bucketCount; index++) {
+      // Step through the calendar rather than adding Durations, so a bucket
+      // boundary crossing a DST change still lands on local midnight.
+      final bucketStart = DateTime(
+        start.year,
+        start.month,
+        start.day + index * bucketDays,
+      );
+      final rawEnd = DateTime(
+        start.year,
+        start.month,
+        start.day + (index + 1) * bucketDays,
+      );
+      final exclusiveEnd = DateTime(end.year, end.month, end.day + 1);
+      final bucketEnd = rawEnd.isAfter(exclusiveEnd) ? exclusiveEnd : rawEnd;
+      final days = bucketEnd.difference(bucketStart).inDays;
+      final total = totals[index] ?? 0;
+      buckets.add(
+        DoseBucket(
+          start: bucketStart,
+          end: bucketEnd,
+          averageDailyDose: days > 0 ? total / days : 0,
+          tracked: tracked.contains(index),
+        ),
+      );
+    }
+
+    return DoseSeries(
+      ingredientName: ingredientName,
+      unit: ingredientUnit,
+      buckets: buckets,
+      bucketDays: bucketDays,
+    );
+  }
+
+  /// Every ingredient the profile actually takes, as name/unit pairs, for
+  /// offering a dose underlay the user can pick from.
+  List<({String name, String unit})> knownIngredients(
+    List<SupplementIntake> intakes,
+  ) {
+    final seen = <String, ({String name, String unit})>{};
+    for (final intake in intakes.where((item) => !item.deleted)) {
+      for (final ingredient in intake.ingredientSnapshot) {
+        final name = ingredient['name']?.toString().trim() ?? '';
+        final unit = ingredient['unit']?.toString().trim() ?? '';
+        if (name.isEmpty || unit.isEmpty) continue;
+        seen['${name.toLowerCase()}|${unit.toLowerCase()}'] ??= (
+          name: name,
+          unit: unit,
+        );
+      }
+    }
+    final result = seen.values.toList()
+      ..sort((a, b) {
+        final byName = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        return byName != 0 ? byName : a.unit.compareTo(b.unit);
+      });
+    return result;
+  }
+
+  /// Best guess at which ingredient belongs under a trend, given every name
+  /// that trend is known by (a biomarker's canonical name, display name and
+  /// synonyms, or an event definition's name).
+  ///
+  /// Deliberately conservative: every token of the shorter name has to match,
+  /// so "Vitamin D (25-OH)" finds "Vitamin D3" while "Vitamin B12" never
+  /// matches "Vitamin B6". A wrong confident guess is worse than none, because
+  /// the whole point of the underlay is to judge whether a supplement moved a
+  /// number.
+  ({String name, String unit})? suggestIngredient({
+    required List<({String name, String unit})> ingredients,
+    required Iterable<String> trendNames,
+  }) {
+    final trendTokenSets = [
+      for (final name in trendNames)
+        if (_nameTokens(name).isNotEmpty) _nameTokens(name),
+    ];
+    if (trendTokenSets.isEmpty) return null;
+    for (final ingredient in ingredients) {
+      final ingredientTokens = _nameTokens(ingredient.name);
+      if (ingredientTokens.isEmpty) continue;
+      for (final trendTokens in trendTokenSets) {
+        if (_tokensAgree(trendTokens, ingredientTokens)) return ingredient;
+      }
+    }
+    return null;
+  }
+
+  /// Assay descriptors that say how a marker was measured rather than what it
+  /// is, and so must not decide a match.
+  static const _nameNoise = <String>{
+    'total',
+    'free',
+    'serum',
+    'plasma',
+    'blood',
+    'level',
+    'levels',
+    'oh',
+    'hydroxy',
+    '25',
+    'active',
+  };
+
+  List<String> _nameTokens(String value) => [
+    for (final token in value.toLowerCase().split(RegExp(r'[^a-z0-9]+')))
+      if (token.isNotEmpty && !_nameNoise.contains(token)) token,
+  ];
+
+  bool _tokensAgree(List<String> left, List<String> right) {
+    final shorter = left.length <= right.length ? left : right;
+    final longer = left.length <= right.length ? right : left;
+    if (shorter.isEmpty) return false;
+    return shorter.every(
+      (token) => longer.any((other) => _tokenMatches(token, other)),
+    );
+  }
+
+  /// Equal, or the same name carrying a form number — "d" matches "d3", but
+  /// "b12" never matches "b6".
+  bool _tokenMatches(String left, String right) {
+    if (left == right) return true;
+    final (shorter, longer) = left.length <= right.length
+        ? (left, right)
+        : (right, left);
+    if (!longer.startsWith(shorter)) return false;
+    final suffix = longer.substring(shorter.length);
+    return suffix.isNotEmpty && RegExp(r'^\d+$').hasMatch(suffix);
   }
 
   List<SupplementExposure> supplementExposure({

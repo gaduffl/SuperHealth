@@ -135,6 +135,7 @@ class AppController extends ChangeNotifier {
   List<LabPlan> labPlans = const [];
   List<AdvisorMessage> advisorMessages = const [];
   List<CorrelationResult> correlations = const [];
+  List<TrendDoseLink> trendDoseLinks = const [];
   LabPlanGeneration? draftLabPlan;
   ParsedLabReport? pendingLabReport;
   int? lastContextBytes;
@@ -480,6 +481,7 @@ class AppController extends ChangeNotifier {
       repository.labPlans(profile.id),
       repository.messages(profile.id, 'primary'),
       repository.householdSchedules(),
+      repository.trendDoseLinks(profile.id),
     ]);
     supplements = values[0] as List<Supplement>;
     schedules = values[1] as List<SupplementSchedule>;
@@ -499,6 +501,7 @@ class AppController extends ChangeNotifier {
     labPlans = values[15] as List<LabPlan>;
     advisorMessages = values[16] as List<AdvisorMessage>;
     householdSchedules = values[17] as List<SupplementSchedule>;
+    trendDoseLinks = values[18] as List<TrendDoseLink>;
     notifyListeners();
   }
 
@@ -522,7 +525,51 @@ class AppController extends ChangeNotifier {
     labPlans = const [];
     advisorMessages = const [];
     correlations = const [];
+    trendDoseLinks = const [];
     draftLabPlan = null;
+  }
+
+  /// Records which supplement ingredient is drawn beneath a trend, replacing
+  /// any previous choice for that biomarker or definition.
+  ///
+  /// Passing a null [ingredient] removes the underlay. The unit travels with
+  /// the name because the same ingredient logged in IU and in µg are separate
+  /// series that must never be combined.
+  Future<void> setTrendDoseLink({
+    String? biomarkerId,
+    String? definitionId,
+    ({String name, String unit})? ingredient,
+  }) async {
+    assert(
+      (biomarkerId == null) != (definitionId == null),
+      'A dose underlay belongs to exactly one biomarker or definition.',
+    );
+    final profile = activeProfile;
+    if (profile == null) return;
+    final existing = trendDoseLinks.firstWhereOrNull(
+      (link) => biomarkerId != null
+          ? link.biomarkerId == biomarkerId
+          : link.definitionId == definitionId,
+    );
+    if (existing != null) {
+      await repository.softDelete('trend_dose_links', existing.id);
+    }
+    if (ingredient != null) {
+      final now = DateTime.now();
+      await repository.saveTrendDoseLink(
+        TrendDoseLink(
+          id: repository.newId(),
+          profileId: profile.id,
+          biomarkerId: biomarkerId,
+          definitionId: definitionId,
+          ingredientName: ingredient.name,
+          ingredientUnit: ingredient.unit,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
+    await refreshActiveData();
   }
 
   Future<void> addSupplement({

@@ -11,6 +11,7 @@ import 'check_in_dialog.dart';
 import 'common.dart';
 import 'design.dart';
 import 'dialogs.dart';
+import 'dose_underlay.dart';
 import 'labs_screen.dart';
 
 class HealthScreen extends StatefulWidget {
@@ -204,6 +205,29 @@ class _JournalPaneState extends State<_JournalPane> {
   }
 }
 
+/// The dose underlay for the currently selected symptom or tag trend.
+///
+/// Legacy events carry no definition id, and a link has to point at a
+/// definition, so those trends simply get no underlay rather than a link that
+/// could not be stored.
+TrendDoseUnderlay _trendUnderlay(
+  AppController controller,
+  List<HealthEvent> trendEvents,
+) {
+  final definitionId = trendEvents.firstOrNull?.definitionId;
+  if (definitionId == null || trendEvents.isEmpty) {
+    return const TrendDoseUnderlay(available: []);
+  }
+  final days = trendEvents.map((event) => event.observedAt).toList()..sort();
+  return resolveTrendDoseUnderlay(
+    controller: controller,
+    definitionId: definitionId,
+    trendNames: [trendEvents.first.name],
+    from: days.first,
+    through: days.last,
+  );
+}
+
 class _JournalInsightsCard extends StatelessWidget {
   const _JournalInsightsCard({
     required this.controller,
@@ -297,6 +321,10 @@ class _JournalInsightsCard extends StatelessWidget {
                           ),
                       ],
                       dayLabel: strings.formatShortDate,
+                      doseSeries: _trendUnderlay(
+                        controller,
+                        trendEvents,
+                      ).series,
                       minY: trendEvents.every((event) => event.score != null)
                           ? 0
                           : null,
@@ -326,6 +354,16 @@ class _JournalInsightsCard extends StatelessWidget {
                             .reduce((a, b) => a > b ? a : b),
                       ),
                     ),
+                    if (_trendUnderlay(controller, trendEvents).hasChoice) ...[
+                      const SizedBox(height: 4),
+                      DoseUnderlayPicker(
+                        underlay: _trendUnderlay(controller, trendEvents),
+                        onChanged: (ingredient) => controller.setTrendDoseLink(
+                          definitionId: trendEvents.first.definitionId,
+                          ingredient: ingredient,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

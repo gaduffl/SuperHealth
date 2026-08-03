@@ -423,7 +423,13 @@ class DailyValueChart extends StatelessWidget {
   }
 }
 
-/// A single-series line chart over dated points, used for symptom trends.
+/// A single-series line chart over dated points, used for symptom and
+/// biomarker trends.
+///
+/// Points are placed by their real date rather than by list position, because
+/// measurements arrive at irregular intervals and equal spacing would make a
+/// six-month gap read like a six-day one — which also has to hold before any
+/// dose underlay can be aligned against it honestly.
 class TrendChart extends StatelessWidget {
   const TrendChart({
     required this.points,
@@ -435,6 +441,9 @@ class TrendChart extends StatelessWidget {
     this.rangeLow,
     this.rangeHigh,
     this.rangeColor,
+    this.doseSeries,
+    this.doseColor,
+    this.doseValueLabel,
     this.height = 200,
     super.key,
   });
@@ -448,13 +457,29 @@ class TrendChart extends StatelessWidget {
   final double? rangeLow;
   final double? rangeHigh;
   final Color? rangeColor;
+
+  /// Optional supplement dose drawn behind the trend on its own right-hand
+  /// scale. Its unit is unrelated to the trend's, so the two are never mapped
+  /// onto a shared axis.
+  final DoseSeries? doseSeries;
+  final Color? doseColor;
+  final String Function(double value)? doseValueLabel;
   final double height;
+
+  /// The share of the plot height the dose underlay is allowed to occupy, so
+  /// it stays legible without competing with the measurement line.
+  static const _doseHeightFraction = 0.55;
+
+  /// Milliseconds since epoch, the chart's X unit.
+  static double _x(DateTime day) => day.millisecondsSinceEpoch.toDouble();
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     if (points.isEmpty) return const SizedBox.shrink();
-    final values = points.map((item) => item.value).toList();
+    final sorted = points.toList()
+      ..sort((left, right) => left.day.compareTo(right.day));
+    final values = sorted.map((item) => item.value).toList();
     final finiteRangeLow = rangeLow?.isFinite == true ? rangeLow : null;
     final finiteRangeHigh = rangeHigh?.isFinite == true ? rangeHigh : null;
     final scaleValues = <double>[...values, ?finiteRangeLow, ?finiteRangeHigh];
@@ -464,7 +489,6 @@ class TrendChart extends StatelessWidget {
     final chartLow = low - span * 0.1;
     final chartHigh = high + span * 0.1;
     final accent = color ?? scheme.primary;
-    final labelStride = math.max(1, (points.length / 5).ceil());
     final hasRange = finiteRangeLow != null || finiteRangeHigh != null;
     final annotationLow = (finiteRangeLow ?? chartLow)
         .clamp(chartLow, chartHigh)
@@ -473,15 +497,45 @@ class TrendChart extends StatelessWidget {
         .clamp(chartLow, chartHigh)
         .toDouble();
 
+    final dose = doseSeries;
+    final dosePeak = dose?.peakAverageDailyDose ?? 0;
+    final showsDose = dose != null && dose.buckets.isNotEmpty && dosePeak > 0;
+    // The underlay spans its own buckets, which usually reach further than the
+    // measurements themselves, so the axis has to cover both.
+    final firstX = math.min(
+      _x(sorted.first.day),
+      showsDose ? _x(dose.buckets.first.start) : _x(sorted.first.day),
+    );
+    final lastX = math.max(
+      _x(sorted.last.day),
+      showsDose ? _x(dose.buckets.last.end) : _x(sorted.last.day),
+    );
+    // A single measurement has no span to draw across, so give it one day of
+    // padding on either side rather than collapsing the axis to zero width.
+    const oneDayMs = 86400000.0;
+    final minX = firstX == lastX ? firstX - oneDayMs : firstX;
+    final maxX = firstX == lastX ? lastX + oneDayMs : lastX;
+    final xSpan = maxX - minX;
+
+    /// Maps a dose onto the primary axis so both can share one plot, with the
+    /// dose baseline pinned to the bottom of the chart.
+    double doseToChartY(double value) =>
+        chartLow +
+        (value / dosePeak) * (chartHigh - chartLow) * _doseHeightFraction;
+
+    final doseTint = doseColor ?? scheme.tertiary;
+
     return Semantics(
-      label: semanticLabel,
+      label: showsDose
+          ? '$semanticLabel. ${_doseSemanticSuffix(dose)}'
+          : semanticLabel,
       excludeSemantics: true,
       child: SizedBox(
         height: height,
         child: LineChart(
           LineChartData(
-            minX: points.length == 1 ? -1 : 0,
-            maxX: points.length == 1 ? 1 : (points.length - 1).toDouble(),
+            minX: minX,
+            maxX: maxX,
             minY: chartLow,
             maxY: chartHigh,
             rangeAnnotations: RangeAnnotations(
@@ -496,6 +550,19 @@ class TrendChart extends StatelessWidget {
                       ),
                     ]
                   : const [],
+              // Spans with no intake recorded at all are shaded rather than
+              // drawn as a zero dose, so a stretch the user never logged is
+              // not read as a deliberate pause in supplementation.
+              verticalRangeAnnotations: [
+                if (showsDose)
+                  for (final bucket in dose.buckets)
+                    if (!bucket.tracked)
+                      VerticalRangeAnnotation(
+                        x1: _x(bucket.start),
+                        x2: _x(bucket.end),
+                        color: scheme.outlineVariant.withValues(alpha: 0.18),
+                      ),
+              ],
             ),
             gridData: FlGridData(
               drawVerticalLine: false,
@@ -506,7 +573,37 @@ class TrendChart extends StatelessWidget {
             borderData: FlBorderData(show: false),
             titlesData: FlTitlesData(
               topTitles: const AxisTitles(),
-              rightTitles: const AxisTitles(),
+              // The dose keeps its own scale on the right. Its unit is
+              // unrelated to the trend's, so sharing the left axis would
+              // invite reading e.g. 4000 IU against ng/mL.
+              rightTitles: showsDose
+                  ? AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 40,
+                        interval: (chartHigh - chartLow) / 2,
+                        getTitlesWidget: (value, meta) {
+                          final fraction =
+                              (value - chartLow) / (chartHigh - chartLow);
+                          final doseValue =
+                              fraction / _doseHeightFraction * dosePeak;
+                          if (doseValue < 0 || doseValue > dosePeak * 1.001) {
+                            return const SizedBox.shrink();
+                          }
+                          return SideTitleWidget(
+                            meta: meta,
+                            child: Text(
+                              doseValueLabel?.call(doseValue) ??
+                                  _compactNumber(doseValue),
+                              style: Theme.of(
+                                context,
+                              ).textTheme.labelSmall?.copyWith(color: doseTint),
+                            ),
+                          );
+                        },
+                      ),
+                    )
+                  : const AxisTitles(),
               leftTitles: AxisTitles(
                 sideTitles: SideTitles(
                   showTitles: true,
@@ -525,24 +622,16 @@ class TrendChart extends StatelessWidget {
                 sideTitles: SideTitles(
                   showTitles: true,
                   reservedSize: 26,
-                  interval: 1,
-                  getTitlesWidget: (value, meta) {
-                    final index = value.round();
-                    if (index < 0 || index >= points.length) {
-                      return const SizedBox.shrink();
-                    }
-                    if (index % labelStride != 0 &&
-                        index != points.length - 1) {
-                      return const SizedBox.shrink();
-                    }
-                    return SideTitleWidget(
-                      meta: meta,
-                      child: Text(
-                        dayLabel(points[index].day),
-                        style: Theme.of(context).textTheme.labelSmall,
+                  interval: xSpan <= 0 ? null : xSpan / 4,
+                  getTitlesWidget: (value, meta) => SideTitleWidget(
+                    meta: meta,
+                    child: Text(
+                      dayLabel(
+                        DateTime.fromMillisecondsSinceEpoch(value.round()),
                       ),
-                    );
-                  },
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -551,11 +640,14 @@ class TrendChart extends StatelessWidget {
                 getTooltipColor: (_) => scheme.inverseSurface,
                 getTooltipItems: (spots) => [
                   for (final spot in spots)
-                    if (spot.x.round() < 0 || spot.x.round() >= points.length)
+                    // Only the measurement line carries a tooltip; the dose
+                    // underlay is context, and labelling every step would
+                    // bury the reading the user actually tapped.
+                    if (spot.barIndex != (showsDose ? 1 : 0))
                       null
                     else
                       LineTooltipItem(
-                        '${dayLabel(points[spot.x.round()].day)}: '
+                        '${dayLabel(DateTime.fromMillisecondsSinceEpoch(spot.x.round()))}: '
                         '${spot.y.toStringAsFixed(1)}',
                         TextStyle(
                           color: scheme.onInverseSurface,
@@ -566,20 +658,50 @@ class TrendChart extends StatelessWidget {
               ),
             ),
             lineBarsData: [
+              // Drawn first so it sits behind the reference band and the
+              // measurement line. Stepped rather than curved, because each
+              // value is a flat average over its whole bucket.
+              if (showsDose)
+                LineChartBarData(
+                  isStepLineChart: true,
+                  lineChartStepData: const LineChartStepData(
+                    stepDirection: LineChartStepData.stepDirectionForward,
+                  ),
+                  color: doseTint.withValues(alpha: 0.35),
+                  barWidth: 0,
+                  dotData: const FlDotData(show: false),
+                  belowBarData: BarAreaData(
+                    show: true,
+                    color: doseTint.withValues(alpha: 0.18),
+                  ),
+                  spots: [
+                    for (final bucket in dose.buckets)
+                      FlSpot(
+                        _x(bucket.start),
+                        doseToChartY(bucket.averageDailyDose),
+                      ),
+                    // Closes the final step so the last bucket keeps its full
+                    // width instead of ending at its start.
+                    FlSpot(
+                      _x(dose.buckets.last.end),
+                      doseToChartY(dose.buckets.last.averageDailyDose),
+                    ),
+                  ],
+                ),
               LineChartBarData(
                 isCurved: true,
                 curveSmoothness: 0.2,
                 preventCurveOverShooting: true,
                 color: accent,
                 barWidth: 3,
-                dotData: FlDotData(show: points.length <= 30),
+                dotData: FlDotData(show: sorted.length <= 30),
                 belowBarData: BarAreaData(
                   show: true,
                   color: accent.withValues(alpha: 0.12),
                 ),
                 spots: [
-                  for (var index = 0; index < points.length; index++)
-                    FlSpot(index.toDouble(), points[index].value),
+                  for (final point in sorted)
+                    FlSpot(_x(point.day), point.value),
                 ],
               ),
             ],
@@ -588,6 +710,21 @@ class TrendChart extends StatelessWidget {
       ),
     );
   }
+
+  String _doseSemanticSuffix(DoseSeries dose) {
+    final peak = dose.peakAverageDailyDose;
+    final label = doseValueLabel?.call(peak) ?? _compactNumber(peak);
+    return 'Supplement dose of ${dose.ingredientName} shown behind the trend, '
+        'averaged over ${dose.bucketDays} days per step, peaking at '
+        '$label ${dose.unit} per day.';
+  }
+}
+
+/// Keeps an axis label short enough to read at chart scale.
+String _compactNumber(double value) {
+  if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}k';
+  if (value >= 10) return value.toStringAsFixed(0);
+  return value.toStringAsFixed(1);
 }
 
 /// A card wrapper that keeps every chart on the same padding and header style.

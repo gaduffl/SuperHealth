@@ -842,6 +842,73 @@ class ProfileBiomarkerTarget {
       );
 }
 
+/// Ties one trend — either a biomarker or a health event definition — to the
+/// supplement ingredient drawn underneath it.
+///
+/// The ingredient is stored as the name/unit pair the intake snapshots already
+/// use, not as a supplement id, because the same ingredient usually arrives
+/// through several products and the exposure aggregate is keyed the same way.
+/// Exactly one of [biomarkerId] and [definitionId] is set; the unit is part of
+/// the identity because an ingredient recorded in IU and one recorded in µg are
+/// different series that must never be added together.
+class TrendDoseLink {
+  const TrendDoseLink({
+    required this.id,
+    required this.profileId,
+    required this.ingredientName,
+    required this.ingredientUnit,
+    required this.createdAt,
+    required this.updatedAt,
+    this.biomarkerId,
+    this.definitionId,
+    this.deleted = false,
+  });
+
+  final String id;
+  final String profileId;
+
+  /// Set when this link belongs to a biomarker trend.
+  final String? biomarkerId;
+
+  /// Set when this link belongs to a symptom or tag trend.
+  final String? definitionId;
+
+  final String ingredientName;
+  final String ingredientUnit;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  /// Key matching how [ingredientExposure] aggregates, so a link resolves to a
+  /// dose series without a second naming convention.
+  String get exposureKey =>
+      '${ingredientName.toLowerCase()}|${ingredientUnit.toLowerCase()}';
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'profile_id': profileId,
+    'biomarker_id': biomarkerId,
+    'definition_id': definitionId,
+    'ingredient_name': ingredientName,
+    'ingredient_unit': ingredientUnit,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  factory TrendDoseLink.fromMap(Map<String, Object?> map) => TrendDoseLink(
+    id: '${map['id']}',
+    profileId: '${map['profile_id']}',
+    biomarkerId: map['biomarker_id']?.toString(),
+    definitionId: map['definition_id']?.toString(),
+    ingredientName: '${map['ingredient_name']}',
+    ingredientUnit: '${map['ingredient_unit']}',
+    createdAt: _date(map['created_at']),
+    updatedAt: _date(map['updated_at']),
+    deleted: _boolFromDb(map['deleted']),
+  );
+}
+
 class Measurement {
   const Measurement({
     required this.id,
