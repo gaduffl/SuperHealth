@@ -131,6 +131,7 @@ void main() {
       'profile_id',
       'biomarker_id',
       'definition_id',
+      'supplement_id',
       'ingredient_name',
       'ingredient_unit',
       'created_at',

@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 7;
+  static const schemaVersion = 8;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -492,6 +492,7 @@ class AppDatabase {
           profile_id TEXT NOT NULL REFERENCES profiles(id),
           biomarker_id TEXT REFERENCES biomarkers(id),
           definition_id TEXT REFERENCES health_event_definitions(id),
+          supplement_id TEXT REFERENCES supplements(id),
           ingredient_name TEXT NOT NULL,
           ingredient_unit TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -586,6 +587,14 @@ class AppDatabase {
       for (final statement in _trendDoseLinkIndexes) {
         await db.execute(statement);
       }
+    }
+    if (oldVersion == 7) {
+      // Only a database that already went through v7 needs this column added;
+      // anything older got it from the CREATE above.
+      await db.execute(
+        'ALTER TABLE trend_dose_links ADD COLUMN supplement_id TEXT '
+        'REFERENCES supplements(id)',
+      );
     }
   }
 

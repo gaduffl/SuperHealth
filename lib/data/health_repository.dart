@@ -110,6 +110,7 @@ const _synchronizedReferences = <_SynchronizedReference>[
     'definition_id',
     'health_event_definitions',
   ),
+  _SynchronizedReference('trend_dose_links', 'supplement_id', 'supplements'),
   _SynchronizedReference('documents', 'profile_id', 'profiles'),
   _SynchronizedReference('measurements', 'profile_id', 'profiles'),
   _SynchronizedReference('measurements', 'biomarker_id', 'biomarkers'),
@@ -1987,8 +1988,11 @@ class HealthRepository {
     if (link.ingredientName.trim().isEmpty) {
       throw const FormatException('A dose underlay needs an ingredient name.');
     }
-    if (link.ingredientUnit.trim().isEmpty) {
-      throw const FormatException('A dose underlay needs an ingredient unit.');
+    // A product underlay is always logged in some unit, but an ingredient can
+    // legitimately have none — the ingredient editor stores no unit when the
+    // box is left empty, and rejecting that hid most of a real library.
+    if (link.supplementId != null && link.ingredientUnit.trim().isEmpty) {
+      throw const FormatException('A product underlay needs a dose unit.');
     }
   }
 

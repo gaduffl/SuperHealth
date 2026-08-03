@@ -17,6 +17,7 @@ import 'package:super_health/export/lab_plan_export_service.dart';
 import 'package:super_health/import/legacy_import_service.dart';
 import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
+import 'package:super_health/analysis/supplement_insights.dart';
 import 'package:super_health/ui/dose_underlay.dart';
 import 'package:super_health/workspace/safe_workspace_service.dart';
 
@@ -81,18 +82,30 @@ void main() {
 
     // Nothing confirmed yet: the guess is offered, not drawn.
     final offered = underlay();
-    expect(offered.suggestion, (name: 'Vitamin D3', unit: 'IU'));
+    expect(
+      offered.suggestion,
+      const DoseTarget.ingredient(name: 'Vitamin D3', unit: 'IU'),
+    );
     expect(offered.selected, isNull);
     expect(offered.series, isNull);
-    expect(offered.available, hasLength(2));
+    // Two ingredients plus the product they came in: a supplement whose
+    // ingredients are not broken down must still be selectable.
+    expect(offered.available, hasLength(3));
+    expect(
+      offered.available.where((target) => target.isSupplement).single.name,
+      'D3 drops',
+    );
 
     await fixture.controller.setTrendDoseLink(
       biomarkerId: biomarker.id,
-      ingredient: (name: 'Vitamin D3', unit: 'IU'),
+      target: const DoseTarget.ingredient(name: 'Vitamin D3', unit: 'IU'),
     );
 
     final confirmed = underlay();
-    expect(confirmed.selected, (name: 'Vitamin D3', unit: 'IU'));
+    expect(
+      confirmed.selected,
+      const DoseTarget.ingredient(name: 'Vitamin D3', unit: 'IU'),
+    );
     expect(confirmed.series?.ingredientName, 'Vitamin D3');
     expect(confirmed.series?.unit, 'IU');
     expect(confirmed.series?.hasDose, isTrue);
@@ -100,10 +113,13 @@ void main() {
     // Switching keeps exactly one link rather than accumulating rows.
     await fixture.controller.setTrendDoseLink(
       biomarkerId: biomarker.id,
-      ingredient: (name: 'Vitamin K2', unit: 'µg'),
+      target: const DoseTarget.ingredient(name: 'Vitamin K2', unit: 'µg'),
     );
     expect(fixture.controller.trendDoseLinks, hasLength(1));
-    expect(underlay().selected, (name: 'Vitamin K2', unit: 'µg'));
+    expect(
+      underlay().selected,
+      const DoseTarget.ingredient(name: 'Vitamin K2', unit: 'µg'),
+    );
 
     // Clearing removes the underlay entirely.
     await fixture.controller.setTrendDoseLink(biomarkerId: biomarker.id);
@@ -174,10 +190,12 @@ void main() {
       through: DateTime(2026, 5, 20),
     );
 
-    // The choice is remembered and shown, but there is no series to draw, so
-    // the chart must not fall back to some other ingredient's dose.
+    // The choice is remembered and shown, but nothing was ever taken of it,
+    // so the chart must stay empty rather than fall back to another
+    // ingredient's dose — and must say so rather than looking broken.
     expect(underlay.selected?.name, 'Iron bisglycinate');
-    expect(underlay.series, isNull);
+    expect(underlay.series?.hasDose, isFalse);
+    expect(underlay.selectedButEmpty, isTrue);
 
     await fixture.dispose();
   });

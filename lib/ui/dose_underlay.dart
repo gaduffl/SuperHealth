@@ -19,17 +19,21 @@ class TrendDoseUnderlay {
     this.suggestion,
   });
 
-  /// Every ingredient the profile actually takes, offered in the picker.
-  final List<({String name, String unit})> available;
+  /// Everything the profile takes that could be drawn, offered in the picker.
+  final List<DoseTarget> available;
 
-  /// Present only once the user has confirmed an ingredient.
+  /// Present only once the user has confirmed a target.
   final DoseSeries? series;
-  final ({String name, String unit})? selected;
+  final DoseTarget? selected;
 
   /// A guess shown as an offer while [selected] is null.
-  final ({String name, String unit})? suggestion;
+  final DoseTarget? suggestion;
 
   bool get hasChoice => available.isNotEmpty;
+
+  /// True when a target is chosen but produced no dose at all — worth saying
+  /// out loud, since an empty chart otherwise looks like the feature failed.
+  bool get selectedButEmpty => selected != null && series?.hasDose != true;
 }
 
 /// Builds the underlay for a trend spanning [from]..[through].
@@ -46,7 +50,10 @@ TrendDoseUnderlay resolveTrendDoseUnderlay({
   String? definitionId,
 }) {
   const insights = SupplementInsights();
-  final available = insights.knownIngredients(controller.intakes);
+  final available = insights.knownDoseTargets(
+    intakes: controller.intakes,
+    supplements: controller.supplements,
+  );
   if (available.isEmpty) return const TrendDoseUnderlay(available: []);
 
   final link = controller.trendDoseLinks.firstWhereOrNull(
@@ -57,32 +64,50 @@ TrendDoseUnderlay resolveTrendDoseUnderlay({
   if (link == null) {
     return TrendDoseUnderlay(
       available: available,
-      suggestion: insights.suggestIngredient(
-        ingredients: available,
+      suggestion: insights.suggestDoseTarget(
+        targets: available,
         trendNames: trendNames,
       ),
     );
   }
 
-  // A linked ingredient the user no longer takes has no series to draw, but
-  // the link is kept so re-adding the supplement restores the underlay.
-  final selected = available.firstWhereOrNull(
-    (item) =>
-        item.name.toLowerCase() == link.ingredientName.toLowerCase() &&
-        item.unit.toLowerCase() == link.ingredientUnit.toLowerCase(),
+  final selected = link.supplementId != null
+      ? DoseTarget.supplement(
+          supplementId: link.supplementId!,
+          name: link.ingredientName,
+          unit: link.ingredientUnit,
+        )
+      : DoseTarget.ingredient(
+          name: link.ingredientName,
+          unit: link.ingredientUnit,
+        );
+
+  // Supplementation often starts after the last measurement or ends before
+  // the first, and clipping the underlay to the measured period then drew
+  // nothing at all — which reads as a broken feature rather than as "no
+  // overlap". Widening to cover the doses keeps the comparison visible.
+  final doseSpan = insights.doseSpan(
+    intakes: controller.intakes,
+    target: selected,
+    supplements: controller.supplements,
   );
+  final windowFrom = doseSpan == null || doseSpan.from.isAfter(from)
+      ? from
+      : doseSpan.from;
+  final windowThrough = doseSpan == null || doseSpan.through.isBefore(through)
+      ? through
+      : doseSpan.through;
+
   return TrendDoseUnderlay(
     available: available,
-    selected: (name: link.ingredientName, unit: link.ingredientUnit),
-    series: selected == null
-        ? null
-        : insights.doseSeries(
-            intakes: controller.intakes,
-            ingredientName: link.ingredientName,
-            ingredientUnit: link.ingredientUnit,
-            from: from,
-            through: through,
-          ),
+    selected: selected,
+    series: insights.doseSeries(
+      intakes: controller.intakes,
+      target: selected,
+      supplements: controller.supplements,
+      from: windowFrom,
+      through: windowThrough,
+    ),
   );
 }
 
@@ -96,7 +121,7 @@ class DoseUnderlayPicker extends StatelessWidget {
   });
 
   final TrendDoseUnderlay underlay;
-  final ValueChanged<({String name, String unit})?> onChanged;
+  final ValueChanged<DoseTarget?> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -109,27 +134,41 @@ class DoseUnderlayPicker extends StatelessWidget {
     if (selected != null) {
       return Align(
         alignment: Alignment.centerLeft,
-        child: InputChip(
-          visualDensity: VisualDensity.compact,
-          avatar: Icon(
-            Icons.medication_outlined,
-            color: theme.colorScheme.tertiary,
-          ),
-          label: Text(
-            underlay.series == null
-                ? strings.pick(
-                    '${selected.name} — no longer taken',
-                    '${selected.name} — nicht mehr eingenommen',
-                  )
-                : '${selected.name} (${selected.unit})',
-          ),
-          onPressed: () => _choose(context),
-          onDeleted: () => onChanged(null),
-          deleteIconColor: theme.colorScheme.onSurfaceVariant,
-          tooltip: strings.pick(
-            'Change the supplement shown behind this trend',
-            'Nahrungsergänzung hinter diesem Verlauf ändern',
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InputChip(
+              visualDensity: VisualDensity.compact,
+              avatar: Icon(
+                Icons.medication_outlined,
+                color: theme.colorScheme.tertiary,
+              ),
+              label: Text(selected.label),
+              onPressed: () => _choose(context),
+              onDeleted: () => onChanged(null),
+              deleteIconColor: theme.colorScheme.onSurfaceVariant,
+              tooltip: strings.pick(
+                'Change the supplement shown behind this trend',
+                'Nahrungsergänzung hinter diesem Verlauf ändern',
+              ),
+            ),
+            // Without this, picking something with no recorded intake looks
+            // exactly like the feature doing nothing.
+            if (underlay.selectedButEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  strings.pick(
+                    'No intake recorded for this, so there is nothing to draw.',
+                    'Dafür ist keine Einnahme erfasst, also gibt es nichts '
+                        'anzuzeigen.',
+                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+          ],
         ),
       );
     }
@@ -168,9 +207,16 @@ class DoseUnderlayPicker extends StatelessWidget {
 
   Future<void> _choose(BuildContext context) async {
     final strings = AppLocalizations.of(context);
-    final picked = await showModalBottomSheet<({String name, String unit})?>(
+    final products = underlay.available
+        .where((target) => target.isSupplement)
+        .toList();
+    final ingredients = underlay.available
+        .where((target) => !target.isSupplement)
+        .toList();
+    final picked = await showModalBottomSheet<DoseTarget?>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
         child: ListView(
           shrinkWrap: true,
@@ -193,18 +239,47 @@ class DoseUnderlayPicker extends StatelessWidget {
               ),
             ),
             const Divider(height: 1),
-            RadioGroup<({String name, String unit})>(
+            RadioGroup<DoseTarget>(
               groupValue: underlay.selected,
               onChanged: (value) => Navigator.of(sheetContext).pop(value),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final ingredient in underlay.available)
-                    RadioListTile<({String name, String unit})>(
-                      value: ingredient,
-                      title: Text(ingredient.name),
-                      subtitle: Text(ingredient.unit),
+                  for (final section in [
+                    (
+                      label: strings.pick('Products', 'Produkte'),
+                      targets: products,
                     ),
+                    (
+                      label: strings.pick('Ingredients', 'Inhaltsstoffe'),
+                      targets: ingredients,
+                    ),
+                  ])
+                    if (section.targets.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            section.label,
+                            style: Theme.of(sheetContext).textTheme.labelMedium
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    sheetContext,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ),
+                      ),
+                      for (final target in section.targets)
+                        RadioListTile<DoseTarget>(
+                          value: target,
+                          title: Text(target.name),
+                          subtitle: target.unit.isEmpty
+                              ? null
+                              : Text(target.unit),
+                        ),
+                    ],
                 ],
               ),
             ),

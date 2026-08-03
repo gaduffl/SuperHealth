@@ -135,6 +135,48 @@ class IngredientExposure {
   final double total;
 }
 
+/// What a dose underlay follows: either one ingredient across every product
+/// containing it, or one product as it is actually logged.
+///
+/// The product form exists because a supplement does not have to have its
+/// ingredients broken down — plenty are recorded only as "2 capsules" — and an
+/// underlay that could only follow ingredients simply had nothing to show for
+/// those. [unit] is part of the identity in both forms, since the same
+/// substance recorded in IU and in µg is two series that are never combined.
+class DoseTarget {
+  const DoseTarget.ingredient({required this.name, required this.unit})
+    : supplementId = null;
+
+  const DoseTarget.supplement({
+    required String this.supplementId,
+    required this.name,
+    required this.unit,
+  });
+
+  /// Set only for a product target.
+  final String? supplementId;
+  final String name;
+  final String unit;
+
+  bool get isSupplement => supplementId != null;
+
+  /// How the target appears in the picker. An ingredient without a unit is
+  /// legitimate — the ingredient editor stores no unit when the box is left
+  /// empty — so the label has to degrade rather than assume one.
+  String get label => unit.isEmpty ? name : '$name ($unit)';
+
+  @override
+  bool operator ==(Object other) =>
+      other is DoseTarget &&
+      other.supplementId == supplementId &&
+      other.name.toLowerCase() == name.toLowerCase() &&
+      other.unit.toLowerCase() == unit.toLowerCase();
+
+  @override
+  int get hashCode =>
+      Object.hash(supplementId, name.toLowerCase(), unit.toLowerCase());
+}
+
 /// One bucket of the dose underlay drawn beneath a trend.
 ///
 /// [averageDailyDose] divides by every calendar day in the bucket, not only the
@@ -166,15 +208,16 @@ class DoseBucket {
 /// The dose underlay for one ingredient over one span.
 class DoseSeries {
   const DoseSeries({
-    required this.ingredientName,
-    required this.unit,
+    required this.target,
     required this.buckets,
     required this.bucketDays,
   });
 
-  final String ingredientName;
-  final String unit;
+  final DoseTarget target;
   final List<DoseBucket> buckets;
+
+  String get ingredientName => target.name;
+  String get unit => target.unit;
 
   /// Calendar days each bucket covers, so callers can label the underlay
   /// honestly ("weekly average") instead of implying daily resolution.
@@ -683,18 +726,23 @@ class SupplementInsights {
     return result;
   }
 
-  /// Average daily dose of one ingredient, bucketed across [from]..[through]
-  /// so a multi-year span stays readable instead of collapsing into hundreds
-  /// of one-pixel bars.
+  /// Average daily dose of one [target], bucketed across [from]..[through] so
+  /// a multi-year span stays readable instead of collapsing into hundreds of
+  /// one-pixel bars.
   ///
-  /// [ingredientUnit] is part of the lookup, never converted: an ingredient
-  /// recorded in IU and one recorded in µg are separate series.
+  /// The target's unit is part of the lookup and is never converted: the same
+  /// substance recorded in IU and in µg is two separate series.
+  ///
+  /// [supplements] lets an intake whose ingredient snapshot is empty fall back
+  /// to its product's current ingredients. Intakes recorded before the product
+  /// was broken down carry no snapshot, and dropping them would show a gap in
+  /// supplementation that did not happen.
   DoseSeries doseSeries({
     required List<SupplementIntake> intakes,
-    required String ingredientName,
-    required String ingredientUnit,
+    required DoseTarget target,
     required DateTime from,
     required DateTime through,
+    List<Supplement> supplements = const [],
     int targetBuckets = 40,
   }) {
     final start = _calendarDay(from);
@@ -703,8 +751,11 @@ class SupplementInsights {
     final safeSpan = spanDays < 1 ? 1 : spanDays;
     final safeTarget = targetBuckets < 1 ? 1 : targetBuckets;
     final bucketDays = (safeSpan / safeTarget).ceil().clamp(1, safeSpan);
-    final key =
-        '${ingredientName.toLowerCase()}|${ingredientUnit.toLowerCase()}';
+    final key = '${target.name.toLowerCase()}|${target.unit.toLowerCase()}';
+    final ingredientsBySupplement = {
+      for (final supplement in supplements)
+        supplement.id: supplement.ingredients,
+    };
 
     final totals = <int, double>{};
     final tracked = <int>{};
@@ -717,7 +768,25 @@ class SupplementInsights {
       // marks the bucket as tracked while contributing no dose.
       tracked.add(index);
       if (intake.skipped || !intake.dose.isFinite) continue;
-      for (final ingredient in intake.ingredientSnapshot) {
+
+      if (target.isSupplement) {
+        // A product is followed by what was actually logged — "2 capsules" —
+        // which exists for every intake whether or not the product has its
+        // ingredients broken down.
+        if (intake.supplementId != target.supplementId) continue;
+        if (intake.unit.trim().toLowerCase() != target.unit.toLowerCase()) {
+          continue;
+        }
+        final next = (totals[index] ?? 0) + intake.dose;
+        if (!next.isFinite) continue;
+        totals[index] = next;
+        continue;
+      }
+
+      final snapshot = intake.ingredientSnapshot.isNotEmpty
+          ? intake.ingredientSnapshot
+          : ingredientsBySupplement[intake.supplementId] ?? const [];
+      for (final ingredient in snapshot) {
         final name = ingredient['name']?.toString().trim() ?? '';
         final unit = ingredient['unit']?.toString().trim() ?? '';
         if ('${name.toLowerCase()}|${unit.toLowerCase()}' != key) continue;
@@ -760,16 +829,105 @@ class SupplementInsights {
       );
     }
 
-    return DoseSeries(
-      ingredientName: ingredientName,
-      unit: ingredientUnit,
-      buckets: buckets,
-      bucketDays: bucketDays,
-    );
+    return DoseSeries(target: target, buckets: buckets, bucketDays: bucketDays);
   }
 
-  /// Every ingredient the profile actually takes, as name/unit pairs, for
-  /// offering a dose underlay the user can pick from.
+  /// The full span of intakes that would contribute to [target], so a chart
+  /// can widen its window rather than showing an empty underlay when
+  /// supplementation lies outside the measured period.
+  ({DateTime from, DateTime through})? doseSpan({
+    required List<SupplementIntake> intakes,
+    required DoseTarget target,
+    List<Supplement> supplements = const [],
+  }) {
+    final ingredientsBySupplement = {
+      for (final supplement in supplements)
+        supplement.id: supplement.ingredients,
+    };
+    DateTime? first;
+    DateTime? last;
+    for (final intake in intakes) {
+      if (intake.deleted || intake.skipped || !intake.dose.isFinite) continue;
+      final bool contributes;
+      if (target.isSupplement) {
+        contributes =
+            intake.supplementId == target.supplementId &&
+            intake.unit.trim().toLowerCase() == target.unit.toLowerCase();
+      } else {
+        final snapshot = intake.ingredientSnapshot.isNotEmpty
+            ? intake.ingredientSnapshot
+            : ingredientsBySupplement[intake.supplementId] ?? const [];
+        contributes = snapshot.any(
+          (ingredient) =>
+              (ingredient['name']?.toString().trim().toLowerCase() ?? '') ==
+                  target.name.toLowerCase() &&
+              (ingredient['unit']?.toString().trim().toLowerCase() ?? '') ==
+                  target.unit.toLowerCase(),
+        );
+      }
+      if (!contributes) continue;
+      final day = _calendarDay(intake.takenAt);
+      if (first == null || day.isBefore(first)) first = day;
+      if (last == null || day.isAfter(last)) last = day;
+    }
+    return first == null ? null : (from: first, through: last!);
+  }
+
+  /// Everything the profile takes that a dose underlay can follow: each
+  /// product as it is logged, plus each ingredient broken out of one.
+  ///
+  /// Products are included because a supplement need not have its ingredients
+  /// entered, and an ingredient without a unit is included because the
+  /// ingredient editor legitimately stores none — excluding either silently
+  /// hides most of a real library.
+  List<DoseTarget> knownDoseTargets({
+    required List<SupplementIntake> intakes,
+    List<Supplement> supplements = const [],
+  }) {
+    final supplementsById = {
+      for (final supplement in supplements)
+        if (!supplement.deleted) supplement.id: supplement,
+    };
+    final ingredients = <DoseTarget>{};
+    final products = <DoseTarget>{};
+    for (final intake in intakes.where((item) => !item.deleted)) {
+      final supplement = supplementsById[intake.supplementId];
+      final productUnit = intake.unit.trim();
+      if (supplement != null && productUnit.isNotEmpty) {
+        products.add(
+          DoseTarget.supplement(
+            supplementId: supplement.id,
+            name: supplement.name,
+            unit: productUnit,
+          ),
+        );
+      }
+      final snapshot = intake.ingredientSnapshot.isNotEmpty
+          ? intake.ingredientSnapshot
+          : supplement?.ingredients ?? const [];
+      for (final ingredient in snapshot) {
+        final name = ingredient['name']?.toString().trim() ?? '';
+        if (name.isEmpty) continue;
+        ingredients.add(
+          DoseTarget.ingredient(
+            name: name,
+            unit: ingredient['unit']?.toString().trim() ?? '',
+          ),
+        );
+      }
+    }
+    int byLabel(DoseTarget a, DoseTarget b) {
+      final byName = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      return byName != 0 ? byName : a.unit.compareTo(b.unit);
+    }
+
+    return [
+      ...products.toList()..sort(byLabel),
+      ...ingredients.toList()..sort(byLabel),
+    ];
+  }
+
+  /// Every ingredient the profile actually takes, as name/unit pairs.
   List<({String name, String unit})> knownIngredients(
     List<SupplementIntake> intakes,
   ) {
@@ -778,7 +936,7 @@ class SupplementInsights {
       for (final ingredient in intake.ingredientSnapshot) {
         final name = ingredient['name']?.toString().trim() ?? '';
         final unit = ingredient['unit']?.toString().trim() ?? '';
-        if (name.isEmpty || unit.isEmpty) continue;
+        if (name.isEmpty) continue;
         seen['${name.toLowerCase()}|${unit.toLowerCase()}'] ??= (
           name: name,
           unit: unit,
@@ -802,8 +960,8 @@ class SupplementInsights {
   /// matches "Vitamin B6". A wrong confident guess is worse than none, because
   /// the whole point of the underlay is to judge whether a supplement moved a
   /// number.
-  ({String name, String unit})? suggestIngredient({
-    required List<({String name, String unit})> ingredients,
+  DoseTarget? suggestDoseTarget({
+    required List<DoseTarget> targets,
     required Iterable<String> trendNames,
   }) {
     final trendTokenSets = [
@@ -811,11 +969,17 @@ class SupplementInsights {
         if (_nameTokens(name).isNotEmpty) _nameTokens(name),
     ];
     if (trendTokenSets.isEmpty) return null;
-    for (final ingredient in ingredients) {
-      final ingredientTokens = _nameTokens(ingredient.name);
-      if (ingredientTokens.isEmpty) continue;
+    // Ingredients are matched before products: "Vitamin D3 1000 IU" says more
+    // about what reached the bloodstream than "2 capsules of D3 drops".
+    final ordered = [
+      ...targets.where((target) => !target.isSupplement),
+      ...targets.where((target) => target.isSupplement),
+    ];
+    for (final target in ordered) {
+      final targetTokens = _nameTokens(target.name);
+      if (targetTokens.isEmpty) continue;
       for (final trendTokens in trendTokenSets) {
-        if (_tokensAgree(trendTokens, ingredientTokens)) return ingredient;
+        if (_tokensAgree(trendTokens, targetTokens)) return target;
       }
     }
     return null;

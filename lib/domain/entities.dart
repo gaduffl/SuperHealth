@@ -861,6 +861,7 @@ class TrendDoseLink {
     required this.updatedAt,
     this.biomarkerId,
     this.definitionId,
+    this.supplementId,
     this.deleted = false,
   });
 
@@ -872,6 +873,11 @@ class TrendDoseLink {
 
   /// Set when this link belongs to a symptom or tag trend.
   final String? definitionId;
+
+  /// Set when the underlay follows a whole product rather than one of its
+  /// ingredients, in which case [ingredientName] holds the product's name and
+  /// [ingredientUnit] the unit it is logged in.
+  final String? supplementId;
 
   final String ingredientName;
   final String ingredientUnit;
@@ -889,6 +895,7 @@ class TrendDoseLink {
     'profile_id': profileId,
     'biomarker_id': biomarkerId,
     'definition_id': definitionId,
+    'supplement_id': supplementId,
     'ingredient_name': ingredientName,
     'ingredient_unit': ingredientUnit,
     'created_at': _iso(createdAt),
@@ -901,6 +908,7 @@ class TrendDoseLink {
     profileId: '${map['profile_id']}',
     biomarkerId: map['biomarker_id']?.toString(),
     definitionId: map['definition_id']?.toString(),
+    supplementId: map['supplement_id']?.toString(),
     ingredientName: '${map['ingredient_name']}',
     ingredientUnit: '${map['ingredient_unit']}',
     createdAt: _date(map['created_at']),
