@@ -103,6 +103,13 @@ const _synchronizedReferences = <_SynchronizedReference>[
     'biomarker_id',
     'biomarkers',
   ),
+  _SynchronizedReference('trend_dose_links', 'profile_id', 'profiles'),
+  _SynchronizedReference('trend_dose_links', 'biomarker_id', 'biomarkers'),
+  _SynchronizedReference(
+    'trend_dose_links',
+    'definition_id',
+    'health_event_definitions',
+  ),
   _SynchronizedReference('documents', 'profile_id', 'profiles'),
   _SynchronizedReference('measurements', 'profile_id', 'profiles'),
   _SynchronizedReference('measurements', 'biomarker_id', 'biomarkers'),
@@ -957,6 +964,27 @@ class HealthRepository {
     );
   }
 
+  Future<List<TrendDoseLink>> trendDoseLinks(String profileId) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'trend_dose_links',
+      where: 'profile_id = ? AND deleted = 0',
+      whereArgs: [profileId],
+      orderBy: 'ingredient_name COLLATE NOCASE',
+    );
+    return rows.map(TrendDoseLink.fromMap).toList();
+  }
+
+  Future<void> saveTrendDoseLink(TrendDoseLink link) async {
+    _validateTrendDoseLink(link);
+    final db = await _database.database;
+    await db.insert(
+      'trend_dose_links',
+      link.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<List<HealthDocument>> documents(String profileId) async {
     final db = await _database.database;
     final rows = await db.query(
@@ -1734,6 +1762,8 @@ class HealthRepository {
             'user',
             'assistant',
           });
+        case 'trend_dose_links':
+          _validateTrendDoseLink(TrendDoseLink.fromMap(row));
       }
     } on ArgumentError catch (error) {
       throw FormatException('$table row violates health-data limits: $error');
@@ -1942,6 +1972,24 @@ class HealthRepository {
       target.borderlineHigh,
       'Borderline low and high bounds',
     );
+  }
+
+  void _validateTrendDoseLink(TrendDoseLink link) {
+    if (link.deleted) return;
+    // The CHECK constraint enforces this in SQLite, but a synchronized row
+    // arrives as JSON from another device and is validated before it is
+    // written, so the same rule has to hold here.
+    if ((link.biomarkerId == null) == (link.definitionId == null)) {
+      throw const FormatException(
+        'A dose underlay belongs to exactly one biomarker or event definition.',
+      );
+    }
+    if (link.ingredientName.trim().isEmpty) {
+      throw const FormatException('A dose underlay needs an ingredient name.');
+    }
+    if (link.ingredientUnit.trim().isEmpty) {
+      throw const FormatException('A dose underlay needs an ingredient unit.');
+    }
   }
 
   void _validateMeasurement(Measurement measurement) {

@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 6;
+  static const schemaVersion = 7;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -35,6 +35,7 @@ class AppDatabase {
     'biomarker_lists',
     'lab_plans',
     'advisor_messages',
+    'trend_dose_links',
   };
 
   /// Complete ordered list included in a OneDrive snapshot.
@@ -57,6 +58,7 @@ class AppDatabase {
     'lab_plans',
     'lab_plan_items',
     'advisor_messages',
+    'trend_dose_links',
   ];
 
   Future<Database> get database async => _database ??= await _open();
@@ -427,6 +429,8 @@ class AppDatabase {
         )
       ''');
 
+      await txn.execute(_createTrendDoseLinks);
+
       await txn.execute('''
         CREATE TABLE sync_shadow (
           table_name TEXT NOT NULL,
@@ -480,7 +484,30 @@ class AppDatabase {
     });
   }
 
+  /// Shared by [_create] and [_upgrade] so a fresh install and an upgraded one
+  /// cannot drift into different shapes for the same table.
+  static const _createTrendDoseLinks = '''
+        CREATE TABLE trend_dose_links (
+          id TEXT PRIMARY KEY,
+          profile_id TEXT NOT NULL REFERENCES profiles(id),
+          biomarker_id TEXT REFERENCES biomarkers(id),
+          definition_id TEXT REFERENCES health_event_definitions(id),
+          ingredient_name TEXT NOT NULL,
+          ingredient_unit TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted INTEGER NOT NULL DEFAULT 0,
+          CHECK ((biomarker_id IS NULL) <> (definition_id IS NULL))
+        )
+      ''';
+
+  static const _trendDoseLinkIndexes = <String>[
+    'CREATE UNIQUE INDEX idx_trend_dose_biomarker ON trend_dose_links(profile_id, biomarker_id) WHERE deleted = 0 AND biomarker_id IS NOT NULL',
+    'CREATE UNIQUE INDEX idx_trend_dose_definition ON trend_dose_links(profile_id, definition_id) WHERE deleted = 0 AND definition_id IS NOT NULL',
+  ];
+
   static const _indexes = <String>[
+    ..._trendDoseLinkIndexes,
     'CREATE INDEX idx_supplements_name ON supplements(active, deleted, name)',
     'CREATE INDEX idx_schedules_profile ON supplement_schedules(profile_id, active, deleted)',
     'CREATE INDEX idx_intakes_profile_time ON supplement_intakes(profile_id, taken_at)',
@@ -551,6 +578,14 @@ class AppDatabase {
           ELSE 'occurrence'
         END
       ''');
+    }
+    if (oldVersion < 7) {
+      // A new table rather than added columns, so there is nothing to
+      // back-fill: no dose underlay exists until the user confirms one.
+      await db.execute(_createTrendDoseLinks);
+      for (final statement in _trendDoseLinkIndexes) {
+        await db.execute(statement);
+      }
     }
   }
 

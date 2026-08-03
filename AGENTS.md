@@ -59,6 +59,16 @@ installs). Miss the third and every existing user crashes on launch. Back-fill
 new columns from whatever already encoded the same meaning rather than leaving
 them default — see the v6 `value_mode` back-fill for the shape.
 
+A whole new table is the same three edits plus its allowlists. Hold its DDL in
+one `static const` used by both `_create` and `_upgrade`, as `trend_dose_links`
+does, so a fresh install and an upgraded one cannot drift apart. Then register
+it in `profileTables` (if its rows have a profile owner), in
+`synchronizedTables` (or it is silently absent from sync and backup), and add a
+`_SynchronizedReference` per foreign key plus a `case` in
+`_validateSynchronizedRowSemantics`. A constraint SQLite enforces with `CHECK`
+still has to be re-checked there, because a synchronized row arrives as JSON
+from another device and is validated before it is written.
+
 Migration tests build a synthetic old database by hand and open it through the
 real `AppDatabase`. A fixture only creates the tables that test cares about, so
 an unconditional `ALTER TABLE` against a table the fixture omits fails there
@@ -82,8 +92,20 @@ boundaries; do not "simplify" them into UTC arithmetic.
 **Units never mix.** Values are only summed within one canonical unit. Tag
 value modes (`TagValueMode.occurrence`/`intensity`/`amount`) decide how a day's
 entries reduce — count, mean, or sum-within-unit. Supplement ingredient exposure
-keeps separate units separate rather than adding them. Adding a code path that
-sums across units is a correctness bug even when it type-checks.
+keeps separate units separate rather than adding them, and an ingredient is
+identified by its name *and* unit everywhere, because the same substance logged
+in IU and in µg is two series. Adding a code path that sums across units is a
+correctness bug even when it type-checks. Where two quantities genuinely cannot
+be converted — a blood concentration and a daily intake — give them separate
+axes rather than a shared scale, as the `TrendChart` dose underlay does.
+
+**Missing data is not zero.** A day with nothing logged and a day with a
+deliberate zero must not render identically; `DoseBucket.tracked` carries that
+distinction and the chart shades untracked spans instead of drawing a zero bar.
+
+**Charts are plotted against real dates.** `TrendChart` positions points by
+timestamp, not list index, because measurements arrive at irregular intervals
+and equal spacing would make a six-month gap read like a six-day one.
 
 **Correlations must degrade safely.** Events with no resolvable definition keep
 the legacy fallback so old data keeps behaving exactly as it did. Preserve that

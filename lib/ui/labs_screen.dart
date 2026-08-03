@@ -21,6 +21,7 @@ import 'biomarker_lists_sheet.dart';
 import 'charts.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import 'dose_underlay.dart';
 import 'temporary_biomarker_resolution_screen.dart';
 
 String _labsText(BuildContext context, String english, String german) =>
@@ -2084,6 +2085,19 @@ class _BiomarkerDashboardSection extends StatelessWidget {
       measurements: measurements,
       status: status,
     );
+    final underlay = trend.points.isEmpty
+        ? const TrendDoseUnderlay(available: [])
+        : resolveTrendDoseUnderlay(
+            controller: controller,
+            biomarkerId: biomarker.id,
+            trendNames: [
+              biomarker.displayName,
+              biomarker.canonicalName,
+              ...biomarker.synonyms,
+            ],
+            from: trend.points.first.day,
+            through: trend.points.last.day,
+          );
     return InkWell(
       onTap: () => showBiomarkerDetail(context, controller, biomarker),
       child: Container(
@@ -2151,8 +2165,19 @@ class _BiomarkerDashboardSection extends StatelessWidget {
               rangeLow: trend.rangeLow,
               rangeHigh: trend.rangeHigh,
               rangeColor: Theme.of(context).colorScheme.secondaryContainer,
+              doseSeries: underlay.series,
               height: 150,
             ),
+            if (underlay.hasChoice) ...[
+              const SizedBox(height: 4),
+              DoseUnderlayPicker(
+                underlay: underlay,
+                onChanged: (ingredient) => controller.setTrendDoseLink(
+                  biomarkerId: biomarker.id,
+                  ingredient: ingredient,
+                ),
+              ),
+            ],
           ],
         ),
       ),
