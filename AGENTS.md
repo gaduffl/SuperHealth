@@ -133,9 +133,23 @@ comments restating the line below them, and do not leave behind commentary about
 the change process ("fixed the bug", "as requested"); the diff already says
 that.
 
-## Pull requests
+## Landing a change
 
 Branch from the current `main`, and open a PR rather than pushing to `main`.
+
+**Squash merge, always.** `main` is a linear history of one commit per PR, each
+ending in `(#NN)`. A merge commit or a rebased stack of work-in-progress commits
+breaks that. Land your own PR once `verify` is green rather than leaving it open
+— but green first: a PR that has not passed CI is not ready to merge, and a
+stale green on a superseded commit does not count.
+
 Bump `version:` in `pubspec.yaml` when a change should ship as an installable
 build — the release job refuses to reuse a version tag, because Android will not
 install an update carrying the same versionCode.
+
+**Keep this file current.** When a change adds, removes, or alters a convention
+described here — a new layer under `lib/`, a different verification command, a
+new invariant a future agent could violate without noticing — update AGENTS.md
+in the same PR. A stale entry is worse than a missing one, because it gets
+trusted. Record the constraint and its consequence, not a changelog of what you
+did.
