@@ -170,19 +170,33 @@ class UnitMigrationPlanner {
       }
     }
 
-    for (final row in await db.query(
-      'trend_dose_links',
-      columns: ['id', 'ingredient_name', 'ingredient_unit'],
-      where: 'deleted = 0',
-    )) {
+    // The same ingredient is often underlaid beneath several trends, so the
+    // label has to name the trend. Without it, two rows read identically and
+    // there is no way to tell which is which or what it belongs to.
+    for (final row in await db.rawQuery('''
+      SELECT
+        links.id AS id,
+        links.ingredient_name AS ingredient_name,
+        links.ingredient_unit AS ingredient_unit,
+        COALESCE(biomarkers.display_name, definitions.name) AS trend_name
+      FROM trend_dose_links AS links
+      LEFT JOIN biomarkers
+        ON biomarkers.id = links.biomarker_id
+      LEFT JOIN health_event_definitions AS definitions
+        ON definitions.id = links.definition_id
+      WHERE links.deleted = 0
+    ''')) {
       final before = '${row['ingredient_unit'] ?? ''}'.trim();
       final after = CanonicalUnit.normalize(before);
+      final trend = '${row['trend_name'] ?? ''}'.trim();
       if (before.isNotEmpty && after != before) {
         add(
           UnitMigrationProposal(
             table: 'trend_dose_links',
             rowId: '${row['id']}',
-            field: '${row['ingredient_name']} — dose underlay unit',
+            field: trend.isEmpty
+                ? '${row['ingredient_name']} — dose underlay unit'
+                : '${row['ingredient_name']} under $trend — dose underlay unit',
             before: before,
             after: after,
             reason: UnitMigrationReason.unitSpelling,
@@ -314,6 +328,11 @@ class UnitMigrationPlanner {
       if (item is! Map) continue;
       final name = '${item['name'] ?? ''}'.trim();
       if (name.isEmpty) continue;
+      // A single-ingredient product is often named after its ingredient, and
+      // "B12 — B12 unit" reads like a mistake rather than a location.
+      final where = name.toLowerCase() == owner.toLowerCase()
+          ? owner
+          : '$owner — $name';
 
       final unit = item['unit'];
       if (unit != null) {
@@ -323,7 +342,7 @@ class UnitMigrationPlanner {
           yield UnitMigrationProposal(
             table: table,
             rowId: rowId,
-            field: '$owner — $name unit',
+            field: '$where — ingredient unit',
             before: before,
             after: after,
             reason: UnitMigrationReason.unitSpelling,
@@ -332,7 +351,7 @@ class UnitMigrationPlanner {
           yield UnitMigrationProposal(
             table: table,
             rowId: rowId,
-            field: '$owner — $name unit',
+            field: '$where — ingredient unit',
             before: before,
             after: before,
             reason: UnitMigrationReason.unknownUnit,
@@ -345,7 +364,7 @@ class UnitMigrationPlanner {
         yield UnitMigrationProposal(
           table: table,
           rowId: rowId,
-          field: '$owner — ingredient name',
+          field: '$where — ingredient name',
           before: name,
           after: canonicalName,
           reason: UnitMigrationReason.substanceSpelling,
