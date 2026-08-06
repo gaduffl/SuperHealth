@@ -178,4 +178,64 @@ void main() {
 
     expect((await planner.plan()).isEmpty, isTrue);
   });
+
+  test('labels name the trend, so two underlays are tellable apart', () async {
+    // The real shape that produced two identical rows: one ingredient
+    // underlaid beneath two different biomarker trends.
+    final db = await database.database;
+    await db.insert('profiles', {
+      'id': 'p',
+      'display_name': 'P',
+      'notes': '',
+      'created_at': '2026-01-01T00:00:00.000Z',
+      'updated_at': '2026-01-01T00:00:00.000Z',
+      'deleted': 0,
+    });
+    for (final (id, name) in [
+      ('b1', 'Vitamin B12'),
+      ('b2', 'Holotranscobalamin'),
+    ]) {
+      await db.insert('biomarkers', {
+        'id': id,
+        'canonical_name': id,
+        'display_name': name,
+        'created_at': '2026-01-01T00:00:00.000Z',
+        'updated_at': '2026-01-01T00:00:00.000Z',
+        'deleted': 0,
+      });
+      await db.insert('trend_dose_links', {
+        'id': 'link-$id',
+        'profile_id': 'p',
+        'biomarker_id': id,
+        'ingredient_name': 'B12',
+        'ingredient_unit': 'microgram',
+        'created_at': '2026-01-01T00:00:00.000Z',
+        'updated_at': '2026-01-01T00:00:00.000Z',
+        'deleted': 0,
+      });
+    }
+
+    final fields = (await planner.plan()).automatic.map((p) => p.field).toSet();
+    expect(fields, {
+      'B12 under Vitamin B12 — dose underlay unit',
+      'B12 under Holotranscobalamin — dose underlay unit',
+    });
+  });
+
+  test('a product named after its ingredient is not labelled twice', () async {
+    // A single-ingredient product is often named after its ingredient;
+    // "B12 — B12 unit" reads like a mistake rather than a location.
+    await seedSupplement(
+      id: 's',
+      name: 'B12',
+      stockUnit: 'capsule',
+      ingredients: const [
+        {'name': 'B12', 'unit': 'microgram', 'amount': 1001},
+      ],
+    );
+
+    final fields = (await planner.plan()).automatic.map((p) => p.field).toSet();
+    expect(fields, contains('B12 — ingredient unit'));
+    expect(fields, isNot(contains('B12 — B12 unit')));
+  });
 }
