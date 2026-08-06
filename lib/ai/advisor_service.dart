@@ -18,10 +18,14 @@ class AdvisorTurn {
     required this.assistantMessage,
     required this.context,
     required this.fileProposals,
+    this.usage,
   });
 
   final AdvisorMessage userMessage;
   final AdvisorMessage assistantMessage;
+
+  /// What the provider reported this exchange cost, when it reported anything.
+  final TokenUsage? usage;
   final HealthContextEnvelope context;
   final List<WorkspaceProposal> fileProposals;
 }
@@ -208,6 +212,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       assistantMessage: assistantMessage,
       context: context,
       fileProposals: extracted.proposals,
+      usage: response.usage,
     );
   }
 

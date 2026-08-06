@@ -30,7 +30,16 @@ void main() {
   final keyStore = ApiKeyStore();
   final settingsStore = AiSettingsStore();
   final clientFactory = AiProviderClientFactory();
-  final contextBuilder = HealthContextBuilder(repository);
+  // The two flows take deliberately different slices of the record: the
+  // planner needs catalog entries never measured, the advisor does not.
+  final advisorContextBuilder = HealthContextBuilder(
+    repository,
+    scope: HealthContextScope.advisory,
+  );
+  final labPlanningContextBuilder = HealthContextBuilder(
+    repository,
+    scope: HealthContextScope.labPlanning,
+  );
   final snapshotService = SnapshotService(database, repository);
   final oneDriveService = OneDriveService(
     snapshotService,
@@ -57,14 +66,14 @@ void main() {
       repository: repository,
       keyStore: keyStore,
       clientFactory: clientFactory,
-      contextBuilder: contextBuilder,
+      contextBuilder: advisorContextBuilder,
       workspaceService: workspaceService,
     ),
     labPlannerService: LabPlannerService(
       repository: repository,
       keyStore: keyStore,
       clientFactory: clientFactory,
-      contextBuilder: contextBuilder,
+      contextBuilder: labPlanningContextBuilder,
     ),
     documentParsingService: documentParsingService,
     correlationService: CorrelationService(repository),

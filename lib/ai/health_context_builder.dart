@@ -69,8 +69,14 @@ class HealthContextEnvelope {
 /// The indexes never substitute for source rows. If the package cannot fit a
 /// model and no lossless provider-file path is available, the request fails.
 class HealthContextBuilder {
-  HealthContextBuilder(HealthRepository repository)
-    : _loadSnapshot = repository.completeProfileSnapshot;
+  /// [scope] decides how much of the record the built package carries. The
+  /// advisor and the lab planner need different amounts, so each constructs
+  /// its own builder rather than sharing one oversized context.
+  HealthContextBuilder(
+    HealthRepository repository, {
+    HealthContextScope scope = HealthContextScope.labPlanning,
+  }) : _loadSnapshot = ((profileId) =>
+           repository.completeProfileSnapshot(profileId, scope: scope));
 
   HealthContextBuilder.fromLoader(HealthSnapshotLoader loader)
     : _loadSnapshot = loader;

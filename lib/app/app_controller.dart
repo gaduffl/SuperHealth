@@ -86,6 +86,11 @@ class AppController extends ChangeNotifier {
        _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore();
 
   final AppDatabase _database;
+
+  /// Exposed for the one-time unit clean-up, which surveys stored rows across
+  /// tables rather than through any single repository accessor.
+  AppDatabase get database => _database;
+
   final HealthRepository repository;
   final ApiKeyStore keyStore;
   final AiSettingsStore _aiSettingsStore;
@@ -141,6 +146,10 @@ class AppController extends ChangeNotifier {
   ParsedLabReport? pendingLabReport;
   int? lastContextBytes;
   int? lastContextTokens;
+
+  /// What the provider reported the last exchange actually cost. Null until a
+  /// message has been sent, or when the provider reported no usage.
+  TokenUsage? lastTokenUsage;
   AiTaskSettings? advisorSettings;
   AiTaskSettings? parsingSettings;
   final Map<AiProvider, bool> hasApiKey = {};
@@ -1365,6 +1374,7 @@ class AppController extends ChangeNotifier {
       );
       lastContextBytes = turn.context.byteLength;
       lastContextTokens = turn.context.estimatedTokens;
+      lastTokenUsage = turn.usage;
       advisorMessages = await repository.messages(_profileId, 'primary');
     });
   }

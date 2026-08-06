@@ -89,6 +89,30 @@ Omitting a table from the latter silently excludes it from sync and backup.
 correlations is *local* calendar days. Several tests pin DST and year
 boundaries; do not "simplify" them into UTC arithmetic.
 
+**Units have one spelling, enforced on write.** `HealthRepository` canonicalises
+every unit column and every unit inside `ingredients_json` before insert — not
+the UI, because imports, sync and the AI parser all write too, and normalising
+in two screens is how one real library ended up holding `microgram`, `µg`, `IE`
+and `IU` for the same quantity. Supplement, ingredient and event units come from
+the closed `CanonicalUnit` enum in `lib/domain/units.dart`; an unrecognised one
+is preserved rather than coerced, so a data-entry mistake stays visible.
+Biomarker units deliberately do **not** use that enum — lab reports carry an open
+set of notations (37 distinct spellings in one real export) and rejecting one
+would mean refusing a genuine report, so they go through
+`UnitConversionService.normalizeUnit`, which canonicalises rather than rejects.
+
+**A substance has an identity separate from its spelling.** `SubstanceCatalog`
+maps "Vitamin C"/"Vitamin c" and "B12"/"Vitamin B12" onto one id; anything it
+does not know falls back to its own folded name. Group by
+`groupingKeyFor(name)`, never by the raw string. Note that a named salt
+("Eisen(II)-sulfat") is deliberately *not* the element — its mass includes the
+counter-ion.
+
+**IU is not a mass.** There is no generic IU↔µg factor: one IU is 0.025 µg of
+vitamin D, 0.3 µg of vitamin A, and 0.67 mg of vitamin E. `SubstanceConversions`
+holds a small substance-scoped table and returns null for anything outside it.
+Returning null means "keep the series separate", never zero.
+
 **Units never mix.** Values are only summed within one canonical unit. Tag
 value modes (`TagValueMode.occurrence`/`intensity`/`amount`) decide how a day's
 entries reduce — count, mean, or sum-within-unit. Supplement ingredient exposure
@@ -98,6 +122,13 @@ in IU and in µg is two series. Adding a code path that sums across units is a
 correctness bug even when it type-checks. Where two quantities genuinely cannot
 be converted — a blood concentration and a daily intake — give them separate
 axes rather than a shared scale, as the `TrendChart` dose underlay does.
+
+**A snapshot can be a missing record rather than a record of nothing.**
+`SupplementIntake.ingredientSnapshot` is captured at log time and stays empty
+forever if the product had no ingredients entered yet — 94% of intakes in one
+real library. Anything reading it must fall back to the product's current
+ingredients, or it computes from the remaining 6% and is wrong by more than an
+order of magnitude.
 
 **Missing data is not zero.** A day with nothing logged and a day with a
 deliberate zero must not render identically; `DoseBucket.tracked` carries that
@@ -185,9 +216,37 @@ goes red after the merge, when the PR that caused it is already closed. Raise
 the minor for a feature or a schema migration, the patch for a fix or a
 refinement; the build number always increments by exactly one.
 
+**The AI context is scoped per flow.** `HealthContextScope.labPlanning` carries
+the whole biomarker catalog because the planner must be able to propose and
+price a test never run; `advisory` carries only measured markers. Supplements are
+filtered to the active profile, and the raw inventory ledger is not shipped at
+all — `household_stock_levels` carries the useful part in one row per item. One
+shared context could not serve both flows without wasting most of it on
+whichever did not need it.
+
 **Keep this file current.** When a change adds, removes, or alters a convention
 described here — a new layer under `lib/`, a different verification command, a
 new invariant a future agent could violate without noticing — update AGENTS.md
 in the same PR. A stale entry is worse than a missing one, because it gets
 trusted. Record the constraint and its consequence, not a changelog of what you
 did.
+
+## Not audited
+
+A data-model audit in August 2026 covered units, ingredient identity, the
+`ingredients_json` blob, `use_score`/`value_mode` redundancy, and the
+product-vs-ingredient duality. It deliberately did **not** cover the following,
+which remain unexamined rather than known-good:
+
+- Sync and merge conflict semantics, and the `sync_shadow` / `sync_conflicts`
+  tables.
+- Document and PDF handling, hashing, and the import/rollback audit trail.
+- Lab plan tier construction and price arithmetic.
+- The advisor workspace file-proposal safety model.
+- Reminder scheduling and its DST behaviour.
+- Soft-delete consistency across all tables — spot-checked on event definitions
+  only, where it was found intact.
+- ID generation and collision risk.
+- The backup/restore checksum scheme.
+- Localisation coverage beyond unit and migration strings.
+- Index coverage and query performance on the larger tables.

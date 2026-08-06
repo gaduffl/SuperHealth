@@ -182,8 +182,13 @@ void main() {
           (data['household_stock_levels']! as List<dynamic>).single
               as Map<String, Object?>;
 
-      expect(rawMovements.map((row) => row['profile_id']), contains(spouse.id));
-      expect(rawMovements, hasLength(3));
+      // The raw movement ledger is stock provenance, not clinical evidence,
+      // and was one of the largest tables in the context. It is no longer
+      // shipped at all — including the spouse's rows, which were never
+      // evidence about this profile.
+      expect(rawMovements, isEmpty);
+      // The derived total survives, because "am I out of this" is worth
+      // answering and costs one row per catalog item.
       expect(stock['current_units'], 2.125);
       expect(
         (data['supplement_intakes']! as List<dynamic>).map((row) => row['id']),
@@ -221,7 +226,10 @@ void main() {
               as Map<String, dynamic>;
       expect(indexStock['current_units'], 2.125);
       expect(indexStock['is_low_stock'], isTrue);
-      expect(indexStock['inventory_movement_record_count'], 3);
+      // The index counts what the context carries, and the context no longer
+      // carries the movement ledger. The stock total above is what remains,
+      // and it is derived from the full ledger in the database.
+      expect(indexStock['inventory_movement_record_count'], 0);
     },
   );
 }

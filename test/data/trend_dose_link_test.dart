@@ -108,6 +108,17 @@ void main() {
               deleted INTEGER NOT NULL DEFAULT 0
             )
           ''');
+          await db.execute('''
+            CREATE TABLE supplements (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              form TEXT NOT NULL DEFAULT '',
+              stock_unit TEXT NOT NULL DEFAULT 'unit',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              deleted INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
           await db.insert('profiles', {
             'id': 'profile',
             'display_name': 'Legacy',

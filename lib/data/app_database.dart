@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 8;
+  static const schemaVersion = 9;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -587,6 +587,39 @@ class AppDatabase {
       for (final statement in _trendDoseLinkIndexes) {
         await db.execute(statement);
       }
+    }
+    if (oldVersion < 9) {
+      // stock_unit was a duplicate of form in every real row: "Capsule",
+      // "Powder", "Liquid". Those are dosage forms, not units — there is no
+      // answer to "how many Powder do I have" — so stock projection was
+      // reconciling an intake count against a form name.
+      //
+      // A capsule and a tablet are genuinely countable, so those convert
+      // cleanly. Powder and liquid have no implied count and are left on the
+      // 'unit' placeholder for the review screen to resolve, rather than being
+      // guessed at here.
+      await db.execute('''
+        UPDATE supplements
+        SET form = CASE
+              WHEN TRIM(COALESCE(form, '')) = '' THEN stock_unit
+              ELSE form
+            END
+      ''');
+      await db.execute('''
+        UPDATE supplements
+        SET stock_unit = CASE LOWER(TRIM(stock_unit))
+          WHEN 'capsule' THEN 'capsule'
+          WHEN 'capsules' THEN 'capsule'
+          WHEN 'kapsel' THEN 'capsule'
+          WHEN 'kapseln' THEN 'capsule'
+          WHEN 'tablet' THEN 'tablet'
+          WHEN 'tablets' THEN 'tablet'
+          WHEN 'tablette' THEN 'tablet'
+          WHEN 'powder' THEN 'unit'
+          WHEN 'liquid' THEN 'unit'
+          ELSE stock_unit
+        END
+      ''');
     }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;
