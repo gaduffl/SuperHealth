@@ -905,6 +905,7 @@ class _TrackingScreenState extends State<TrackingScreen>
     );
     final ingredients = _insights.ingredientExposure(
       intakes: controller.intakes,
+      supplements: controller.supplements,
       from: window.$1,
       to: window.$2,
     );
@@ -980,6 +981,7 @@ class _TrackingScreenState extends State<TrackingScreen>
           _supplementPinKey(item),
         for (final item in _insights.ingredientExposure(
           intakes: controller.intakes,
+          supplements: controller.supplements,
           from: allRange.from,
           to: allRange.through,
         ))

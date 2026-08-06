@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
+import '../domain/units.dart';
 import 'app_database.dart';
 
 class _SynchronizedColumn {
@@ -206,6 +207,21 @@ void _validateJsonListContents(String table, String column, String value) {
   }
 }
 
+/// How much of the record a generated context should carry.
+///
+/// The two AI flows genuinely need different things, and serving them one
+/// shared context meant most of it was wasted on whichever flow did not need
+/// it. Splitting the scope is what lets the advisor stay small without
+/// crippling the planner.
+enum HealthContextScope {
+  /// Everything, including catalog entries never measured, because the planner
+  /// has to be able to propose and price a test that has never been run.
+  labPlanning,
+
+  /// Only what the profile has actually measured or taken.
+  advisory,
+}
+
 class HealthRepository {
   HealthRepository(
     this._database, {
@@ -292,12 +308,103 @@ class HealthRepository {
     return rows.map(Supplement.fromMap).toList();
   }
 
+  /// Canonicalises every unit spelling on the way into the database.
+  ///
+  /// Normalisation used to live in two UI files, which meant rows written by
+  /// any other path — imports, sync, the AI parser — kept whatever spelling
+  /// they arrived with. One real library ended up holding `microgram`, `µg`,
+  /// `IE` and `IU` for the same quantity, splitting every chart that keys on
+  /// name and unit. Doing it here means there is one way in and one spelling
+  /// stored.
+  ///
+  /// Substance *names* are deliberately left alone. Renaming someone's
+  /// ingredient is a judgement call, so it goes through the review screen
+  /// rather than happening silently on save.
+  Map<String, Object?> _canonicalUnits(String table, Map<String, Object?> map) {
+    final result = Map<String, Object?>.from(map);
+
+    String? supplementSide(Object? raw) {
+      final text = raw?.toString();
+      if (text == null || text.trim().isEmpty) return text;
+      return CanonicalUnit.normalize(text);
+    }
+
+    String? biomarkerSide(Object? raw) {
+      final text = raw?.toString();
+      if (text == null || text.trim().isEmpty) return text;
+      return _unitConversions.normalizeUnit(text);
+    }
+
+    for (final column in _supplementUnitColumns[table] ?? const <String>[]) {
+      if (result.containsKey(column)) {
+        result[column] = supplementSide(result[column]);
+      }
+    }
+    for (final column in _biomarkerUnitColumns[table] ?? const <String>[]) {
+      if (result.containsKey(column)) {
+        result[column] = biomarkerSide(result[column]);
+      }
+    }
+    if (result.containsKey('ingredients_json')) {
+      result['ingredients_json'] = _canonicalIngredientUnits(
+        result['ingredients_json'],
+      );
+    }
+    return result;
+  }
+
+  /// Rewrites the unit inside each ingredient of a stored JSON blob, leaving
+  /// every other key — including an absent `unit`, which is legitimate —
+  /// exactly as it was.
+  Object? _canonicalIngredientUnits(Object? raw) {
+    if (raw == null) return raw;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(raw.toString());
+    } on FormatException {
+      return raw;
+    }
+    if (decoded is! List) return raw;
+    final rewritten = [
+      for (final item in decoded)
+        if (item is Map)
+          {
+            for (final entry in item.entries)
+              entry.key.toString(): entry.key == 'unit' && entry.value != null
+                  ? CanonicalUnit.normalize(entry.value.toString())
+                  : entry.value,
+          }
+        else
+          item,
+    ];
+    return jsonEncode(rewritten);
+  }
+
+  static const _supplementUnitColumns = <String, List<String>>{
+    'supplements': ['stock_unit'],
+    'supplement_schedules': ['unit'],
+    'supplement_intakes': ['unit'],
+    'health_event_definitions': ['default_unit'],
+    'health_events': ['unit'],
+    'trend_dose_links': ['ingredient_unit'],
+    'named_health_records': ['unit'],
+  };
+
+  static const _biomarkerUnitColumns = <String, List<String>>{
+    'biomarkers': ['default_unit'],
+    'biomarker_ranges': ['unit'],
+    'profile_biomarker_targets': ['unit'],
+    'measurements': ['unit_reported', 'canonical_unit'],
+  };
+
+  final _unitConversions = UnitConversionService();
+
   Future<void> saveSupplement(Supplement supplement) async {
     _validateSupplement(supplement);
     final db = await _database.database;
     await db.insert(
       'supplements',
-      supplement.toMap(),
+      _canonicalUnits('supplements', supplement.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -412,7 +519,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'supplement_schedules',
-      schedule.toMap(),
+      _canonicalUnits('supplement_schedules', schedule.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -454,7 +561,7 @@ class HealthRepository {
     await db.transaction((txn) async {
       await txn.insert(
         'supplement_intakes',
-        intake.toMap(),
+        _canonicalUnits('supplement_intakes', intake.toMap()),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
       final existing = await txn.query(
@@ -529,7 +636,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'health_events',
-      event.toMap(),
+      _canonicalUnits('health_events', event.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -554,7 +661,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'health_event_definitions',
-      definition.toMap(),
+      _canonicalUnits('health_event_definitions', definition.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -574,7 +681,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'biomarkers',
-      biomarker.toMap(),
+      _canonicalUnits('biomarkers', biomarker.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -599,7 +706,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'biomarker_ranges',
-      range.toMap(),
+      _canonicalUnits('biomarker_ranges', range.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -960,7 +1067,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'profile_biomarker_targets',
-      target.toMap(),
+      _canonicalUnits('profile_biomarker_targets', target.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -981,7 +1088,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'trend_dose_links',
-      link.toMap(),
+      _canonicalUnits('trend_dose_links', link.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -1163,7 +1270,7 @@ class HealthRepository {
     Measurement measurement,
   ) async {
     _validateMeasurement(measurement);
-    final map = measurement.toMap();
+    final map = _canonicalUnits('measurements', measurement.toMap());
     final rows = await db.query(
       'biomarkers',
       where: 'id = ? AND deleted = 0',
@@ -1312,7 +1419,7 @@ class HealthRepository {
     final db = await _database.database;
     await db.insert(
       'named_health_records',
-      record.toMap(),
+      _canonicalUnits('named_health_records', record.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -2132,7 +2239,39 @@ class HealthRepository {
     }
   }
 
-  Future<Map<String, Object?>> completeProfileSnapshot(String profileId) async {
+  /// Catalog entries this profile has at least one measurement for.
+  Future<List<Map<String, Object?>>> _measuredBiomarkers(
+    DatabaseExecutor db,
+    String profileId,
+  ) => db.rawQuery(
+    '''
+    SELECT * FROM biomarkers
+    WHERE deleted = 0 AND id IN (
+      SELECT biomarker_id FROM measurements
+        WHERE profile_id = ? AND deleted = 0
+    )
+    ''',
+    [profileId],
+  );
+
+  Future<List<Map<String, Object?>>> _measuredBiomarkerRanges(
+    DatabaseExecutor db,
+    String profileId,
+  ) => db.rawQuery(
+    '''
+    SELECT * FROM biomarker_ranges
+    WHERE deleted = 0 AND biomarker_id IN (
+      SELECT biomarker_id FROM measurements
+        WHERE profile_id = ? AND deleted = 0
+    )
+    ''',
+    [profileId],
+  );
+
+  Future<Map<String, Object?>> completeProfileSnapshot(
+    String profileId, {
+    HealthContextScope scope = HealthContextScope.labPlanning,
+  }) async {
     final db = await _database.database;
     final profileRows = await db.query(
       'profiles',
@@ -2143,7 +2282,22 @@ class HealthRepository {
 
     final data = <String, Object?>{
       'profile': profileRows.single,
-      'supplements': await db.query('supplements', where: 'deleted = 0'),
+      // The catalog is household-shared, but another person's supplements are
+      // not evidence about this profile — they were simply filling context.
+      // Only products this profile actually schedules or takes are included.
+      'supplements': await db.rawQuery(
+        '''
+        SELECT * FROM supplements
+        WHERE deleted = 0 AND id IN (
+          SELECT supplement_id FROM supplement_schedules
+            WHERE profile_id = ? AND deleted = 0
+          UNION
+          SELECT supplement_id FROM supplement_intakes
+            WHERE profile_id = ? AND deleted = 0
+        )
+        ''',
+        [profileId, profileId],
+      ),
       'supplement_schedules': await _profileRows(
         db,
         'supplement_schedules',
@@ -2154,14 +2308,11 @@ class HealthRepository {
         'supplement_intakes',
         profileId,
       ),
-      'inventory_movements': await db.query(
-        'inventory_movements',
-        // Inventory is household-shared. `profile_id` is only provenance for
-        // a stock change; it is not evidence that the active profile took a
-        // supplement. Personal intake evidence remains in
-        // `supplement_intakes`, which is scoped above.
-        where: 'deleted = 0',
-      ),
+      // The raw movement ledger is stock provenance — purchases, corrections,
+      // discards — not clinical evidence, and it is one of the largest tables
+      // in the snapshot. `household_stock_levels` below carries the part that
+      // is actually useful: one current total per catalog item.
+      'inventory_movements': const <Map<String, Object?>>[],
       'health_event_definitions': await _profileRows(
         db,
         'health_event_definitions',
@@ -2191,12 +2342,28 @@ class HealthRepository {
       // Advisor messages are not health evidence. The active conversation is
       // supplied separately in conversational order by AdvisorService so old
       // model output cannot be mistaken for a measured fact.
-      // The full catalog is needed to choose unmeasured tests and calculate price tiers.
-      'biomarker_catalog': await db.query('biomarkers', where: 'deleted = 0'),
-      'biomarker_ranges': await db.query(
-        'biomarker_ranges',
-        where: 'deleted = 0',
-      ),
+      // Lab planning needs the whole catalog: it has to choose tests this
+      // profile has *never* had, and price the tiers. Advice does not — it
+      // reasons about results that exist — so it receives only the markers
+      // actually measured, which is a small fraction of a 169-entry catalog.
+      // One shared context could not serve both without wasting most of it.
+      'biomarker_catalog': switch (scope) {
+        HealthContextScope.labPlanning => await db.query(
+          'biomarkers',
+          where: 'deleted = 0',
+        ),
+        HealthContextScope.advisory => await _measuredBiomarkers(db, profileId),
+      },
+      'biomarker_ranges': switch (scope) {
+        HealthContextScope.labPlanning => await db.query(
+          'biomarker_ranges',
+          where: 'deleted = 0',
+        ),
+        HealthContextScope.advisory => await _measuredBiomarkerRanges(
+          db,
+          profileId,
+        ),
+      },
     };
 
     // This derived navigation evidence complements, rather than replaces, the

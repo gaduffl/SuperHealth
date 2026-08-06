@@ -1,4 +1,5 @@
 import '../domain/entities.dart';
+import '../domain/substance_catalog.dart';
 
 /// The named part of the day a scheduled dose belongs to.
 ///
@@ -687,11 +688,21 @@ class SupplementInsights {
     return result;
   }
 
+  /// [supplements] lets an intake with an empty snapshot fall back to its
+  /// product's current ingredients.
+  ///
+  /// This is not a nicety. In one real library 94% of intakes carry no
+  /// snapshot, because `ingredientSnapshot` is captured at log time and stays
+  /// empty forever if the product had no ingredients entered yet. Without the
+  /// fallback these totals are computed from the remaining 6% and are not
+  /// merely imprecise — they are wrong by more than an order of magnitude.
   List<IngredientExposure> ingredientExposure({
     required List<SupplementIntake> intakes,
     required DateTime from,
     required DateTime to,
+    List<Supplement> supplements = const [],
   }) {
+    final ingredientsBySupplement = _ingredientsBySupplement(supplements);
     final totals = <String, double>{};
     final display = <String, (String, String)>{};
     for (final intake in intakes.where(
@@ -700,18 +711,24 @@ class SupplementInsights {
           !item.skipped &&
           _withinLocalRange(item.takenAt, from, to),
     )) {
-      for (final ingredient in intake.ingredientSnapshot) {
+      for (final ingredient in _ingredientsFor(
+        intake,
+        ingredientsBySupplement,
+      )) {
         final name = ingredient['name']?.toString().trim() ?? '';
         final unit = ingredient['unit']?.toString().trim() ?? '';
         final amount = _asDouble(ingredient['amount']);
         if (name.isEmpty || amount == null || !intake.dose.isFinite) continue;
-        final key = '${name.toLowerCase()}|${unit.toLowerCase()}';
+        // Grouped by substance rather than by spelling, so "Vitamin C" and
+        // "Vitamin c" are one row. The unit stays in the key because two
+        // units of one substance are still two series.
+        final key = '${_substances.groupingKeyFor(name)}|${unit.toLowerCase()}';
         final contribution = amount * intake.dose;
         if (!contribution.isFinite) continue;
         final next = (totals[key] ?? 0) + contribution;
         if (!next.isFinite) continue;
         totals[key] = next;
-        display[key] = (name, unit);
+        display[key] ??= (_substances.displayNameFor(name), unit);
       }
     }
     final result = [
@@ -725,6 +742,25 @@ class SupplementInsights {
     result.sort(_compareExposure);
     return result;
   }
+
+  static const _substances = SubstanceCatalog();
+
+  Map<String, List<Map<String, Object?>>> _ingredientsBySupplement(
+    List<Supplement> supplements,
+  ) => {for (final item in supplements) item.id: item.ingredients};
+
+  /// The ingredients an intake actually delivered.
+  ///
+  /// Prefers the snapshot taken at log time, because that is what the product
+  /// contained then. Falls back to the product's current ingredients only when
+  /// the snapshot is empty, which means the product had not been broken down
+  /// yet — a missing record, not a record of nothing.
+  List<Map<String, Object?>> _ingredientsFor(
+    SupplementIntake intake,
+    Map<String, List<Map<String, Object?>>> ingredientsBySupplement,
+  ) => intake.ingredientSnapshot.isNotEmpty
+      ? intake.ingredientSnapshot
+      : ingredientsBySupplement[intake.supplementId] ?? const [];
 
   /// Average daily dose of one [target], bucketed across [from]..[through] so
   /// a multi-year span stays readable instead of collapsing into hundreds of
@@ -783,10 +819,10 @@ class SupplementInsights {
         continue;
       }
 
-      final snapshot = intake.ingredientSnapshot.isNotEmpty
-          ? intake.ingredientSnapshot
-          : ingredientsBySupplement[intake.supplementId] ?? const [];
-      for (final ingredient in snapshot) {
+      for (final ingredient in _ingredientsFor(
+        intake,
+        ingredientsBySupplement,
+      )) {
         final name = ingredient['name']?.toString().trim() ?? '';
         final unit = ingredient['unit']?.toString().trim() ?? '';
         if ('${name.toLowerCase()}|${unit.toLowerCase()}' != key) continue;
@@ -854,10 +890,7 @@ class SupplementInsights {
             intake.supplementId == target.supplementId &&
             intake.unit.trim().toLowerCase() == target.unit.toLowerCase();
       } else {
-        final snapshot = intake.ingredientSnapshot.isNotEmpty
-            ? intake.ingredientSnapshot
-            : ingredientsBySupplement[intake.supplementId] ?? const [];
-        contributes = snapshot.any(
+        contributes = _ingredientsFor(intake, ingredientsBySupplement).any(
           (ingredient) =>
               (ingredient['name']?.toString().trim().toLowerCase() ?? '') ==
                   target.name.toLowerCase() &&
@@ -902,10 +935,10 @@ class SupplementInsights {
           ),
         );
       }
-      final snapshot = intake.ingredientSnapshot.isNotEmpty
-          ? intake.ingredientSnapshot
-          : supplement?.ingredients ?? const [];
-      for (final ingredient in snapshot) {
+      for (final ingredient
+          in intake.ingredientSnapshot.isNotEmpty
+              ? intake.ingredientSnapshot
+              : supplement?.ingredients ?? const []) {
         final name = ingredient['name']?.toString().trim() ?? '';
         if (name.isEmpty) continue;
         ingredients.add(

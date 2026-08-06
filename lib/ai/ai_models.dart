@@ -114,6 +114,58 @@ class ProviderResponse {
   final Map<String, Object?> raw;
   final String? responseId;
   final List<String> citations;
+
+  /// What the provider says the exchange actually cost in tokens.
+  ///
+  /// Read from [raw] rather than plumbed through each client, because all
+  /// three report it in their own response body and none of them needs to know
+  /// the app is looking.
+  TokenUsage? get usage => TokenUsage.fromResponse(raw);
+}
+
+/// Tokens a single exchange consumed, as reported by the provider.
+///
+/// Reported, not estimated: the app's own pre-flight figure is a byte-based
+/// approximation, and showing a guess next to a real number invites treating
+/// both as equally solid.
+class TokenUsage {
+  const TokenUsage({this.inputTokens, this.outputTokens});
+
+  final int? inputTokens;
+  final int? outputTokens;
+
+  bool get isEmpty => inputTokens == null && outputTokens == null;
+
+  int? get totalTokens => inputTokens == null && outputTokens == null
+      ? null
+      : (inputTokens ?? 0) + (outputTokens ?? 0);
+
+  /// Reads the three provider shapes: OpenAI Responses and Anthropic Messages
+  /// both nest `usage`, with OpenAI additionally using the older
+  /// prompt/completion naming on some endpoints; Gemini reports
+  /// `usageMetadata` with its own key names.
+  static TokenUsage? fromResponse(Map<String, Object?> raw) {
+    int? read(Object? node, List<String> keys) {
+      if (node is! Map) return null;
+      for (final key in keys) {
+        final value = node[key];
+        if (value is int) return value;
+        if (value is num) return value.toInt();
+      }
+      return null;
+    }
+
+    final usage = raw['usage'];
+    final metadata = raw['usageMetadata'];
+    final input =
+        read(usage, const ['input_tokens', 'prompt_tokens']) ??
+        read(metadata, const ['promptTokenCount']);
+    final output =
+        read(usage, const ['output_tokens', 'completion_tokens']) ??
+        read(metadata, const ['candidatesTokenCount']);
+    if (input == null && output == null) return null;
+    return TokenUsage(inputTokens: input, outputTokens: output);
+  }
 }
 
 /// Versioned from provider documentation. Unknown models intentionally receive

@@ -13,6 +13,7 @@ import '../app/app_localizations.dart';
 import '../app/appearance_settings.dart';
 import '../domain/entities.dart';
 import '../import/legacy_import_service.dart';
+import '../data/unit_migration_planner.dart';
 import '../reminders/reminder_planner.dart';
 import '../reminders/reminder_service.dart';
 import '../sync/one_drive_service.dart';
@@ -21,6 +22,7 @@ import 'common.dart';
 import 'dialogs.dart';
 import 'initial_setup_widgets.dart';
 import 'sync_conflicts_screen.dart';
+import 'unit_migration_screen.dart';
 
 String _settingsText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
@@ -465,6 +467,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'Mit Vorschau, Deduplizierung, Protokollierung und Rücksetzung',
             ),
           ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.straighten_outlined),
+              title: Text(
+                _settingsText(context, 'Tidy up units', 'Einheiten aufräumen'),
+              ),
+              subtitle: Text(
+                _settingsText(
+                  context,
+                  'Find the same unit or ingredient stored under different '
+                      'spellings, and choose what to correct.',
+                  'Findet dieselbe Einheit oder Zutat in verschiedenen '
+                      'Schreibweisen und lässt dich auswählen, was korrigiert '
+                      'wird.',
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: controller.busy ? null : () => _tidyUnits(controller),
+            ),
+          ),
+          const SizedBox(height: 12),
           Card(
             child: Column(
               children: [
@@ -1320,6 +1343,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
           false;
     } finally {
       text.dispose();
+    }
+  }
+
+  Future<void> _tidyUnits(AppController controller) async {
+    final planner = UnitMigrationPlanner(controller.database);
+    final messenger = ScaffoldMessenger.of(context);
+    final strings = AppLocalizations.of(context);
+    try {
+      final plan = await planner.plan();
+      if (!mounted) return;
+      if (plan.isEmpty) {
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                strings.pick(
+                  'Nothing to tidy — every unit is already consistent.',
+                  'Nichts aufzuräumen — alle Einheiten sind bereits '
+                      'einheitlich.',
+                ),
+              ),
+            ),
+          );
+        return;
+      }
+      final applied = await Navigator.of(context).push<int>(
+        MaterialPageRoute(
+          builder: (_) => UnitMigrationScreen(planner: planner, plan: plan),
+        ),
+      );
+      if (applied == null || !mounted) return;
+      await controller.refreshActiveData();
+      if (!mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              strings.pick(
+                'Applied $applied correction(s).',
+                '$applied Korrektur(en) angewendet.',
+              ),
+            ),
+          ),
+        );
+    } on Object catch (error) {
+      if (!mounted) return;
+      await showAppError(context, error);
     }
   }
 

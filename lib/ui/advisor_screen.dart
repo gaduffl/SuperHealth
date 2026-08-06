@@ -170,12 +170,7 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
                         textCapitalization: TextCapitalization.sentences,
                         decoration: InputDecoration(
                           hintText: strings.askHealthData,
-                          helperText: controller.lastContextBytes == null
-                              ? strings.completeProfileSent
-                              : strings.lastContext(
-                                  controller.lastContextBytes!,
-                                  controller.lastContextTokens,
-                                ),
+                          helperText: _contextHelper(context, controller),
                         ),
                         onSubmitted: (_) => _send(),
                       ),
@@ -199,6 +194,30 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
   void _usePrompt(String prompt) {
     _message.text = prompt;
     _message.selection = TextSelection.collapsed(offset: prompt.length);
+  }
+
+  /// The context line under the composer.
+  ///
+  /// Once a message has been sent, the provider's reported token counts
+  /// replace the app's pre-flight estimate: one is measured, the other is a
+  /// byte-based approximation, and showing them together would imply both are
+  /// equally solid.
+  String _contextHelper(BuildContext context, AppController controller) {
+    final strings = AppLocalizations.of(context);
+    final usage = controller.lastTokenUsage;
+    if (usage != null && !usage.isEmpty) {
+      final input = usage.inputTokens;
+      final output = usage.outputTokens;
+      return strings.pick(
+        'Last message: ${input ?? '?'} in / ${output ?? '?'} out tokens',
+        'Letzte Nachricht: ${input ?? '?'} rein / ${output ?? '?'} raus Token',
+      );
+    }
+    if (controller.lastContextBytes == null) return strings.completeProfileSent;
+    return strings.lastContext(
+      controller.lastContextBytes!,
+      controller.lastContextTokens,
+    );
   }
 
   Future<void> _send() async {
