@@ -13,7 +13,25 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      publishes: ${{ steps.gate.outputs.publishes }}
     steps:
+      - name: Decide whether this run publishes a release
+        id: gate
+        # Both jobs read this one answer, so the release gate and the "build the
+        # APK here instead" gate cannot drift apart into a run that builds twice
+        # or not at all. A manual dispatch of `main` counts as a publish: without
+        # it a release that never ran — a cancelled run, an unassigned runner —
+        # could only be recovered by pushing another commit.
+        run: |
+          if [ "$GITHUB_REF" = 'refs/heads/main' ] && {
+            [ "$GITHUB_EVENT_NAME" = 'push' ] ||
+            [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]
+          }; then
+            printf 'publishes=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'publishes=false\n' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -32,7 +50,7 @@ jobs:
       - name: Require committed formatting and dependency lock
         run: git diff --exit-code -- lib test pubspec.lock
       - name: Require private Android signing
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        if: steps.gate.outputs.publishes != 'true'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -53,7 +71,7 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
           chmod 600 android/app/upload-keystore.jks
       - name: Build release APK
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        if: steps.gate.outputs.publishes != 'true'
         env:
           ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/app/upload-keystore.jks
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -61,7 +79,7 @@ jobs:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
         run: flutter build apk --release
       - name: Upload release APK
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        if: steps.gate.outputs.publishes != 'true'
         uses: actions/upload-artifact@v4
         # Building is a required gate. Artifact retention is best-effort because
         # repository-level Actions storage quotas are outside this workflow.
@@ -74,7 +92,7 @@ jobs:
   release:
     name: Publish signed APK
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: needs.verify.outputs.publishes == 'true'
     permissions:
       contents: write
     runs-on: ubuntu-latest
