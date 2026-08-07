@@ -172,6 +172,20 @@ confirmation before they touch the database or disk.
 so light, dark, high-contrast, and deuteranomaly palettes all work unchanged.
 Charts carry a `semanticLabel`.
 
+**A feature reachable only by an icon is a feature nobody finds.** Tooltips need
+a long-press on touch, so an icon-only `IconButton` carries no label at all on a
+phone. The lab-report PDF import spent months looking deleted for exactly this
+reason: a screen restructure pushed it behind a navigation push *and* left it as
+a bare icon beside a labelled button. Primary flows get a labelled card on the
+screen that owns them. When restructuring a screen, check what the old layout
+surfaced that the new one buries, and assert the shortcut in a widget test —
+code that still exists is not the same as a feature the owner can reach.
+
+**A flow used from two screens is a top-level function, not a method.** Private
+top-level functions in the screen file (`_importLabPdf`) let a second entry point
+call exactly the same code. Copying the flow into the second screen is how two
+paths drift into behaving differently.
+
 ## Tests
 
 `flutter_test` plus `sqflite_common_ffi` for real SQLite. Call

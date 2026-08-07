@@ -185,6 +185,23 @@ class _LabsScreenState extends State<LabsScreen> {
             const SizedBox(height: 16),
             Row(
               children: [
+                // First, because one PDF carries a whole panel while the manual
+                // entry beside it carries a single value. It stays available
+                // with an empty catalog: the import is how the catalog fills up.
+                Expanded(
+                  child: _BiomarkerQuickActionCard(
+                    icon: Icons.document_scanner_outlined,
+                    label: _labsText(
+                      context,
+                      'Import lab PDF',
+                      'Labor-PDF importieren',
+                    ),
+                    onTap: controller.busy
+                        ? null
+                        : () => _importLabPdf(context, controller),
+                  ),
+                ),
+                const SizedBox(width: 16),
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.add,
@@ -198,7 +215,11 @@ class _LabsScreenState extends State<LabsScreen> {
                         : () => _addMeasurement(controller),
                   ),
                 ),
-                const SizedBox(width: 16),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.insights,
@@ -206,11 +227,7 @@ class _LabsScreenState extends State<LabsScreen> {
                     onTap: profile == null ? null : () => _openDashboard(),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
+                const SizedBox(width: 16),
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.list,
@@ -222,7 +239,11 @@ class _LabsScreenState extends State<LabsScreen> {
                     onTap: () => showBiomarkerListsSheet(context, controller),
                   ),
                 ),
-                const SizedBox(width: 16),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.warning,
@@ -234,6 +255,9 @@ class _LabsScreenState extends State<LabsScreen> {
                     onTap: () => _openWorkspace(initialStatus: 'Due'),
                   ),
                 ),
+                // Keeps the last card the same width as the four above it.
+                const SizedBox(width: 16),
+                const Expanded(child: SizedBox()),
               ],
             ),
             const SizedBox(height: 32),
@@ -430,7 +454,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   ),
                   onPressed: controller.busy
                       ? null
-                      : () => _importPdf(context, controller),
+                      : () => _importLabPdf(context, controller),
                   icon: const Icon(Icons.document_scanner_outlined),
                 ),
                 const SizedBox(width: 6),
@@ -686,594 +710,6 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _importPdf(
-    BuildContext context,
-    AppController controller,
-  ) async {
-    try {
-      final selection = await FilePicker.platform.pickFiles(
-        dialogTitle: _labsText(
-          context,
-          'Choose a lab report PDF',
-          'Laborbericht als PDF auswählen',
-        ),
-        type: FileType.custom,
-        allowedExtensions: const ['pdf'],
-        withData: true,
-      );
-      if (selection == null || selection.files.isEmpty) return;
-      final selected = selection.files.single;
-      final bytes =
-          selected.bytes ??
-          (selected.path == null
-              ? null
-              : await File(selected.path!).readAsBytes());
-      if (!context.mounted) return;
-      if (bytes == null) {
-        throw StateError(
-          _labsText(
-            context,
-            'The selected PDF could not be read.',
-            'Die ausgewählte PDF konnte nicht gelesen werden.',
-          ),
-        );
-      }
-      final report = await controller.parseLabPdf(
-        fileName: selected.name,
-        bytes: bytes,
-      );
-      if (!context.mounted) return;
-      await _reviewParsedReport(context, controller, report);
-    } on Object catch (error) {
-      if (context.mounted) await showAppError(context, error);
-    }
-  }
-
-  Future<void> _reviewParsedReport(
-    BuildContext context,
-    AppController controller,
-    ParsedLabReport report,
-  ) async {
-    final candidates = [...report.measurements];
-    var reportDate = report.reportDate ?? DateTime.now();
-    final comment = TextEditingController();
-    const temporary = '__temporary__';
-    final approved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(
-            _labsText(
-              context,
-              'Review extracted lab report',
-              'Extrahierten Laborbericht prüfen',
-            ),
-          ),
-          content: SizedBox(
-            width: 720,
-            height: MediaQuery.sizeOf(context).height * 0.68,
-            child: ListView(
-              children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.picture_as_pdf_outlined),
-                  title: Text(report.fileName),
-                  subtitle: Text(
-                    '${report.provider.name} · ${report.model} · '
-                    '${(report.pdfBytes.length / 1024).toStringAsFixed(0)} KB',
-                  ),
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    _labsText(
-                      context,
-                      'Sample / report date *',
-                      'Proben- / Berichtsdatum *',
-                    ),
-                  ),
-                  subtitle: Text(DateFormat('dd.MM.yyyy').format(reportDate)),
-                  trailing: const Icon(Icons.calendar_today_outlined),
-                  onTap: () async {
-                    final date = await showDatePicker(
-                      context: context,
-                      firstDate: DateTime(1950),
-                      lastDate: DateTime.now(),
-                      initialDate: reportDate.isAfter(DateTime.now())
-                          ? DateTime.now()
-                          : reportDate,
-                    );
-                    if (date != null) setState(() => reportDate = date);
-                  },
-                ),
-                TextField(
-                  controller: comment,
-                  maxLines: 2,
-                  decoration: InputDecoration(
-                    labelText: _labsText(
-                      context,
-                      'Report comment',
-                      'Kommentar zum Bericht',
-                    ),
-                  ),
-                ),
-                if (report.errors.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  for (final error in report.errors)
-                    Card(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      child: ListTile(
-                        leading: const Icon(Icons.error_outline),
-                        title: Text(error),
-                      ),
-                    ),
-                ],
-                if (report.warnings.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  for (final warning in report.warnings)
-                    ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.warning_amber_outlined),
-                      title: Text(warning),
-                    ),
-                ],
-                const Divider(height: 28),
-                Text(
-                  _labsText(
-                    context,
-                    '${candidates.length} measurements',
-                    '${candidates.length} Messwerte',
-                  ),
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                for (var index = 0; index < candidates.length; index++)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  '${candidates[index].reportedName}: '
-                                  '${candidates[index].value} ${candidates[index].unit}',
-                                  style: Theme.of(context).textTheme.titleSmall,
-                                ),
-                              ),
-                              Chip(
-                                avatar: Icon(
-                                  candidates[index].confidence >= 0.85
-                                      ? Icons.check
-                                      : Icons.priority_high,
-                                  size: 15,
-                                ),
-                                label: Text(
-                                  '${(candidates[index].confidence * 100).round()}%',
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: _labsText(
-                                  context,
-                                  'Review and edit row',
-                                  'Zeile prüfen und bearbeiten',
-                                ),
-                                onPressed: () async {
-                                  final original = candidates[index];
-                                  final edited = await _editParsedMeasurement(
-                                    context,
-                                    original,
-                                  );
-                                  if (edited == null) return;
-                                  final currentIndex = candidates.indexOf(
-                                    original,
-                                  );
-                                  if (currentIndex >= 0) {
-                                    setState(
-                                      () => candidates[currentIndex] = edited,
-                                    );
-                                  }
-                                },
-                                icon: const Icon(Icons.edit_outlined),
-                              ),
-                              IconButton(
-                                tooltip: _labsText(
-                                  context,
-                                  'Exclude row',
-                                  'Zeile ausschließen',
-                                ),
-                                onPressed: () =>
-                                    setState(() => candidates.removeAt(index)),
-                                icon: const Icon(Icons.close),
-                              ),
-                            ],
-                          ),
-                          DropdownButtonFormField<String>(
-                            key: ValueKey(
-                              'mapping-$index-${candidates[index].biomarkerId}',
-                            ),
-                            initialValue:
-                                candidates[index].biomarkerId ?? temporary,
-                            isExpanded: true,
-                            decoration: InputDecoration(
-                              labelText: _labsText(
-                                context,
-                                'Map to biomarker',
-                                'Biomarker zuordnen',
-                              ),
-                            ),
-                            items: [
-                              DropdownMenuItem(
-                                value: temporary,
-                                child: Text(
-                                  _labsText(
-                                    context,
-                                    'Create temporary biomarker',
-                                    'Temporären Biomarker erstellen',
-                                  ),
-                                ),
-                              ),
-                              for (final biomarker in controller.biomarkers)
-                                DropdownMenuItem(
-                                  value: biomarker.id,
-                                  child: Text(
-                                    biomarker.displayName,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
-                            onChanged: (value) => setState(() {
-                              candidates[index] = candidates[index].copyWith(
-                                biomarkerId: value == temporary ? null : value,
-                                clearMapping: value == temporary,
-                              );
-                            }),
-                          ),
-                          if (candidates[index].rowText?.isNotEmpty == true)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                '${_labsText(context, 'Page', 'Seite')} ${candidates[index].page ?? '?'} · '
-                                '${candidates[index].rowText}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(_labsText(context, 'Discard', 'Verwerfen')),
-            ),
-            FilledButton.icon(
-              onPressed: report.errors.isNotEmpty || candidates.isEmpty
-                  ? null
-                  : () => Navigator.pop(dialogContext, true),
-              icon: const Icon(Icons.save_outlined),
-              label: Text(
-                _labsText(
-                  context,
-                  'Save PDF + results',
-                  'PDF und Ergebnisse speichern',
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (approved == true && context.mounted) {
-      try {
-        final result = await controller.saveReviewedLabReport(
-          report: report,
-          measurements: candidates,
-          reportDate: reportDate,
-          reportComment: comment.text,
-        );
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                result.cloudWarning ??
-                    _labsText(
-                      context,
-                      'Saved ${candidates.length} measurements from ${report.fileName}.',
-                      '${candidates.length} Messwerte aus ${report.fileName} gespeichert.',
-                    ),
-              ),
-            ),
-          );
-        }
-      } on Object catch (error) {
-        if (context.mounted) await showAppError(context, error);
-      }
-    }
-    comment.dispose();
-  }
-
-  Future<ParsedMeasurementCandidate?> _editParsedMeasurement(
-    BuildContext context,
-    ParsedMeasurementCandidate candidate,
-  ) async {
-    final name = TextEditingController(text: candidate.reportedName);
-    final value = TextEditingController(text: candidate.value.toString());
-    final unit = TextEditingController(text: candidate.unit);
-    final refLow = TextEditingController(
-      text: candidate.refLow?.toString() ?? '',
-    );
-    final refHigh = TextEditingController(
-      text: candidate.refHigh?.toString() ?? '',
-    );
-    final page = TextEditingController(text: candidate.page?.toString() ?? '');
-    final notes = TextEditingController(text: candidate.notes);
-    String? validationError;
-
-    double? parseNumber(String text) =>
-        double.tryParse(text.trim().replaceAll(',', '.'));
-
-    try {
-      return await showDialog<ParsedMeasurementCandidate>(
-        context: context,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: Text(
-              _labsText(context, 'Review measurement', 'Messwert prüfen'),
-            ),
-            content: SizedBox(
-              width: 560,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: name,
-                      decoration: InputDecoration(
-                        labelText: _labsText(
-                          context,
-                          'Reported biomarker name *',
-                          'Angegebener Biomarkername *',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: value,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              signed: true,
-                              decimal: true,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: _labsText(
-                                context,
-                                'Value *',
-                                'Wert *',
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: unit,
-                            decoration: InputDecoration(
-                              labelText: _labsText(
-                                context,
-                                'Reported unit *',
-                                'Angegebene Einheit *',
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: refLow,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              signed: true,
-                              decimal: true,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: _labsText(
-                                context,
-                                'Reference low',
-                                'Referenzwert unten',
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: refHigh,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              signed: true,
-                              decimal: true,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: _labsText(
-                                context,
-                                'Reference high',
-                                'Referenzwert oben',
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        SizedBox(
-                          width: 100,
-                          child: TextField(
-                            controller: page,
-                            keyboardType: TextInputType.number,
-                            decoration: InputDecoration(
-                              labelText: _labsText(
-                                context,
-                                'PDF page',
-                                'PDF-Seite',
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: notes,
-                      maxLines: 2,
-                      decoration: InputDecoration(
-                        labelText: _labsText(context, 'Notes', 'Notizen'),
-                      ),
-                    ),
-                    if (candidate.rowText?.trim().isNotEmpty == true) ...[
-                      const SizedBox(height: 12),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          _labsText(
-                            context,
-                            'Source row (read-only)',
-                            'Quellzeile (schreibgeschützt)',
-                          ),
-                          style: Theme.of(context).textTheme.labelLarge,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: SelectableText(candidate.rowText!),
-                      ),
-                    ],
-                    if (validationError != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        validationError!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(_labsText(context, 'Cancel', 'Abbrechen')),
-              ),
-              FilledButton(
-                onPressed: () {
-                  final parsedValue = parseNumber(value.text);
-                  final parsedLow = refLow.text.trim().isEmpty
-                      ? null
-                      : parseNumber(refLow.text);
-                  final parsedHigh = refHigh.text.trim().isEmpty
-                      ? null
-                      : parseNumber(refHigh.text);
-                  final parsedPage = page.text.trim().isEmpty
-                      ? null
-                      : int.tryParse(page.text.trim());
-                  String? error;
-                  if (name.text.trim().isEmpty) {
-                    error = _labsText(
-                      context,
-                      'Enter the biomarker name.',
-                      'Gib den Biomarkernamen ein.',
-                    );
-                  } else if (parsedValue == null || !parsedValue.isFinite) {
-                    error = _labsText(
-                      context,
-                      'Enter a valid finite measurement value.',
-                      'Gib einen gültigen endlichen Messwert ein.',
-                    );
-                  } else if (unit.text.trim().isEmpty) {
-                    error = _labsText(
-                      context,
-                      'Enter the unit exactly as reported.',
-                      'Gib die Einheit genau wie im Bericht an.',
-                    );
-                  } else if (refLow.text.trim().isNotEmpty &&
-                      (parsedLow == null || !parsedLow.isFinite)) {
-                    error = _labsText(
-                      context,
-                      'Enter a valid lower reference bound or leave it blank.',
-                      'Gib einen gültigen unteren Referenzwert ein oder lasse das Feld leer.',
-                    );
-                  } else if (refHigh.text.trim().isNotEmpty &&
-                      (parsedHigh == null || !parsedHigh.isFinite)) {
-                    error = _labsText(
-                      context,
-                      'Enter a valid upper reference bound or leave it blank.',
-                      'Gib einen gültigen oberen Referenzwert ein oder lasse das Feld leer.',
-                    );
-                  } else if (parsedLow != null &&
-                      parsedHigh != null &&
-                      parsedLow > parsedHigh) {
-                    error = _labsText(
-                      context,
-                      'The lower reference bound cannot exceed the upper bound.',
-                      'Der untere Referenzwert darf nicht über dem oberen liegen.',
-                    );
-                  } else if (page.text.trim().isNotEmpty &&
-                      (parsedPage == null || parsedPage < 1)) {
-                    error = _labsText(
-                      context,
-                      'Enter a PDF page of 1 or higher, or leave it blank.',
-                      'Gib eine PDF-Seite ab 1 ein oder lasse das Feld leer.',
-                    );
-                  }
-                  if (error != null) {
-                    setState(() => validationError = error);
-                    return;
-                  }
-                  Navigator.pop(
-                    dialogContext,
-                    candidate.copyWith(
-                      reportedName: name.text.trim(),
-                      value: parsedValue!,
-                      unit: unit.text.trim(),
-                      refLow: parsedLow,
-                      clearRefLow: parsedLow == null,
-                      refHigh: parsedHigh,
-                      clearRefHigh: parsedHigh == null,
-                      page: parsedPage,
-                      clearPage: parsedPage == null,
-                      notes: notes.text.trim(),
-                    ),
-                  );
-                },
-                child: Text(_labsText(context, 'Apply', 'Übernehmen')),
-              ),
-            ],
-          ),
-        ),
-      );
-    } finally {
-      name.dispose();
-      value.dispose();
-      unit.dispose();
-      refLow.dispose();
-      refHigh.dispose();
-      page.dispose();
-      notes.dispose();
-    }
   }
 
   Future<void> _showDocument(
@@ -1658,6 +1094,596 @@ Map<String, BiomarkerStatus> _biomarkerStatuses({
         now: now,
       ),
   };
+}
+
+/// Lab-report import, shared by the Labs home and the biomarker workspace.
+///
+/// Top-level rather than a method so both entry points call the same code.
+/// The import is the bulk path — one PDF carries a whole panel — so it needs
+/// to be reachable without first knowing it lives inside the workspace.
+
+Future<void> _importLabPdf(
+  BuildContext context,
+  AppController controller,
+) async {
+  try {
+    final selection = await FilePicker.platform.pickFiles(
+      dialogTitle: _labsText(
+        context,
+        'Choose a lab report PDF',
+        'Laborbericht als PDF auswählen',
+      ),
+      type: FileType.custom,
+      allowedExtensions: const ['pdf'],
+      withData: true,
+    );
+    if (selection == null || selection.files.isEmpty) return;
+    final selected = selection.files.single;
+    final bytes =
+        selected.bytes ??
+        (selected.path == null
+            ? null
+            : await File(selected.path!).readAsBytes());
+    if (!context.mounted) return;
+    if (bytes == null) {
+      throw StateError(
+        _labsText(
+          context,
+          'The selected PDF could not be read.',
+          'Die ausgewählte PDF konnte nicht gelesen werden.',
+        ),
+      );
+    }
+    final report = await controller.parseLabPdf(
+      fileName: selected.name,
+      bytes: bytes,
+    );
+    if (!context.mounted) return;
+    await _reviewParsedReport(context, controller, report);
+  } on Object catch (error) {
+    if (context.mounted) await showAppError(context, error);
+  }
+}
+
+Future<void> _reviewParsedReport(
+  BuildContext context,
+  AppController controller,
+  ParsedLabReport report,
+) async {
+  final candidates = [...report.measurements];
+  var reportDate = report.reportDate ?? DateTime.now();
+  final comment = TextEditingController();
+  const temporary = '__temporary__';
+  final approved = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: Text(
+          _labsText(
+            context,
+            'Review extracted lab report',
+            'Extrahierten Laborbericht prüfen',
+          ),
+        ),
+        content: SizedBox(
+          width: 720,
+          height: MediaQuery.sizeOf(context).height * 0.68,
+          child: ListView(
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.picture_as_pdf_outlined),
+                title: Text(report.fileName),
+                subtitle: Text(
+                  '${report.provider.name} · ${report.model} · '
+                  '${(report.pdfBytes.length / 1024).toStringAsFixed(0)} KB',
+                ),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  _labsText(
+                    context,
+                    'Sample / report date *',
+                    'Proben- / Berichtsdatum *',
+                  ),
+                ),
+                subtitle: Text(DateFormat('dd.MM.yyyy').format(reportDate)),
+                trailing: const Icon(Icons.calendar_today_outlined),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    firstDate: DateTime(1950),
+                    lastDate: DateTime.now(),
+                    initialDate: reportDate.isAfter(DateTime.now())
+                        ? DateTime.now()
+                        : reportDate,
+                  );
+                  if (date != null) setState(() => reportDate = date);
+                },
+              ),
+              TextField(
+                controller: comment,
+                maxLines: 2,
+                decoration: InputDecoration(
+                  labelText: _labsText(
+                    context,
+                    'Report comment',
+                    'Kommentar zum Bericht',
+                  ),
+                ),
+              ),
+              if (report.errors.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                for (final error in report.errors)
+                  Card(
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    child: ListTile(
+                      leading: const Icon(Icons.error_outline),
+                      title: Text(error),
+                    ),
+                  ),
+              ],
+              if (report.warnings.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                for (final warning in report.warnings)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.warning_amber_outlined),
+                    title: Text(warning),
+                  ),
+              ],
+              const Divider(height: 28),
+              Text(
+                _labsText(
+                  context,
+                  '${candidates.length} measurements',
+                  '${candidates.length} Messwerte',
+                ),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              for (var index = 0; index < candidates.length; index++)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${candidates[index].reportedName}: '
+                                '${candidates[index].value} ${candidates[index].unit}',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                            ),
+                            Chip(
+                              avatar: Icon(
+                                candidates[index].confidence >= 0.85
+                                    ? Icons.check
+                                    : Icons.priority_high,
+                                size: 15,
+                              ),
+                              label: Text(
+                                '${(candidates[index].confidence * 100).round()}%',
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: _labsText(
+                                context,
+                                'Review and edit row',
+                                'Zeile prüfen und bearbeiten',
+                              ),
+                              onPressed: () async {
+                                final original = candidates[index];
+                                final edited = await _editParsedMeasurement(
+                                  context,
+                                  original,
+                                );
+                                if (edited == null) return;
+                                final currentIndex = candidates.indexOf(
+                                  original,
+                                );
+                                if (currentIndex >= 0) {
+                                  setState(
+                                    () => candidates[currentIndex] = edited,
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.edit_outlined),
+                            ),
+                            IconButton(
+                              tooltip: _labsText(
+                                context,
+                                'Exclude row',
+                                'Zeile ausschließen',
+                              ),
+                              onPressed: () =>
+                                  setState(() => candidates.removeAt(index)),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        DropdownButtonFormField<String>(
+                          key: ValueKey(
+                            'mapping-$index-${candidates[index].biomarkerId}',
+                          ),
+                          initialValue:
+                              candidates[index].biomarkerId ?? temporary,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: _labsText(
+                              context,
+                              'Map to biomarker',
+                              'Biomarker zuordnen',
+                            ),
+                          ),
+                          items: [
+                            DropdownMenuItem(
+                              value: temporary,
+                              child: Text(
+                                _labsText(
+                                  context,
+                                  'Create temporary biomarker',
+                                  'Temporären Biomarker erstellen',
+                                ),
+                              ),
+                            ),
+                            for (final biomarker in controller.biomarkers)
+                              DropdownMenuItem(
+                                value: biomarker.id,
+                                child: Text(
+                                  biomarker.displayName,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                          onChanged: (value) => setState(() {
+                            candidates[index] = candidates[index].copyWith(
+                              biomarkerId: value == temporary ? null : value,
+                              clearMapping: value == temporary,
+                            );
+                          }),
+                        ),
+                        if (candidates[index].rowText?.isNotEmpty == true)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              '${_labsText(context, 'Page', 'Seite')} ${candidates[index].page ?? '?'} · '
+                              '${candidates[index].rowText}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(_labsText(context, 'Discard', 'Verwerfen')),
+          ),
+          FilledButton.icon(
+            onPressed: report.errors.isNotEmpty || candidates.isEmpty
+                ? null
+                : () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.save_outlined),
+            label: Text(
+              _labsText(
+                context,
+                'Save PDF + results',
+                'PDF und Ergebnisse speichern',
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (approved == true && context.mounted) {
+    try {
+      final result = await controller.saveReviewedLabReport(
+        report: report,
+        measurements: candidates,
+        reportDate: reportDate,
+        reportComment: comment.text,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.cloudWarning ??
+                  _labsText(
+                    context,
+                    'Saved ${candidates.length} measurements from ${report.fileName}.',
+                    '${candidates.length} Messwerte aus ${report.fileName} gespeichert.',
+                  ),
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
+  }
+  comment.dispose();
+}
+
+Future<ParsedMeasurementCandidate?> _editParsedMeasurement(
+  BuildContext context,
+  ParsedMeasurementCandidate candidate,
+) async {
+  final name = TextEditingController(text: candidate.reportedName);
+  final value = TextEditingController(text: candidate.value.toString());
+  final unit = TextEditingController(text: candidate.unit);
+  final refLow = TextEditingController(
+    text: candidate.refLow?.toString() ?? '',
+  );
+  final refHigh = TextEditingController(
+    text: candidate.refHigh?.toString() ?? '',
+  );
+  final page = TextEditingController(text: candidate.page?.toString() ?? '');
+  final notes = TextEditingController(text: candidate.notes);
+  String? validationError;
+
+  double? parseNumber(String text) =>
+      double.tryParse(text.trim().replaceAll(',', '.'));
+
+  try {
+    return await showDialog<ParsedMeasurementCandidate>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(
+            _labsText(context, 'Review measurement', 'Messwert prüfen'),
+          ),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: name,
+                    decoration: InputDecoration(
+                      labelText: _labsText(
+                        context,
+                        'Reported biomarker name *',
+                        'Angegebener Biomarkername *',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: value,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            signed: true,
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: _labsText(context, 'Value *', 'Wert *'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: unit,
+                          decoration: InputDecoration(
+                            labelText: _labsText(
+                              context,
+                              'Reported unit *',
+                              'Angegebene Einheit *',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: refLow,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            signed: true,
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: _labsText(
+                              context,
+                              'Reference low',
+                              'Referenzwert unten',
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: refHigh,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            signed: true,
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: _labsText(
+                              context,
+                              'Reference high',
+                              'Referenzwert oben',
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 100,
+                        child: TextField(
+                          controller: page,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: _labsText(
+                              context,
+                              'PDF page',
+                              'PDF-Seite',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: notes,
+                    maxLines: 2,
+                    decoration: InputDecoration(
+                      labelText: _labsText(context, 'Notes', 'Notizen'),
+                    ),
+                  ),
+                  if (candidate.rowText?.trim().isNotEmpty == true) ...[
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _labsText(
+                          context,
+                          'Source row (read-only)',
+                          'Quellzeile (schreibgeschützt)',
+                        ),
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SelectableText(candidate.rowText!),
+                    ),
+                  ],
+                  if (validationError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      validationError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(_labsText(context, 'Cancel', 'Abbrechen')),
+            ),
+            FilledButton(
+              onPressed: () {
+                final parsedValue = parseNumber(value.text);
+                final parsedLow = refLow.text.trim().isEmpty
+                    ? null
+                    : parseNumber(refLow.text);
+                final parsedHigh = refHigh.text.trim().isEmpty
+                    ? null
+                    : parseNumber(refHigh.text);
+                final parsedPage = page.text.trim().isEmpty
+                    ? null
+                    : int.tryParse(page.text.trim());
+                String? error;
+                if (name.text.trim().isEmpty) {
+                  error = _labsText(
+                    context,
+                    'Enter the biomarker name.',
+                    'Gib den Biomarkernamen ein.',
+                  );
+                } else if (parsedValue == null || !parsedValue.isFinite) {
+                  error = _labsText(
+                    context,
+                    'Enter a valid finite measurement value.',
+                    'Gib einen gültigen endlichen Messwert ein.',
+                  );
+                } else if (unit.text.trim().isEmpty) {
+                  error = _labsText(
+                    context,
+                    'Enter the unit exactly as reported.',
+                    'Gib die Einheit genau wie im Bericht an.',
+                  );
+                } else if (refLow.text.trim().isNotEmpty &&
+                    (parsedLow == null || !parsedLow.isFinite)) {
+                  error = _labsText(
+                    context,
+                    'Enter a valid lower reference bound or leave it blank.',
+                    'Gib einen gültigen unteren Referenzwert ein oder lasse das Feld leer.',
+                  );
+                } else if (refHigh.text.trim().isNotEmpty &&
+                    (parsedHigh == null || !parsedHigh.isFinite)) {
+                  error = _labsText(
+                    context,
+                    'Enter a valid upper reference bound or leave it blank.',
+                    'Gib einen gültigen oberen Referenzwert ein oder lasse das Feld leer.',
+                  );
+                } else if (parsedLow != null &&
+                    parsedHigh != null &&
+                    parsedLow > parsedHigh) {
+                  error = _labsText(
+                    context,
+                    'The lower reference bound cannot exceed the upper bound.',
+                    'Der untere Referenzwert darf nicht über dem oberen liegen.',
+                  );
+                } else if (page.text.trim().isNotEmpty &&
+                    (parsedPage == null || parsedPage < 1)) {
+                  error = _labsText(
+                    context,
+                    'Enter a PDF page of 1 or higher, or leave it blank.',
+                    'Gib eine PDF-Seite ab 1 ein oder lasse das Feld leer.',
+                  );
+                }
+                if (error != null) {
+                  setState(() => validationError = error);
+                  return;
+                }
+                Navigator.pop(
+                  dialogContext,
+                  candidate.copyWith(
+                    reportedName: name.text.trim(),
+                    value: parsedValue!,
+                    unit: unit.text.trim(),
+                    refLow: parsedLow,
+                    clearRefLow: parsedLow == null,
+                    refHigh: parsedHigh,
+                    clearRefHigh: parsedHigh == null,
+                    page: parsedPage,
+                    clearPage: parsedPage == null,
+                    notes: notes.text.trim(),
+                  ),
+                );
+              },
+              child: Text(_labsText(context, 'Apply', 'Übernehmen')),
+            ),
+          ],
+        ),
+      ),
+    );
+  } finally {
+    name.dispose();
+    value.dispose();
+    unit.dispose();
+    refLow.dispose();
+    refHigh.dispose();
+    page.dispose();
+    notes.dispose();
+  }
 }
 
 class _BiomarkerQuickActionCard extends StatelessWidget {
