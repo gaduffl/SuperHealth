@@ -264,4 +264,42 @@ void main() {
       );
     });
   });
+
+  group('a stored zero is an absent price', () {
+    test('a zero counts as no price, so it is offered as a first price', () {
+      // A legacy import writes 0 where its source had no price. Treating that
+      // as a real price made a 169-marker catalog report itself fully priced
+      // and left every one of them unofferable.
+      final set = LabPriceService.parseResponse(
+        responseFor([
+          {
+            'biomarker_id': 'ferritin',
+            'price_eur': 21,
+            'currency': 'EUR',
+            'lab_name': '',
+            'quote': 'Ferritin 21,00 €',
+          },
+        ]),
+        catalog: [marker('ferritin', price: 0)],
+      );
+      expect(
+        set.needsReview.single.reviewReasons,
+        contains(LabPriceReviewReason.firstPrice),
+      );
+      // And it must not be compared against as if it were a real figure: every
+      // price is an infinite increase over zero.
+      expect(
+        set.needsReview.single.reviewReasons,
+        isNot(contains(LabPriceReviewReason.largeChange)),
+      );
+    });
+
+    test('hasLabPrice draws the line in one place', () {
+      expect(hasLabPrice(null), isFalse);
+      expect(hasLabPrice(0), isFalse);
+      // A lab test that costs nothing does not exist.
+      expect(hasLabPrice(-1), isFalse);
+      expect(hasLabPrice(0.01), isTrue);
+    });
+  });
 }

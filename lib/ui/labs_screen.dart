@@ -2631,7 +2631,7 @@ class _PlanTiers extends StatelessWidget {
                     item.evidenceClass.name,
                     item.rationale,
                     if (item.preparation.isNotEmpty) item.preparation,
-                    item.priceEur == null
+                    !hasLabPrice(item.priceEur)
                         ? _labsText(context, 'Price unknown', 'Preis unbekannt')
                         : '${item.priceEur!.toStringAsFixed(2)} €',
                   ].join(' · '),
@@ -2754,7 +2754,7 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
         'Never measured' =>
           statusByBiomarker[biomarker.id]!.kind ==
               BiomarkerStatusKind.neverMeasured,
-        'Missing price' => biomarker.priceEur == null,
+        'Missing price' => !biomarker.hasPrice,
         'Conversion issue' => widget.controller.measurements.any(
           (item) =>
               item.biomarkerId == biomarker.id &&
@@ -2978,7 +2978,7 @@ class _BiomarkerTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(
-            biomarker.priceEur == null
+            !biomarker.hasPrice
                 ? _labsText(context, 'No price', 'Kein Preis')
                 : '${biomarker.priceEur!.toStringAsFixed(2)} €',
           ),

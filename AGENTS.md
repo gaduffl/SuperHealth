@@ -283,6 +283,22 @@ symptoms — because pricing does not need them. Before adding a flow, ask what
 the smallest input that answers the question is, rather than reaching for the
 health context because it already exists.
 
+**A zero price is an absent price.** The legacy import writes 0 where its source
+had no figure, so `priceEur == null` is not the test for "unpriced" — use
+`hasLabPrice()` / `Biomarker.hasPrice`. Getting this wrong made a 169-marker
+catalog report itself fully priced, hid every one of them from the price updater,
+and made `LabPlan.knownTotal` total a tier as if those tests were free.
+
+**A button whose enabled state reads a `TextEditingController` needs
+`onChanged`.** Typing does not rebuild the widget on its own, so the button
+reads stale text and only comes to life when some unrelated `setState` fires —
+which is what happened to "Fetch page" after a paste.
+
+**Batch anything sized by the catalog.** ~170 biomarkers of structured output
+overruns the model's output limit, truncating the JSON and losing the entire
+run. `LabPriceService.catalogBatchSize` splits the request; a failed batch is
+named in the result rather than discarding the batches that worked.
+
 **A model proposal that spends money is never pre-ticked without a source.**
 `LabPriceService` requires a verbatim `quote` from the supplied text; a price
 the model asserted rather than read goes to review, as does a foreign currency,
