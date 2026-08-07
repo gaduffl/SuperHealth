@@ -216,12 +216,46 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Quick actions'), findsOneWidget);
+    expect(find.text('Import lab PDF'), findsOneWidget);
     expect(find.text('Add measurement'), findsOneWidget);
     expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('Biomarker lists'), findsOneWidget);
     expect(find.text('Due biomarkers'), findsOneWidget);
     expect(find.text('Latest values'), findsOneWidget);
     expect(find.text('Lab planning and biomarker management'), findsOneWidget);
+  });
+
+  testWidgets('the lab PDF import is reachable from the biomarker home', (
+    tester,
+  ) async {
+    // It used to live only inside the workspace, behind a navigation push and
+    // rendered as a bare icon whose tooltip a touch device never shows — so it
+    // read as missing. This asserts the labelled shortcut, not just the code.
+    final controller = _seededController();
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(900, 3200);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(_healthApp(controller, navigation));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Biomarkers'));
+    await tester.pumpAndSettle();
+
+    // Present on the home itself, before anything else is opened.
+    expect(find.text('Lab planning and biomarker management'), findsOneWidget);
+    final card = find.ancestor(
+      of: find.text('Import lab PDF'),
+      matching: find.byType(InkWell),
+    );
+    expect(card, findsOneWidget);
+    // Enabled, and it must not depend on the catalog: importing a report is
+    // how an empty catalog gets filled.
+    expect(tester.widget<InkWell>(card).onTap, isNotNull);
   });
 
   testWidgets(
