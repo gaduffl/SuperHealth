@@ -292,6 +292,13 @@ in the same PR. A stale entry is worse than a missing one, because it gets
 trusted. Record the constraint and its consequence, not a changelog of what you
 did.
 
+**`TrackingScreen` does not come up under `flutter_test`.** `pumpWidget` on it
+hangs before the first frame completes — reproduced with both `pumpAndSettle`
+and bounded `pump`, and unrelated to any recent change. `DashboardScreen` and
+`HealthScreen` pump fine, so this is specific to that screen and not yet
+diagnosed. Until it is, test catalog logic through a top-level predicate
+(`catalogMatchesFilter`) rather than by standing the screen up.
+
 ## Not audited
 
 A data-model audit in August 2026 covered units, ingredient identity, the

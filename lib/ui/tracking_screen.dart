@@ -25,6 +25,26 @@ import 'dialogs.dart';
 ///
 /// The day-by-day dosing workflow lives on Today, so this screen owns
 /// everything about the products themselves.
+/// Whether a product belongs in the catalog under the selected filter.
+///
+/// "Scheduled" asks a different question from the other three, which sort by
+/// whether the product itself is paused: a paused product with a schedule is
+/// still scheduled. It counts the same schedules the row displays, so a card
+/// reading "2 schedules" is always included — a filter that disagreed with the
+/// number printed beside it would read as a bug.
+///
+/// Top-level so the choice can be tested without standing the screen up.
+bool catalogMatchesFilter({
+  required String filter,
+  required bool productIsActive,
+  required bool hasSchedule,
+}) => switch (filter) {
+  'all' => true,
+  'active' => productIsActive,
+  'scheduled' => hasSchedule,
+  _ => !productIsActive,
+};
+
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({super.key});
 
@@ -136,6 +156,11 @@ class _TrackingScreenState extends State<TrackingScreen>
   Widget _catalog(BuildContext context, AppController controller) {
     final strings = AppLocalizations.of(context);
     final query = _search.text.trim().toLowerCase();
+    // Built once rather than scanned per product, so a large catalog does not
+    // walk every schedule for every row.
+    final scheduledSupplementIds = {
+      for (final schedule in controller.schedules) schedule.supplementId,
+    };
     final products = controller.supplements.where((item) {
       final matchesQuery =
           query.isEmpty ||
@@ -145,10 +170,12 @@ class _TrackingScreenState extends State<TrackingScreen>
             (ingredient) =>
                 '${ingredient['name']}'.toLowerCase().contains(query),
           );
-      final matchesState =
-          _catalogFilter == 'all' ||
-          (_catalogFilter == 'active' ? item.active : !item.active);
-      return matchesQuery && matchesState;
+      return matchesQuery &&
+          catalogMatchesFilter(
+            filter: _catalogFilter,
+            productIsActive: item.active,
+            hasSchedule: scheduledSupplementIds.contains(item.id),
+          );
     }).toList();
     return RefreshIndicator(
       onRefresh: controller.refreshActiveData,
@@ -186,6 +213,10 @@ class _TrackingScreenState extends State<TrackingScreen>
                       ButtonSegment(
                         value: 'inactive',
                         label: Text(strings.paused),
+                      ),
+                      ButtonSegment(
+                        value: 'scheduled',
+                        label: Text(strings.scheduled),
                       ),
                       ButtonSegment(value: 'all', label: Text(strings.all)),
                     ],
