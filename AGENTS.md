@@ -181,6 +181,28 @@ screen that owns them. When restructuring a screen, check what the old layout
 surfaced that the new one buries, and assert the shortcut in a widget test —
 code that still exists is not the same as a feature the owner can reach.
 
+**A screen that says "today" must re-derive the day, not capture it.** The app
+is left open and backgrounded for days, so a `DateTime.now()` stored in a
+`State` field at launch is stale by morning — `DashboardScreen` showed its launch
+day under a header printing the real date, and checked doses off against the
+wrong one. Re-sync on build, on `AppLifecycleState.resumed`, and on a timer to
+the next midnight; the widget takes an injectable `clock` so a test can turn the
+calendar over without waiting.
+
+**An Android notification channel is immutable after its first creation.**
+Importance, sound and vibration are frozen the moment the channel is created and
+every later change is ignored for the life of the install. Correcting any of them
+means a **new channel id** (`..._v2`) plus deleting the old one, or the fix
+reaches only fresh installs. Create channels explicitly at initialize rather than
+letting the first notification create them implicitly.
+
+**A dose reminder needs an exact alarm.** `inexactAllowWhileIdle` is batched by
+Doze and routinely lands hours late, which is indistinguishable from a reminder
+that never came. Schedule exact when Android grants the right (`USE_EXACT_ALARM`
+on 14+, `SCHEDULE_EXACT_ALARM` on 12-13) and fall back to inexact when it is
+withheld — never treat "unknown" as granted, because scheduling an exact alarm
+without the right throws and one throw aborts the rest of the batch.
+
 **A flow used from two screens is a top-level function, not a method.** Private
 top-level functions in the screen file (`_importLabPdf`) let a second entry point
 call exactly the same code. Copying the flow into the second screen is how two

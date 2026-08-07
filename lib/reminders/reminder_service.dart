@@ -13,7 +13,7 @@ import 'reminder_planner.dart';
 
 enum ReminderPermissionStatus { unknown, granted, denied, unsupported }
 
-/// Android-only adapter around OS-scheduled, inexact local notifications.
+/// Android-only adapter around OS-scheduled local notifications.
 ///
 /// It intentionally does not use a background worker. Open-ended schedules
 /// repeat weekly; bounded schedules are scheduled as one-shot occurrences so
@@ -25,15 +25,50 @@ class ReminderService {
   }) : _notifications = notifications ?? FlutterLocalNotificationsPlugin(),
        _planner = planner ?? ReminderPlanner();
 
-  static const _channelId = 'supplement_dose_reminders';
+  /// The `v2` suffix is load-bearing. Android freezes a channel's importance,
+  /// sound and vibration the moment it is first created and ignores every later
+  /// change, for the life of the install. The original channel was created at
+  /// default importance, which on Android means no heads-up banner and, on
+  /// several OEM skins, no sound — so raising the importance in code could not
+  /// reach any device that had already run the app. A new id is the only way to
+  /// deliver corrected settings without asking the owner to reinstall.
+  static const _channelId = 'supplement_dose_reminders_v2';
+  static const _legacyChannelId = 'supplement_dose_reminders';
+  static const _channelName = 'Supplement dose reminders';
+  static const _channelDescription = 'Reminders for scheduled supplement doses';
   static const _managedIdsPreference = 'supplement_reminder_notification_ids';
   static const _lowStockLatchPreference = 'low_stock_alert_latches';
+
+  /// A dose reminder is a timed alert the owner asked for, so it is delivered
+  /// at high importance: heads-up, with sound. A silent entry in the shade is
+  /// indistinguishable from no reminder at all.
+  static const _details = NotificationDetails(
+    android: AndroidNotificationDetails(
+      _channelId,
+      _channelName,
+      channelDescription: _channelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      category: AndroidNotificationCategory.reminder,
+    ),
+  );
 
   final FlutterLocalNotificationsPlugin _notifications;
   final ReminderPlanner _planner;
   bool _initialized = false;
 
+  /// Whether Android is currently letting this app post exact alarms.
+  ///
+  /// Null until the first [initialize]. Surfaced so settings can explain a
+  /// reminder that arrives late rather than leaving it a mystery.
+  bool? exactAlarmsAllowed;
+
   bool get isSupported => !kIsWeb && Platform.isAndroid;
+
+  AndroidFlutterLocalNotificationsPlugin? get _android => _notifications
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >();
 
   Future<ReminderPermissionStatus> initialize() async {
     if (!isSupported) return ReminderPermissionStatus.unsupported;
@@ -46,19 +81,76 @@ class ReminderService {
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         ),
       );
+      final android = _android;
+      // Created up front rather than implicitly on the first notification, so
+      // the channel exists with these settings even before anything is due.
+      await android?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _channelId,
+          _channelName,
+          description: _channelDescription,
+          importance: Importance.high,
+        ),
+      );
+      // The old channel would otherwise sit in Android's notification settings
+      // forever, showing the owner a control that no longer routes anything.
+      await android?.deleteNotificationChannel(channelId: _legacyChannelId);
       _initialized = true;
     }
+    exactAlarmsAllowed = await _android?.canScheduleExactNotifications();
     return permissionStatus();
   }
+
+  /// Asks Android for the exact-alarm right, which it grants through a settings
+  /// screen rather than a dialog. Without it a reminder is only a hint: Doze
+  /// batches inexact alarms and can hold one for hours past its time.
+  Future<bool> requestExactAlarms() async {
+    if (!isSupported) return false;
+    await initialize();
+    await _android?.requestExactAlarmsPermission();
+    exactAlarmsAllowed = await _android?.canScheduleExactNotifications();
+    return exactAlarmsAllowed ?? false;
+  }
+
+  /// Posts a notification immediately so delivery can be checked end to end.
+  ///
+  /// Scheduling is the part that silently fails — permissions, channels, OEM
+  /// battery managers — and none of it is visible from inside the app. This
+  /// separates "nothing was scheduled" from "nothing gets through".
+  Future<bool> sendTestNotification() async {
+    if (!isSupported) return false;
+    await initialize();
+    if (await permissionStatus() != ReminderPermissionStatus.granted) {
+      return false;
+    }
+    await _notifications.show(
+      id: _testNotificationId,
+      title: 'SuperHealth reminders are working',
+      body: 'This is a test notification. Dose reminders arrive the same way.',
+      notificationDetails: _details,
+    );
+    return true;
+  }
+
+  /// The Android scheduling mode a reminder is registered under.
+  ///
+  /// Unknown means unknown, not allowed: scheduling an exact alarm the OS has
+  /// not granted throws, and losing every reminder is worse than a late one.
+  @visibleForTesting
+  static AndroidScheduleMode scheduleModeFor({required bool? exactAllowed}) =>
+      exactAllowed ?? false
+      ? AndroidScheduleMode.exactAllowWhileIdle
+      : AndroidScheduleMode.inexactAllowWhileIdle;
+
+  /// Planner ids are SHA-256 derived across the whole 31-bit space, so this is
+  /// low-collision rather than reserved. A collision would only replace one
+  /// pending reminder, and the next reconcile reschedules every one of them.
+  static const _testNotificationId = 1;
 
   Future<ReminderPermissionStatus> permissionStatus() async {
     if (!isSupported) return ReminderPermissionStatus.unsupported;
     if (!_initialized) await initialize();
-    final android = _notifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    final enabled = await android?.areNotificationsEnabled();
+    final enabled = await _android?.areNotificationsEnabled();
     return enabled == true
         ? ReminderPermissionStatus.granted
         : ReminderPermissionStatus.denied;
@@ -67,11 +159,7 @@ class ReminderService {
   Future<ReminderPermissionStatus> requestPermission() async {
     if (!isSupported) return ReminderPermissionStatus.unsupported;
     await initialize();
-    final android = _notifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    await android?.requestNotificationsPermission();
+    await _android?.requestNotificationsPermission();
     return permissionStatus();
   }
 
@@ -131,15 +219,7 @@ class ReminderService {
         id: alert.notificationId,
         title: alert.title,
         body: alert.body,
-        notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails(
-            _channelId,
-            'Supplement dose reminders',
-            channelDescription: 'Reminders for scheduled supplement doses',
-            importance: Importance.defaultImportance,
-            priority: Priority.defaultPriority,
-          ),
-        ),
+        notificationDetails: _details,
       );
     }
     await preferences.setString(
@@ -163,16 +243,13 @@ class ReminderService {
       title: reminder.title,
       body: reminder.body,
       scheduledDate: scheduledAt,
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          'Supplement dose reminders',
-          channelDescription: 'Reminders for scheduled supplement doses',
-          importance: Importance.defaultImportance,
-          priority: Priority.defaultPriority,
-        ),
-      ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      notificationDetails: _details,
+      // A dose reminder names a time, so it has to arrive at that time. Inexact
+      // alarms are batched by Doze and routinely land hours late, which reads
+      // as a reminder that never came. Inexact remains the fallback for a
+      // device that withholds the exact-alarm right, because a late reminder
+      // still beats none.
+      androidScheduleMode: scheduleModeFor(exactAllowed: exactAlarmsAllowed),
       matchDateTimeComponents: reminder.repeatsWeekly
           ? DateTimeComponents.dayOfWeekAndTime
           : null,
