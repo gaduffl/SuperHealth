@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -21,20 +23,88 @@ import 'settings_screen.dart';
 /// the screen that owns the number — then continues with the day-by-day dosing
 /// workflow carried over from Supplement Manager.
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({super.key, this.clock = DateTime.now});
+
+  /// The source of "now", injected so a test can turn the calendar over
+  /// without waiting for a real midnight.
+  final DateTime Function() clock;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   static const _insights = SupplementInsights();
 
   /// Anchors the "today's doses" tile, which sits on the screen it links to and
   /// so has to scroll rather than navigate.
   final _dayPlanKey = GlobalKey();
 
-  var _selectedDay = DateTime.now();
+  late DateTime _selectedDay;
+
+  /// The calendar day this screen last synchronised to.
+  ///
+  /// The app is not restarted daily — it is left open, or backgrounded for
+  /// days — and a `_selectedDay` captured at launch would still be showing that
+  /// launch day a week later, under a header rendering the real date. Reviewing
+  /// a past day stays put while the owner works, but only until the date turns
+  /// over; a screen called Today that opens on yesterday is worse than one that
+  /// forgets a selection.
+  late DateTime _dayAnchor;
+
+  Timer? _rolloverTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDay = widget.clock();
+    _dayAnchor = _selectedDay;
+    WidgetsBinding.instance.addObserver(this);
+    _scheduleRollover();
+  }
+
+  @override
+  void dispose() {
+    _rolloverTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Resuming is the common way a stale day becomes visible: the app was
+    // backgrounded yesterday and reopened this morning.
+    if (state == AppLifecycleState.resumed && mounted) {
+      setState(_syncToCurrentDay);
+      _scheduleRollover();
+    }
+  }
+
+  /// Moves the selection to today when the date has turned over since it was
+  /// made. Safe to call during build: it only assigns when the day changed.
+  void _syncToCurrentDay() {
+    final now = widget.clock();
+    if (_sameDay(_dayAnchor, now)) return;
+    _dayAnchor = now;
+    _selectedDay = now;
+  }
+
+  /// Wakes the screen at the next midnight, for the app left open and visible
+  /// across it — nothing else would rebuild, so the date would silently rot.
+  void _scheduleRollover() {
+    _rolloverTimer?.cancel();
+    final now = widget.clock();
+    final nextDay = DateTime(now.year, now.month, now.day + 1);
+    _rolloverTimer = Timer(
+      nextDay.difference(now) + const Duration(seconds: 1),
+      () {
+        if (!mounted) return;
+        setState(_syncToCurrentDay);
+        _scheduleRollover();
+      },
+    );
+  }
 
   Future<void> _scrollToDayPlan() async {
     final target = _dayPlanKey.currentContext;
@@ -53,7 +123,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final navigation = context.read<ShellNavigation>();
     final strings = AppLocalizations.of(context);
     final profile = controller.activeProfile!;
-    final now = DateTime.now();
+    // Before anything reads it: opening the app after midnight rebuilds here
+    // first, so this is what makes "Today" mean today rather than launch day.
+    _syncToCurrentDay();
+    final now = widget.clock();
     final viewingToday = _sameDay(_selectedDay, now);
 
     final doses = _insights.dosesForDay(

@@ -26,6 +26,7 @@ import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
 import 'package:super_health/ui/charts.dart';
 import 'package:super_health/ui/dashboard_screen.dart';
+import 'package:super_health/ui/design.dart';
 import 'package:super_health/ui/health_screen.dart';
 import 'package:super_health/workspace/safe_workspace_service.dart';
 
@@ -223,6 +224,69 @@ void main() {
     expect(find.text('Due biomarkers'), findsOneWidget);
     expect(find.text('Latest values'), findsOneWidget);
     expect(find.text('Lab planning and biomarker management'), findsOneWidget);
+  });
+
+  testWidgets('reopening after midnight moves Today onto the new day', (
+    tester,
+  ) async {
+    // The app is not restarted daily. Left running overnight, the day captured
+    // at launch used to survive into the next day, so a screen called Today sat
+    // on yesterday underneath a header printing the real date.
+    final controller = _seededController();
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(900, 3200);
+    addTearDown(tester.view.reset);
+    var now = DateTime(2026, 8, 6, 21, 30);
+    await tester.pumpWidget(
+      _todayAppWithClock(controller, navigation, () => now),
+    );
+    await tester.pumpAndSettle();
+    expect(_selectedDayOf(tester), DateTime(2026, 8, 6, 21, 30));
+
+    // Backgrounded overnight, reopened in the morning.
+    now = DateTime(2026, 8, 7, 7, 15);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(_selectedDayOf(tester).day, 7);
+  });
+
+  testWidgets('a day picked for review survives a rebuild on the same day', (
+    tester,
+  ) async {
+    // The rollover must not fight the owner: backfilling yesterday's doses
+    // means sitting on yesterday while the app rebuilds around you.
+    final controller = _seededController();
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(900, 3200);
+    addTearDown(tester.view.reset);
+    final now = DateTime(2026, 8, 7, 9, 0);
+    await tester.pumpWidget(
+      _todayAppWithClock(controller, navigation, () => now),
+    );
+    await tester.pumpAndSettle();
+
+    final strip = tester.widget<DayStrip>(find.byType(DayStrip));
+    strip.onSelected(DateTime(2026, 8, 5));
+    await tester.pumpAndSettle();
+    expect(_selectedDayOf(tester).day, 5);
+
+    // A resume that does not cross midnight leaves the choice alone.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(_selectedDayOf(tester).day, 5);
   });
 
   testWidgets('the lab PDF import is reachable from the biomarker home', (
@@ -451,6 +515,33 @@ Widget _app(AppController controller, ShellNavigation navigation) =>
         home: Scaffold(body: DashboardScreen()),
       ),
     );
+
+/// The day the Today screen is currently showing.
+DateTime _selectedDayOf(WidgetTester tester) =>
+    tester.widget<DayStrip>(find.byType(DayStrip)).selectedDay;
+
+/// Same shell, but with the calendar under the test's control.
+Widget _todayAppWithClock(
+  AppController controller,
+  ShellNavigation navigation,
+  DateTime Function() clock,
+) => MultiProvider(
+  providers: [
+    ChangeNotifierProvider.value(value: controller),
+    ChangeNotifierProvider.value(value: navigation),
+  ],
+  child: MaterialApp(
+    locale: const Locale('en'),
+    supportedLocales: AppLocalizations.supportedLocales,
+    localizationsDelegates: const [
+      AppLocalizations.delegate,
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    home: Scaffold(body: DashboardScreen(clock: clock)),
+  ),
+);
 
 Widget _healthApp(AppController controller, ShellNavigation navigation) =>
     MultiProvider(

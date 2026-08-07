@@ -2002,6 +2002,85 @@ class _ReminderStatusCard extends StatelessWidget {
                   ),
           ),
           const Divider(height: 1),
+          // Exact alarms are what make a reminder land at its time. Android 12
+          // and 13 let the owner revoke the right, and a revoked one turns
+          // every reminder into an approximate hint, so it needs saying.
+          if (controller.exactAlarmsAllowed == false)
+            ListTile(
+              leading: Icon(Icons.schedule_outlined, color: scheme.error),
+              title: Text(
+                _settingsText(
+                  context,
+                  'Reminders may arrive late',
+                  'Erinnerungen können verspätet ankommen',
+                ),
+              ),
+              subtitle: Text(
+                _settingsText(
+                  context,
+                  'Android is not allowing exact alarms, so the system may hold '
+                      'a reminder for hours past its time.',
+                  'Android erlaubt keine exakten Alarme, daher kann das System '
+                      'eine Erinnerung Stunden über ihre Zeit hinaus zurückhalten.',
+                ),
+              ),
+              trailing: FilledButton(
+                onPressed: controller.busy
+                    ? null
+                    : () async {
+                        await controller.requestExactAlarmPermission();
+                      },
+                child: Text(_settingsText(context, 'Fix', 'Beheben')),
+              ),
+            ),
+          // Scheduling fails silently — permissions, channels, OEM battery
+          // managers — and none of it is visible from inside the app. One tap
+          // separates "nothing was scheduled" from "nothing gets through".
+          ListTile(
+            leading: const Icon(Icons.notifications_active_outlined),
+            title: Text(
+              _settingsText(
+                context,
+                'Send a test notification',
+                'Testbenachrichtigung senden',
+              ),
+            ),
+            subtitle: Text(
+              _settingsText(
+                context,
+                'Posts one now, exactly the way a dose reminder is delivered.',
+                'Sendet jetzt eine — genau so, wie eine Dosis-Erinnerung zugestellt wird.',
+              ),
+            ),
+            trailing: FilledButton.tonal(
+              onPressed:
+                  controller.busy ||
+                      controller.reminderPermissionStatus ==
+                          ReminderPermissionStatus.unsupported
+                  ? null
+                  : () async {
+                      // Both messages are resolved before the await: the
+                      // context must not be read across the gap.
+                      final messenger = ScaffoldMessenger.of(context);
+                      final sent = _settingsText(
+                        context,
+                        'Sent. If it does not appear, check SuperHealth in Android notification settings.',
+                        'Gesendet. Falls nichts erscheint, prüfe SuperHealth in den Android-Benachrichtigungseinstellungen.',
+                      );
+                      final refused = _settingsText(
+                        context,
+                        'Android refused the notification. Allow notifications for SuperHealth first.',
+                        'Android hat die Benachrichtigung abgelehnt. Erlaube zuerst Benachrichtigungen für SuperHealth.',
+                      );
+                      final delivered = await controller.sendTestNotification();
+                      messenger.showSnackBar(
+                        SnackBar(content: Text(delivered ? sent : refused)),
+                      );
+                    },
+              child: Text(_settingsText(context, 'Send', 'Senden')),
+            ),
+          ),
+          const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.event_available_outlined),
             title: Text(
@@ -2091,10 +2170,10 @@ class _ReminderStatusCard extends StatelessWidget {
             child: Text(
               _settingsText(
                 context,
-                'Notifications use Android’s inexact OS scheduling. Open-ended schedules repeat weekly; '
+                'Notifications are scheduled by Android itself, exactly when the right is granted. Open-ended schedules repeat weekly; '
                     'date-bounded schedules are kept in a rolling window and renew when the app opens. '
                     'No background worker runs on your device.',
-                'Benachrichtigungen verwenden Androids ungenaue Systemplanung. Unbefristete Pläne wiederholen sich wöchentlich; '
+                'Benachrichtigungen plant Android selbst — exakt, sofern die Berechtigung erteilt ist. Unbefristete Pläne wiederholen sich wöchentlich; '
                     'befristete Pläne werden in einem rollierenden Fenster gehalten und beim Öffnen der App erneuert. '
                     'Auf deinem Gerät läuft kein Hintergrunddienst.',
               ),

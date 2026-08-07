@@ -2,8 +2,20 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+ asks for this at runtime through AppController. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Lets Android restore inexact scheduled notifications after a restart. -->
+    <!-- Lets Android restore scheduled notifications after a restart. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+      A dose reminder names a time and has to arrive at it. Inexact alarms are
+      batched by Doze and routinely land hours late, which is indistinguishable
+      from a reminder that never came.
+
+      USE_EXACT_ALARM is granted at install on Android 14+ and is the correct
+      declaration for an alarm/reminder app. SCHEDULE_EXACT_ALARM covers
+      Android 12-13, where the right is revocable, so the app asks for it and
+      falls back to inexact scheduling if it is withheld.
+    -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <application
         android:label="SuperHealth"
         android:name="${applicationName}"

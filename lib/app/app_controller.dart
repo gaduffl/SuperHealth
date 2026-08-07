@@ -159,6 +159,10 @@ class AppController extends ChangeNotifier {
   String? reminderStatusMessage;
   int scheduledReminderCount = 0;
   int omittedReminderOccurrenceCount = 0;
+
+  /// Whether Android currently lets the app post exact alarms. Null on
+  /// platforms without the concept, and before reminders are first initialised.
+  bool? get exactAlarmsAllowed => _reminderService.exactAlarmsAllowed;
   DateTime? reminderCoverageThrough;
   ReminderCoverageReason? reminderCoverageReason;
   int lastLowStockAlertCount = 0;
@@ -319,6 +323,41 @@ class AppController extends ChangeNotifier {
     }
     notifyListeners();
     return reminderPermissionStatus;
+  }
+
+  /// Asks Android for the exact-alarm right, then reschedules so pending
+  /// reminders are re-registered under the mode the answer allows.
+  Future<bool> requestExactAlarmPermission() async {
+    try {
+      final allowed = await _reminderService.requestExactAlarms();
+      await _reconcileReminders();
+      notifyListeners();
+      return allowed;
+    } on Object catch (error) {
+      reminderStatusMessage = 'Could not request exact alarms: $error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Posts a notification straight away so delivery can be checked end to end.
+  ///
+  /// Returns false when the OS would not accept it, which is the answer that
+  /// matters: it separates "nothing was scheduled" from "nothing gets through".
+  Future<bool> sendTestNotification() async {
+    try {
+      final delivered = await _reminderService.sendTestNotification();
+      reminderStatusMessage = delivered
+          ? null
+          : 'Could not post a test notification. Check that notifications are '
+                'allowed for SuperHealth in Android settings.';
+      notifyListeners();
+      return delivered;
+    } on Object catch (error) {
+      reminderStatusMessage = 'Could not post a test notification: $error';
+      notifyListeners();
+      return false;
+    }
   }
 
   /// Rebuilds the OS notification plan without requesting permission.
