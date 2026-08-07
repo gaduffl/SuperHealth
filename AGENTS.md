@@ -277,6 +277,20 @@ that single output, so the APK is built exactly once per run. Do not re-express
 that condition inline — two copies of it drift, and the failure is silent in
 both directions (an APK built twice, or a release that never builds one).
 
+**An AI flow sends only what its job needs.** Lab price updates send the
+biomarker catalog and nothing else — no measurements, no supplements, no
+symptoms — because pricing does not need them. Before adding a flow, ask what
+the smallest input that answers the question is, rather than reaching for the
+health context because it already exists.
+
+**A model proposal that spends money is never pre-ticked without a source.**
+`LabPriceService` requires a verbatim `quote` from the supplied text; a price
+the model asserted rather than read goes to review, as does a foreign currency,
+a first price, a move beyond ±50%, or a lab name that contradicts the stored
+one. Currencies are surfaced, never converted: an exchange rate the app invented
+would be a second guess stacked on the first. Ids outside the catalog are
+dropped, never created.
+
 **The AI context is scoped per flow.** `HealthContextScope.labPlanning` carries
 the whole biomarker catalog because the planner must be able to propose and
 price a test never run; `advisory` carries only measured markers. Supplements are

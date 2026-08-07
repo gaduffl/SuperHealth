@@ -8,6 +8,7 @@ import 'ai/api_key_store.dart';
 import 'ai/document_parsing_service.dart';
 import 'ai/health_context_builder.dart';
 import 'ai/lab_planner_service.dart';
+import 'ai/lab_price_service.dart';
 import 'ai/provider_clients.dart';
 import 'analysis/correlation_service.dart';
 import 'backup/portable_backup_service.dart';
@@ -69,6 +70,7 @@ void main() {
       contextBuilder: advisorContextBuilder,
       workspaceService: workspaceService,
     ),
+    labPriceService: LabPriceService(keyStore, clientFactory),
     labPlannerService: LabPlannerService(
       repository: repository,
       keyStore: keyStore,

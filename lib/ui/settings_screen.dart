@@ -189,8 +189,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: _settingsText(context, 'AI roles', 'KI-Rollen'),
             subtitle: _settingsText(
               context,
-              'Choose separate models for the main advisor and document parsing',
-              'Wähle getrennte Modelle für Beratung und Dokumentanalyse',
+              'Choose separate models for the advisor, document parsing and price updates',
+              'Wähle getrennte Modelle für Beratung, Dokumentanalyse und Preis-Aktualisierung',
             ),
           ),
           _ModelConfigurationCard(
@@ -210,6 +210,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             settings: controller.parsingSettings,
             allowTools: false,
+          ),
+          // Its own model because pricing is a cheap, mechanical job — read a
+          // page, match names, copy numbers — and should not ride on whatever
+          // expensive reasoning model the advisor is set to. Tools are allowed
+          // so it can look prices up when no source page is supplied.
+          _ModelConfigurationCard(
+            key: ValueKey('pricing-${controller.pricingSettings?.model}'),
+            task: AiTask.pricing,
+            title: _settingsText(
+              context,
+              'Lab price updates',
+              'Laborpreis-Aktualisierung',
+            ),
+            settings: controller.pricingSettings,
+            allowTools: true,
           ),
           SectionHeader(
             title: _settingsText(

@@ -13,6 +13,7 @@ import '../ai/ai_settings.dart';
 import '../ai/api_key_store.dart';
 import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
+import '../ai/lab_price_service.dart';
 import '../ai/provider_clients.dart';
 import '../ai/supplement_label_service.dart';
 import '../analysis/correlation_service.dart';
@@ -40,6 +41,7 @@ class AppController extends ChangeNotifier {
     required AiSettingsStore aiSettingsStore,
     required AdvisorService advisorService,
     required LabPlannerService labPlannerService,
+    required LabPriceService labPriceService,
     required DocumentParsingService documentParsingService,
     required CorrelationService correlationService,
     required LegacyImportService importService,
@@ -61,6 +63,7 @@ class AppController extends ChangeNotifier {
        _aiSettingsStore = aiSettingsStore,
        _advisorService = advisorService,
        _labPlannerService = labPlannerService,
+       _labPriceService = labPriceService,
        _documentParsingService = documentParsingService,
        _correlationService = correlationService,
        importService = importService,
@@ -96,6 +99,7 @@ class AppController extends ChangeNotifier {
   final AiSettingsStore _aiSettingsStore;
   final AdvisorService _advisorService;
   final LabPlannerService _labPlannerService;
+  final LabPriceService _labPriceService;
   final DocumentParsingService _documentParsingService;
   final CorrelationService _correlationService;
   final LegacyImportService importService;
@@ -152,6 +156,7 @@ class AppController extends ChangeNotifier {
   TokenUsage? lastTokenUsage;
   AiTaskSettings? advisorSettings;
   AiTaskSettings? parsingSettings;
+  AiTaskSettings? pricingSettings;
   final Map<AiProvider, bool> hasApiKey = {};
   final Map<AiProvider, List<AiModelInfo>> availableModels = {};
   ReminderPermissionStatus reminderPermissionStatus =
@@ -189,6 +194,7 @@ class AppController extends ChangeNotifier {
     try {
       advisorSettings = await _aiSettingsStore.load(AiTask.advisor);
       parsingSettings = await _aiSettingsStore.load(AiTask.parsing);
+      pricingSettings = await _aiSettingsStore.load(AiTask.pricing);
       await refreshKeyStatus();
       restoreSyncDecisionPending = await _restoreSyncGateStore.isPending();
       await refreshProfiles();
@@ -1158,6 +1164,73 @@ class AppController extends ChangeNotifier {
     await refreshActiveData();
   }
 
+  /// Reads a price page so the owner can see what will be sent before it is.
+  Future<String> fetchLabPriceSource(String url) =>
+      _labPriceService.fetchSource(Uri.parse(url.trim()));
+
+  /// Asks the pricing model what the catalog should cost. Writes nothing.
+  Future<LabPriceProposalSet> proposeLabPrices({
+    String? sourceText,
+    String? sourceUrl,
+    String? instructions,
+  }) async {
+    final settings = pricingSettings;
+    if (settings == null) {
+      throw const LabPriceException(
+        'Choose a provider and model for price updates in Settings first.',
+      );
+    }
+    return _withBusy(
+      () => _labPriceService.propose(
+        catalog: biomarkers.where((item) => !item.deleted).toList(),
+        settings: settings,
+        sourceText: sourceText,
+        sourceUrl: sourceUrl,
+        instructions: instructions,
+      ),
+    );
+  }
+
+  /// Applies exactly the proposals given.
+  ///
+  /// Takes a list rather than re-deriving one, so what was approved on screen
+  /// is what gets written. Declining a row leaves its `priceCheckedAt` alone —
+  /// declining is not checking.
+  Future<int> applyLabPrices(List<LabPriceProposal> approved) =>
+      _withBusy(() async {
+        if (approved.isEmpty) return 0;
+        final byId = {for (final item in biomarkers) item.id: item};
+        final now = DateTime.now();
+        var applied = 0;
+        for (final proposal in approved) {
+          final biomarker = byId[proposal.biomarkerId];
+          if (biomarker == null) continue;
+          await repository.saveBiomarker(
+            Biomarker(
+              id: biomarker.id,
+              canonicalName: biomarker.canonicalName,
+              displayName: biomarker.displayName,
+              category: biomarker.category,
+              defaultUnit: biomarker.defaultUnit,
+              priceEur: proposal.newPriceEur,
+              labName: proposal.labName.isEmpty
+                  ? biomarker.labName
+                  : proposal.labName,
+              priceCheckedAt: now,
+              description: biomarker.description,
+              synonyms: biomarker.synonyms,
+              isTemporary: biomarker.isTemporary,
+              createdAt: biomarker.createdAt,
+              updatedAt: now,
+              deleted: biomarker.deleted,
+            ),
+          );
+          applied++;
+        }
+        await refreshActiveData();
+        return applied;
+      });
+
   Future<void> saveBiomarkerRange(BiomarkerReferenceRange range) async {
     await repository.saveBiomarkerRange(range);
     await refreshActiveData();
@@ -1449,7 +1522,9 @@ class AppController extends ChangeNotifier {
       throw StateError('Code execution is not documented for this model.');
     }
     await _aiSettingsStore.save(task, settings);
-    if (task == AiTask.advisor) {
+    if (task == AiTask.pricing) {
+      pricingSettings = settings;
+    } else if (task == AiTask.advisor) {
       advisorSettings = settings;
     } else {
       parsingSettings = settings;

@@ -12,6 +12,7 @@ import 'package:super_health/ai/api_key_store.dart';
 import 'package:super_health/ai/document_parsing_service.dart';
 import 'package:super_health/ai/health_context_builder.dart';
 import 'package:super_health/ai/lab_planner_service.dart';
+import 'package:super_health/ai/lab_price_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 import 'package:super_health/app/app_controller.dart';
 import 'package:super_health/data/app_database.dart';
@@ -565,6 +566,7 @@ AppController _controller(_Fixture fixture) {
       contextBuilder: contextBuilder,
       workspaceService: workspace,
     ),
+    labPriceService: LabPriceService(keyStore, clientFactory),
     labPlannerService: LabPlannerService(
       repository: fixture.repository,
       keyStore: keyStore,
