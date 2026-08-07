@@ -189,6 +189,21 @@ wrong one. Re-sync on build, on `AppLifecycleState.resumed`, and on a timer to
 the next midnight; the widget takes an injectable `clock` so a test can turn the
 calendar over without waiting.
 
+**A per-item opt-in that defaults to off needs a way to see it and a way to set
+it in bulk.** `SupplementSchedule.reminderEnabled` defaults to false and lived
+only inside the edit dialog, so a whole library could have every reminder off
+while Settings advertised the feature — indistinguishable from reminders being
+broken. The schedule row now carries a badge and Settings can switch them all on.
+Apply the same test to any new per-row flag: can its state be seen from the list,
+and is there a path that does not mean opening every row?
+
+**Silent skips need a public predicate.** `ReminderPlanner.plan()` drops a
+schedule whose `timeOfDay` it cannot parse, which is correct but invisible.
+`canScheduleReminder()` exposes exactly that decision so the UI flags the row
+instead of keeping a second copy of the parsing rules that would drift. When a
+planner or service silently discards input, give callers the same question it
+asked.
+
 **An Android notification channel is immutable after its first creation.**
 Importance, sound and vibration are frozen the moment the channel is created and
 every later change is ignored for the life of the install. Correcting any of them

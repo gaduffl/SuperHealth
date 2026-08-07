@@ -14,6 +14,7 @@ import '../app/app_localizations.dart';
 import '../app/appearance_settings.dart';
 import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
+import '../reminders/reminder_planner.dart';
 import 'charts.dart';
 import 'common.dart';
 import 'dashboard_screen.dart' show periodLabel;
@@ -353,9 +354,19 @@ class _TrackingScreenState extends State<TrackingScreen>
                 schedule.active ? Icons.schedule : Icons.pause_circle_outline,
                 color: schedule.active ? colors.primary : colors.outline,
               ),
-              title: Text(
-                '${formatAmountWithUnit(strings, amount: schedule.dose, unit: schedule.unit, form: product.form)} · '
-                '${schedule.timeOfDay}',
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${formatAmountWithUnit(strings, amount: schedule.dose, unit: schedule.unit, form: product.form)} · '
+                      '${schedule.timeOfDay}',
+                    ),
+                  ),
+                  // Whether a schedule reminds is invisible until its dialog is
+                  // opened, so a library of them cannot be checked at a glance
+                  // and a forgotten switch reads as broken notifications.
+                  _ScheduleReminderBadge(schedule: schedule),
+                ],
               ),
               subtitle: Text(
                 '${strings.daysPerWeek(schedule.weekdays.length)}'
@@ -2048,6 +2059,57 @@ class _PlanCell extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Says at a glance whether a schedule reminds, and whether it actually can.
+///
+/// The third state is the one that matters: a reminder switched on against a
+/// time the planner cannot read produces nothing and, before this, said
+/// nothing either.
+class _ScheduleReminderBadge extends StatelessWidget {
+  const _ScheduleReminderBadge({required this.schedule});
+
+  final SupplementSchedule schedule;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
+    if (!schedule.reminderEnabled) {
+      return Tooltip(
+        message: strings.pick('No reminder', 'Keine Erinnerung'),
+        child: Icon(
+          Icons.notifications_off_outlined,
+          size: 18,
+          color: colors.outline,
+        ),
+      );
+    }
+    if (!ReminderPlanner.canScheduleReminder(schedule.timeOfDay)) {
+      return Tooltip(
+        message: strings.pick(
+          'Reminder is on, but "\${schedule.timeOfDay}" is not a time this app '
+              'can schedule. Use Morning, Midday, Evening, Bedtime or HH:mm.',
+          'Erinnerung ist aktiv, aber „\${schedule.timeOfDay}" ist keine Zeit, '
+              'die diese App planen kann. Nutze Morning, Midday, Evening, '
+              'Bedtime oder HH:mm.',
+        ),
+        child: Icon(
+          Icons.notification_important_outlined,
+          size: 18,
+          color: colors.error,
+        ),
+      );
+    }
+    return Tooltip(
+      message: strings.pick('Reminder is on', 'Erinnerung ist aktiv'),
+      child: Icon(
+        Icons.notifications_active_outlined,
+        size: 18,
+        color: colors.primary,
       ),
     );
   }

@@ -414,6 +414,15 @@ class ReminderPlanner {
     return value & 0x7fffffff;
   }
 
+  /// Whether a schedule's time string resolves to a clock time.
+  ///
+  /// [plan] silently skips a schedule it cannot read a time from, so a reminder
+  /// switched on against a malformed time produces nothing and says nothing.
+  /// The UI asks this rather than keeping a second copy of the rules, which
+  /// would drift and reintroduce the silence.
+  static bool canScheduleReminder(String timeOfDay) =>
+      _parseTime(timeOfDay) != null;
+
   /// Built-in dialog slots use these local defaults: Morning 08:00, Midday
   /// 12:00, Evening 18:00, Bedtime 22:00. HH:mm is also accepted for callers
   /// that need a precise time; malformed values are safely ignored.

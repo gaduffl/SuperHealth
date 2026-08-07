@@ -302,4 +302,69 @@ void main() {
     expect(repeated.alertsToShow, isEmpty);
     expect(recovered.nextLatchedSupplementIds, isEmpty);
   });
+
+  group('reminder-time readability', () {
+    test('the named slots and HH:mm are schedulable', () {
+      for (final value in [
+        'Morning',
+        'midday',
+        'Evening',
+        'BEDTIME',
+        '07:30',
+        '7:05',
+        '23:59',
+        ' 08:00 ',
+      ]) {
+        expect(
+          ReminderPlanner.canScheduleReminder(value),
+          isTrue,
+          reason: value,
+        );
+      }
+    });
+
+    test('anything else is not, and the UI must be able to say so', () {
+      // plan() silently skips these, so a reminder switched on against one
+      // produces nothing. The screen asks this same question rather than
+      // keeping its own copy of the rules.
+      for (final value in [
+        '',
+        'Abends',
+        '8am',
+        '24:00',
+        '12:60',
+        'after gym',
+      ]) {
+        expect(
+          ReminderPlanner.canScheduleReminder(value),
+          isFalse,
+          reason: value,
+        );
+      }
+    });
+
+    test('a schedule with an unreadable time yields no reminder', () {
+      // The claim above only matters if plan() really drops it.
+      final plan = planner.plan(
+        profiles: [profile('p', 'P')],
+        supplements: [magnesium],
+        schedules: [schedule(id: 's', profileId: 'p', timeOfDay: 'after gym')],
+        now: DateTime(2026, 8, 7, 9),
+      );
+      expect(plan.reminders, isEmpty);
+      expect(
+        planner
+            .plan(
+              profiles: [profile('p', 'P')],
+              supplements: [magnesium],
+              schedules: [
+                schedule(id: 's', profileId: 'p', timeOfDay: '07:30'),
+              ],
+              now: DateTime(2026, 8, 7, 9),
+            )
+            .reminders,
+        isNotEmpty,
+      );
+    });
+  });
 }
