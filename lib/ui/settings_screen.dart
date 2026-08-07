@@ -2033,6 +2033,102 @@ class _ReminderStatusCard extends StatelessWidget {
                 child: Text(_settingsText(context, 'Fix', 'Beheben')),
               ),
             ),
+          // A reminder is per schedule and defaults to off, so a library built
+          // before anyone looked at Settings has none of them on and the count
+          // above reads 0. Turning them on one dialog at a time is the reason
+          // people conclude notifications are broken.
+          ListTile(
+            leading: const Icon(Icons.notifications_none_outlined),
+            title: Text(
+              _settingsText(
+                context,
+                'Remind me for every active schedule',
+                'Für alle aktiven Pläne erinnern',
+              ),
+            ),
+            subtitle: Text(
+              _settingsText(
+                context,
+                'Switches the reminder on for each active schedule that does not have one.',
+                'Aktiviert die Erinnerung für jeden aktiven Plan, der noch keine hat.',
+              ),
+            ),
+            trailing: FilledButton.tonal(
+              onPressed: controller.busy
+                  ? null
+                  : () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      String none() => _settingsText(
+                        context,
+                        'Every active schedule already reminds.',
+                        'Alle aktiven Pläne erinnern bereits.',
+                      );
+                      String some(int count) => _settingsText(
+                        context,
+                        'Reminders switched on for $count schedule(s).',
+                        'Erinnerungen für $count Plan/Pläne aktiviert.',
+                      );
+                      String withFixes(int count, int broken) => _settingsText(
+                        context,
+                        'Reminders switched on for $count schedule(s). '
+                            '$broken of them use a time this app cannot schedule — '
+                            'open them under Supplements to correct it.',
+                        'Erinnerungen für $count Plan/Pläne aktiviert. '
+                            'Davon nutzen $broken eine Zeit, die diese App nicht planen kann — '
+                            'öffne sie unter Ergänzungen, um das zu korrigieren.',
+                      );
+                      final result = await controller
+                          .enableAllScheduleReminders();
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            result.enabled == 0
+                                ? none()
+                                : result.needingTimeFix == 0
+                                ? some(result.enabled)
+                                : withFixes(
+                                    result.enabled,
+                                    result.needingTimeFix,
+                                  ),
+                          ),
+                        ),
+                      );
+                    },
+              child: Text(_settingsText(context, 'Turn on', 'Aktivieren')),
+            ),
+          ),
+          // A reminder switched on against a time the planner cannot read
+          // produces nothing at all, and used to do so silently.
+          if (controller.schedulesWithUnreadableReminderTime.isNotEmpty)
+            Builder(
+              builder: (context) {
+                final broken = controller.schedulesWithUnreadableReminderTime;
+                return ListTile(
+                  leading: Icon(
+                    Icons.notification_important_outlined,
+                    color: scheme.error,
+                  ),
+                  title: Text(
+                    _settingsText(
+                      context,
+                      '${broken.length} schedule(s) remind at a time that cannot be scheduled',
+                      '${broken.length} Plan/Pläne erinnern zu einer nicht planbaren Zeit',
+                    ),
+                  ),
+                  subtitle: Text(
+                    _settingsText(
+                      context,
+                      '${broken.map((item) => item.timeOfDay).toSet().join(', ')} — '
+                          'use Morning, Midday, Evening, Bedtime or HH:mm. '
+                          'Until then these produce no notification.',
+                      '${broken.map((item) => item.timeOfDay).toSet().join(', ')} — '
+                          'nutze Morning, Midday, Evening, Bedtime oder HH:mm. '
+                          'Bis dahin erzeugen sie keine Benachrichtigung.',
+                    ),
+                  ),
+                );
+              },
+            ),
           // Scheduling fails silently — permissions, channels, OEM battery
           // managers — and none of it is visible from inside the app. One tap
           // separates "nothing was scheduled" from "nothing gets through".

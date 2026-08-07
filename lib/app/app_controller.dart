@@ -799,6 +799,64 @@ class AppController extends ChangeNotifier {
     await _reconcileReminders();
   }
 
+  /// Turns reminders on for every active schedule that does not have one.
+  ///
+  /// Returns how many were switched on, and how many of those carry a time the
+  /// planner cannot read — those record the intent but produce no notification
+  /// until the time is corrected, and the schedule row flags them.
+  Future<({int enabled, int needingTimeFix})> enableAllScheduleReminders() =>
+      _withBusy(() async {
+        final pending = householdSchedules
+            .where(
+              (item) => !item.deleted && item.active && !item.reminderEnabled,
+            )
+            .toList();
+        for (final schedule in pending) {
+          await repository.saveSchedule(
+            SupplementSchedule(
+              id: schedule.id,
+              profileId: schedule.profileId,
+              supplementId: schedule.supplementId,
+              dose: schedule.dose,
+              unit: schedule.unit,
+              timeOfDay: schedule.timeOfDay,
+              weekdays: schedule.weekdays,
+              instructions: schedule.instructions,
+              startDate: schedule.startDate,
+              endDate: schedule.endDate,
+              active: schedule.active,
+              reminderEnabled: true,
+              createdAt: schedule.createdAt,
+              updatedAt: DateTime.now(),
+              deleted: schedule.deleted,
+            ),
+          );
+        }
+        await refreshActiveData();
+        await _reconcileReminders();
+        return (
+          enabled: pending.length,
+          needingTimeFix: pending
+              .where(
+                (item) => !ReminderPlanner.canScheduleReminder(item.timeOfDay),
+              )
+              .length,
+        );
+      });
+
+  /// Active schedules whose reminder is on but whose time the planner cannot
+  /// read, so no notification is ever produced for them.
+  List<SupplementSchedule> get schedulesWithUnreadableReminderTime =>
+      householdSchedules
+          .where(
+            (item) =>
+                !item.deleted &&
+                item.active &&
+                item.reminderEnabled &&
+                !ReminderPlanner.canScheduleReminder(item.timeOfDay),
+          )
+          .toList();
+
   Future<void> deleteSchedule(SupplementSchedule schedule) async {
     await repository.softDelete('supplement_schedules', schedule.id);
     await refreshActiveData();
