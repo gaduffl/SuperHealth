@@ -250,7 +250,7 @@ class LabPlanExportService {
                     ),
                   ),
                   pw.Text(
-                    item.priceEur == null
+                    !hasLabPrice(item.priceEur)
                         ? 'Price missing'
                         : '${item.priceEur!.toStringAsFixed(2)} EUR',
                     style: const pw.TextStyle(fontSize: 9),

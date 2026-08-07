@@ -91,6 +91,7 @@ class LabPriceProposalSet {
     required this.unknownBiomarkerIds,
     required this.sourceUrl,
     required this.usage,
+    this.failedBatches = const [],
   });
 
   final List<LabPriceProposal> proposals;
@@ -101,6 +102,10 @@ class LabPriceProposalSet {
 
   final String? sourceUrl;
   final TokenUsage? usage;
+
+  /// Name ranges of batches that could not be read, so a partial result says
+  /// what is missing rather than looking complete.
+  final List<String> failedBatches;
 
   List<LabPriceProposal> get confident =>
       proposals.where((item) => item.isConfident).toList();
@@ -134,6 +139,15 @@ class LabPriceService {
   /// A move this large against a stored price is nearly always a different
   /// panel or a misplaced decimal rather than a real change.
   static const largeChangeFactor = 1.5;
+
+  /// Biomarkers priced per request.
+  ///
+  /// A real catalog is ~170 markers, and one JSON row each — id, price,
+  /// currency, lab and a verbatim quote — overruns the output limit long before
+  /// the last marker, which truncates the JSON and loses the whole run. Batching
+  /// costs a re-send of the source text per call and buys a result that does not
+  /// depend on how large the catalog happens to be.
+  static const catalogBatchSize = 50;
 
   static const systemPrompt = '''
 You update a personal biomarker price catalog. You are given the catalog and,
@@ -274,6 +288,68 @@ Rules:
       throw LabPriceException('Add a ${settings.provider.name} API key first.');
     }
     final client = _clientFactory.create(settings.provider);
+    final batches = <List<Biomarker>>[
+      for (var start = 0; start < catalog.length; start += catalogBatchSize)
+        catalog.sublist(
+          start,
+          (start + catalogBatchSize).clamp(0, catalog.length),
+        ),
+    ];
+    final merged = <LabPriceProposal>[];
+    final unknown = <String>[];
+    var inputTokens = 0;
+    var outputTokens = 0;
+    final failures = <String>[];
+
+    for (final batch in batches) {
+      try {
+        final set = await _proposeBatch(
+          client: client,
+          key: key,
+          batch: batch,
+          settings: settings,
+          sourceText: sourceText,
+          sourceUrl: sourceUrl,
+          instructions: instructions,
+        );
+        merged.addAll(set.proposals);
+        unknown.addAll(set.unknownBiomarkerIds);
+        inputTokens += set.usage?.inputTokens ?? 0;
+        outputTokens += set.usage?.outputTokens ?? 0;
+      } on Object catch (error) {
+        // One bad batch must not discard the ones that worked. The owner is
+        // told which range failed, and why, so a retry is a decision rather
+        // than a mystery.
+        failures.add(
+          '${batch.first.displayName}–${batch.last.displayName} ($error)',
+        );
+      }
+    }
+    if (merged.isEmpty && failures.isNotEmpty) {
+      throw LabPriceException(
+        'No prices could be read. Failed batches: ${failures.join('; ')}.',
+      );
+    }
+    merged.sort((a, b) => a.biomarkerName.compareTo(b.biomarkerName));
+    return LabPriceProposalSet(
+      proposals: List.unmodifiable(merged),
+      unknownBiomarkerIds: List.unmodifiable(unknown),
+      sourceUrl: sourceUrl,
+      usage: TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens),
+      failedBatches: List.unmodifiable(failures),
+    );
+  }
+
+  Future<LabPriceProposalSet> _proposeBatch({
+    required AiProviderClient client,
+    required String key,
+    required List<Biomarker> batch,
+    required AiTaskSettings settings,
+    String? sourceText,
+    String? sourceUrl,
+    String? instructions,
+  }) async {
+    final catalog = batch;
     final prompt = StringBuffer(
       'Return a price for every biomarker in the catalog you can price.',
     );
@@ -361,8 +437,8 @@ Rules:
         if (quote.isEmpty) LabPriceReviewReason.unsourced,
         if (currency.isNotEmpty && currency != 'EUR')
           LabPriceReviewReason.foreignCurrency,
-        if (old == null) LabPriceReviewReason.firstPrice,
-        if (old != null && old > 0 && _isLargeChange(old, price))
+        if (!hasLabPrice(old)) LabPriceReviewReason.firstPrice,
+        if (hasLabPrice(old) && _isLargeChange(old!, price))
           LabPriceReviewReason.largeChange,
         if (lab.isNotEmpty &&
             (biomarker.labName ?? '').isNotEmpty &&

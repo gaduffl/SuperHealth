@@ -626,6 +626,14 @@ class HealthEvent {
   );
 }
 
+/// Whether a stored price means anything.
+///
+/// A legacy import writes 0 where its source had no price, and a lab test that
+/// costs nothing does not exist — so a zero is an absent price, not a free one.
+/// Treating it as present made the catalog report itself fully priced and made
+/// the planner total a tier as if those tests were free.
+bool hasLabPrice(double? priceEur) => priceEur != null && priceEur > 0;
+
 class Biomarker {
   const Biomarker({
     required this.id,
@@ -652,6 +660,9 @@ class Biomarker {
   final double? priceEur;
   final String? labName;
   final DateTime? priceCheckedAt;
+
+  /// See [hasLabPrice]: a zero is an absent price, not a free test.
+  bool get hasPrice => hasLabPrice(priceEur);
   final String description;
   final List<String> synonyms;
   final bool isTemporary;
@@ -1417,11 +1428,13 @@ class LabPlan {
       .where((item) => item.tier.index <= tier.index)
       .toList(growable: false);
 
-  double knownTotal(LabTier tier) =>
-      itemsThrough(tier).fold(0, (total, item) => total + (item.priceEur ?? 0));
+  double knownTotal(LabTier tier) => itemsThrough(tier).fold(
+    0,
+    (total, item) => total + (hasLabPrice(item.priceEur) ? item.priceEur! : 0),
+  );
 
   int missingPriceCount(LabTier tier) =>
-      itemsThrough(tier).where((item) => item.priceEur == null).length;
+      itemsThrough(tier).where((item) => !hasLabPrice(item.priceEur)).length;
 
   Map<String, Object?> toMap() => {
     'id': id,

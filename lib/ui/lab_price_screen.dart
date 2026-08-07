@@ -81,7 +81,7 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
     final controller = context.watch<AppController>();
     final scheme = Theme.of(context).colorScheme;
     final priced = controller.biomarkers
-        .where((item) => !item.deleted && item.priceEur != null)
+        .where((item) => !item.deleted && item.hasPrice)
         .length;
     final total = controller.biomarkers.where((item) => !item.deleted).length;
 
@@ -117,6 +117,10 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
           TextField(
             controller: _url,
             keyboardType: TextInputType.url,
+            // Without this the Fetch button reads a stale `_url.text`: nothing
+            // rebuilds on typing, so it stayed disabled after a paste and only
+            // came to life when some unrelated setState happened to run.
+            onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
               labelText: _priceText(
                 context,
@@ -275,6 +279,24 @@ class _LabPriceReviewScreenState extends State<LabPriceReviewScreen> {
                     child: Text(
                       '${usage.inputTokens ?? 0} in · ${usage.outputTokens ?? 0} out',
                       style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                // A partial result must not look complete: the batches that
+                // failed are named, so a missing marker has an explanation.
+                if (set.failedBatches.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Text(
+                      _priceText(
+                        context,
+                        'Could not read ${set.failedBatches.length} batch(es): '
+                            '${set.failedBatches.join('; ')}',
+                        '${set.failedBatches.length} Gruppe(n) konnten nicht gelesen werden: '
+                            '${set.failedBatches.join('; ')}',
+                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
                 if (set.unknownBiomarkerIds.isNotEmpty)
