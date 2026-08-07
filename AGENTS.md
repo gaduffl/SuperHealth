@@ -216,6 +216,16 @@ goes red after the merge, when the PR that caused it is already closed. Raise
 the minor for a feature or a schema migration, the patch for a fix or a
 refinement; the build number always increments by exactly one.
 
+**A release that did not run is recovered by dispatching, not by an empty
+commit.** The push to `main` is the normal trigger, but runs do get cancelled
+and runners do go unassigned, and then the version sits merged and unreleased.
+`workflow_dispatch` on `main` publishes too, so re-running the workflow from the
+Actions tab finishes the job. Whether a run publishes is decided once, by the
+`gate` step of `verify`; both the release job and verify's own APK steps read
+that single output, so the APK is built exactly once per run. Do not re-express
+that condition inline — two copies of it drift, and the failure is silent in
+both directions (an APK built twice, or a release that never builds one).
+
 **The AI context is scoped per flow.** `HealthContextScope.labPlanning` carries
 the whole biomarker catalog because the planner must be able to propose and
 price a test never run; `advisory` carries only measured markers. Supplements are
