@@ -21,6 +21,7 @@ import 'biomarker_lists_sheet.dart';
 import 'charts.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import 'lab_price_screen.dart';
 import 'dose_underlay.dart';
 import 'temporary_biomarker_resolution_screen.dart';
 
@@ -456,6 +457,22 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                       ? null
                       : () => _importLabPdf(context, controller),
                   icon: const Icon(Icons.document_scanner_outlined),
+                ),
+                const SizedBox(width: 6),
+                IconButton.filledTonal(
+                  tooltip: _labsText(
+                    context,
+                    'Update lab prices',
+                    'Laborpreise aktualisieren',
+                  ),
+                  onPressed: controller.busy
+                      ? null
+                      : () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const LabPriceScreen(),
+                          ),
+                        ),
+                  icon: const Icon(Icons.euro_outlined),
                 ),
                 const SizedBox(width: 6),
                 FilledButton.icon(

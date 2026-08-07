@@ -2,7 +2,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ai_models.dart';
 
-enum AiTask { advisor, parsing }
+/// Pricing is its own task because it is a cheap, mechanical job — read a page,
+/// match names, copy numbers — and should not ride on whatever expensive
+/// reasoning model the advisor is set to.
+enum AiTask { advisor, parsing, pricing }
 
 class AiTaskSettings {
   const AiTaskSettings({

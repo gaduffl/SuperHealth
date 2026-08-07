@@ -12,6 +12,7 @@ import 'package:super_health/ai/api_key_store.dart';
 import 'package:super_health/ai/document_parsing_service.dart';
 import 'package:super_health/ai/health_context_builder.dart';
 import 'package:super_health/ai/lab_planner_service.dart';
+import 'package:super_health/ai/lab_price_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 import 'package:super_health/analysis/correlation_service.dart';
 import 'package:super_health/app/app_controller.dart';
@@ -822,6 +823,7 @@ AppController _controller() {
       contextBuilder: contextBuilder,
       workspaceService: workspace,
     ),
+    labPriceService: LabPriceService(keyStore, clientFactory),
     labPlannerService: LabPlannerService(
       repository: repository,
       keyStore: keyStore,
