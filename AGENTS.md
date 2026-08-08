@@ -283,6 +283,17 @@ symptoms — because pricing does not need them. Before adding a flow, ask what
 the smallest input that answers the question is, rather than reaching for the
 health context because it already exists.
 
+**A call that runs for minutes reports what it is doing.** `LabPlannerService`
+takes an `onProgress` callback and names each stage; the screen shows the stage
+and a running clock rather than only greying a button, because a still screen
+and a hung request look identical. Progress reporting never throws — commentary
+must not cost the caller their result.
+
+**Backgrounding does not stop a Dart isolate, but a sleeping device does.** The
+lab planner holds a wakelock for the duration. That is a mitigation, not a
+guarantee: only a foreground service survives the process being killed, so do
+not describe the wakelock as making a long call background-safe.
+
 **Easy mode is per profile, and its capabilities live in one place.**
 `FeatureVisibility` names every difference; screens ask it (`controller
 .visibility.stockManagement`) rather than testing `easyMode` inline, because

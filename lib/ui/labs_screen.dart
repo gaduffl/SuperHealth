@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -499,6 +500,11 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
               ],
             ),
           ),
+          if (controller.labPlanStage != null)
+            _LabPlanProgressCard(
+              stage: controller.labPlanStage!,
+              startedAt: controller.labPlanStartedAt,
+            ),
           if (controller.biomarkers.isEmpty)
             EmptyState(
               icon: Icons.science_outlined,
@@ -3052,4 +3058,110 @@ class _BiomarkerTile extends StatelessWidget {
     BiomarkerStatusKind.noComparisonRange => Icons.rule_folder_outlined,
     BiomarkerStatusKind.unavailable => Icons.help_outline,
   };
+}
+
+/// Says what a running lab plan is doing, and for how long.
+///
+/// Two model passes over a whole health context take minutes. A greyed-out
+/// button reports only that something is happening, which is what a hang looks
+/// like too — so the stage is named and the clock keeps moving.
+class _LabPlanProgressCard extends StatefulWidget {
+  const _LabPlanProgressCard({required this.stage, required this.startedAt});
+
+  final LabPlanStage stage;
+  final DateTime? startedAt;
+
+  @override
+  State<_LabPlanProgressCard> createState() => _LabPlanProgressCardState();
+}
+
+class _LabPlanProgressCardState extends State<_LabPlanProgressCard> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // Nothing else rebuilds between stages, and a stalled number is exactly
+    // the impression this card exists to avoid.
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final started = widget.startedAt;
+    final elapsed = started == null ? null : DateTime.now().difference(started);
+    final stages = LabPlanStage.values;
+    // The repair pass only happens when a draft fails validation, so counting
+    // it into the total would understate progress on every healthy run.
+    final ordinal = widget.stage == LabPlanStage.repairingDraft
+        ? stages.indexOf(LabPlanStage.drafting) + 1
+        : stages.indexOf(widget.stage) + 1;
+    final total = stages.length - 1;
+
+    return Card(
+      color: scheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _labsText(
+                      context,
+                      widget.stage.englishLabel,
+                      widget.stage.germanLabel,
+                    ),
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                if (elapsed != null)
+                  Text(
+                    '${elapsed.inMinutes}:'
+                    '${(elapsed.inSeconds % 60).toString().padLeft(2, '0')}',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: (ordinal / total).clamp(0.0, 1.0),
+                minHeight: 5,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _labsText(
+                context,
+                'This takes a few minutes and runs on your device. Keep the app '
+                    'open — the screen is held awake until it finishes.',
+                'Das dauert einige Minuten und läuft auf deinem Gerät. Lass die '
+                    'App offen — der Bildschirm bleibt bis zum Ende aktiv.',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
