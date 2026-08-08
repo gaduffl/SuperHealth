@@ -336,28 +336,31 @@ class _LabsScreenState extends State<LabsScreen> {
                   ),
             ],
             const SizedBox(height: 24),
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: ListTile(
-                leading: const Icon(Icons.science_outlined),
-                title: Text(
-                  _labsText(
-                    context,
-                    'Lab planning and biomarker management',
-                    'Laborplanung und Biomarkerverwaltung',
+            // The workspace is catalogue administration — PDF imports aside,
+            // it is prices, packages, plans and the full biomarker list.
+            if (controller.visibility.biomarkerCatalogAdmin)
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  leading: const Icon(Icons.science_outlined),
+                  title: Text(
+                    _labsText(
+                      context,
+                      'Lab planning and biomarker management',
+                      'Laborplanung und Biomarkerverwaltung',
+                    ),
                   ),
-                ),
-                subtitle: Text(
-                  _labsText(
-                    context,
-                    'PDF imports, saved plans, documents, and the complete catalog',
-                    'PDF-Importe, gespeicherte Pläne, Dokumente und der vollständige Katalog',
+                  subtitle: Text(
+                    _labsText(
+                      context,
+                      'PDF imports, saved plans, documents, and the complete catalog',
+                      'PDF-Importe, gespeicherte Pläne, Dokumente und der vollständige Katalog',
+                    ),
                   ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openWorkspace(),
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _openWorkspace(),
               ),
-            ),
           ],
         ),
       ),

@@ -18,6 +18,7 @@ import '../ai/provider_clients.dart';
 import '../ai/supplement_label_service.dart';
 import '../analysis/correlation_service.dart';
 import '../analysis/lab_plan_pricing.dart';
+import 'feature_visibility.dart';
 import '../analysis/supplement_insights.dart';
 import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
@@ -1282,6 +1283,33 @@ class AppController extends ChangeNotifier {
   ) async {
     await repository.saveBiomarkerPackage(package, biomarkerIds);
     await refreshActiveData();
+  }
+
+  /// What the active profile can see. Screens ask this rather than testing
+  /// `easyMode` inline, so the mode means the same thing in every corner.
+  FeatureVisibility get visibility =>
+      FeatureVisibility.forProfile(easyMode: activeProfile?.easyMode ?? true);
+
+  Future<void> setEasyMode(bool enabled) async {
+    final profile = activeProfile;
+    if (profile == null || profile.easyMode == enabled) return;
+    await repository.saveProfile(
+      Profile(
+        id: profile.id,
+        displayName: profile.displayName,
+        dateOfBirth: profile.dateOfBirth,
+        sex: profile.sex,
+        heightCm: profile.heightCm,
+        weightKg: profile.weightKg,
+        notes: profile.notes,
+        easyMode: enabled,
+        createdAt: profile.createdAt,
+        updatedAt: DateTime.now(),
+        deleted: profile.deleted,
+      ),
+    );
+    await refreshProfiles();
+    notifyListeners();
   }
 
   Future<void> deleteBiomarkerPackage(BiomarkerPackage package) async {

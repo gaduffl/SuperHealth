@@ -273,6 +273,8 @@ class HealthRepository {
       heightCm: heightCm,
       weightKg: weightKg,
       notes: notes.trim(),
+      // The one place new profiles are opted into the simplified app.
+      easyMode: true,
       createdAt: now,
       updatedAt: now,
     );

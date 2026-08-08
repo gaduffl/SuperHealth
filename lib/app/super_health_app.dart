@@ -202,13 +202,19 @@ class _HomeShell extends StatelessWidget {
 class _HomeShellBody extends StatelessWidget {
   const _HomeShellBody();
 
-  static const _screens = [
-    DashboardScreen(),
-    TrackingScreen(),
-    HealthScreen(),
-    AdvisorScreen(),
-    SettingsScreen(),
-  ];
+  /// Keyed by the mode, because TrackingScreen and HealthScreen size their
+  /// TabControllers once and a controller cannot change length. Switching
+  /// profiles therefore has to rebuild them rather than mutate them.
+  static List<Widget> _screensFor(bool easyMode) {
+    final key = ValueKey(easyMode);
+    return [
+      const DashboardScreen(),
+      TrackingScreen(key: key),
+      HealthScreen(key: key),
+      const AdvisorScreen(),
+      const SettingsScreen(),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -306,7 +312,10 @@ class _HomeShellBody extends StatelessWidget {
               )
             : null,
       ),
-      body: IndexedStack(index: index, children: _screens),
+      body: IndexedStack(
+        index: index,
+        children: _screensFor(controller.activeProfile?.easyMode ?? true),
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: index,
         onTap: navigation.selectTab,
