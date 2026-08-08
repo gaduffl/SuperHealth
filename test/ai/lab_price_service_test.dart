@@ -21,8 +21,10 @@ void main() {
     updatedAt: createdAt,
   );
 
-  String responseFor(List<Map<String, Object?>> prices) =>
-      jsonEncode({'prices': prices});
+  String responseFor(
+    List<Map<String, Object?>> prices, {
+    List<Map<String, Object?>> packagePrices = const [],
+  }) => jsonEncode({'prices': prices, 'package_prices': packagePrices});
 
   group('proposal classification', () {
     test('a sourced euro price close to the stored one is confident', () {
@@ -122,11 +124,11 @@ void main() {
           marker('near', price: 20, name: 'Near'),
         ],
       );
-      expect(set.needsReview.map((item) => item.biomarkerId).toSet(), {
+      expect(set.needsReview.map((item) => item.targetId).toSet(), {
         'up',
         'down',
       });
-      expect(set.confident.single.biomarkerId, 'near');
+      expect(set.confident.single.targetId, 'near');
     });
 
     test('filling an empty price is offered but never pre-ticked', () {
@@ -187,7 +189,7 @@ void main() {
         catalog: [marker('ferritin', price: 20)],
       );
       expect(set.proposals, isEmpty);
-      expect(set.unknownBiomarkerIds, ['not-in-catalog']);
+      expect(set.unknownTargetIds, ['not-in-catalog']);
     });
 
     test('a nonsense price is skipped rather than stored', () {
@@ -300,6 +302,100 @@ void main() {
       // A lab test that costs nothing does not exist.
       expect(hasLabPrice(-1), isFalse);
       expect(hasLabPrice(0.01), isTrue);
+    });
+  });
+
+  group('packages are priced as bundles', () {
+    BiomarkerPackage bundle(String id, {double? price, String? lab}) =>
+        BiomarkerPackage(
+          id: id,
+          name: 'Kleines Blutbild',
+          priceEur: price,
+          labName: lab,
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        );
+
+    test('a bundle price becomes a package proposal, not a biomarker one', () {
+      final set = LabPriceService.parseResponse(
+        responseFor(
+          [],
+          packagePrices: [
+            {
+              'package_id': 'blutbild',
+              'price_eur': 15,
+              'currency': 'EUR',
+              'lab_name': 'Labor A',
+              'quote': 'Kleines Blutbild 15,00 €',
+            },
+          ],
+        ),
+        catalog: [marker('hb', price: 8)],
+        packages: [bundle('blutbild', price: 14, lab: 'Labor A')],
+      );
+      final proposal = set.proposals.single;
+      expect(proposal.isPackage, isTrue);
+      expect(proposal.targetId, 'blutbild');
+      expect(proposal.newPriceEur, 15);
+      // Sourced, in euros, close to the stored bundle price.
+      expect(set.confident, hasLength(1));
+    });
+
+    test('a package is held to the same review rules as a biomarker', () {
+      final set = LabPriceService.parseResponse(
+        responseFor(
+          [],
+          packagePrices: [
+            {
+              'package_id': 'blutbild',
+              'price_eur': 15,
+              'currency': 'EUR',
+              'lab_name': '',
+              'quote': '',
+            },
+          ],
+        ),
+        catalog: const [],
+        packages: [bundle('blutbild')],
+      );
+      expect(set.needsReview.single.reviewReasons, {
+        LabPriceReviewReason.unsourced,
+        LabPriceReviewReason.firstPrice,
+      });
+    });
+
+    test('a package outside the catalog is dropped, not created', () {
+      final set = LabPriceService.parseResponse(
+        responseFor(
+          [],
+          packagePrices: [
+            {
+              'package_id': 'not-mine',
+              'price_eur': 15,
+              'currency': 'EUR',
+              'lab_name': '',
+              'quote': 'x',
+            },
+          ],
+        ),
+        catalog: const [],
+        packages: [bundle('blutbild')],
+      );
+      expect(set.proposals, isEmpty);
+      expect(set.unknownTargetIds, ['not-mine']);
+    });
+
+    test('the catalog names a package by its members, not only its name', () {
+      // A lab calls the same bundle something else, so the model needs the
+      // tests inside it to recognise a match on a price list.
+      final json = LabPriceService.catalogJson(
+        [marker('hb', name: 'Haemoglobin')],
+        packages: [bundle('blutbild')],
+        packageMembers: {
+          'blutbild': {'hb'},
+        },
+      );
+      expect(json, contains('"contains":["Haemoglobin"]'));
     });
   });
 }

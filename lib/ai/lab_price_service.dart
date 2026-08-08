@@ -52,8 +52,9 @@ extension LabPriceReviewReasonX on LabPriceReviewReason {
 /// One price the model proposes for one biomarker.
 class LabPriceProposal {
   const LabPriceProposal({
-    required this.biomarkerId,
-    required this.biomarkerName,
+    required this.targetId,
+    required this.targetName,
+    required this.isPackage,
     required this.oldPriceEur,
     required this.newPriceEur,
     required this.labName,
@@ -62,8 +63,12 @@ class LabPriceProposal {
     required this.reviewReasons,
   });
 
-  final String biomarkerId;
-  final String biomarkerName;
+  final String targetId;
+  final String targetName;
+
+  /// Whether [targetId] names a package rather than a single biomarker. A
+  /// package price is the bundle's price, never a share of it.
+  final bool isPackage;
   final double? oldPriceEur;
   final double newPriceEur;
   final String labName;
@@ -88,7 +93,7 @@ class LabPriceProposal {
 class LabPriceProposalSet {
   const LabPriceProposalSet({
     required this.proposals,
-    required this.unknownBiomarkerIds,
+    required this.unknownTargetIds,
     required this.sourceUrl,
     required this.usage,
     this.failedBatches = const [],
@@ -98,7 +103,7 @@ class LabPriceProposalSet {
 
   /// Ids the model returned that are not in the catalog. Dropped rather than
   /// created: inventing a biomarker to hang a price on is worse than no price.
-  final List<String> unknownBiomarkerIds;
+  final List<String> unknownTargetIds;
 
   final String? sourceUrl;
   final TokenUsage? usage;
@@ -162,6 +167,9 @@ Rules:
 - A price is for a single named test. Do not divide a panel price across its
   parts, and do not return a panel price for one of its members.
 - Omit any biomarker you have no price for. An omission is a correct answer.
+- A "packages" entry is a bundle sold as one item. Price it as the bundle costs
+  in total, in "package_prices". Never divide it across its members, and never
+  copy a member's price into it.
 ''';
 
   /// Fetches a price page and reduces it to text.
@@ -259,7 +267,11 @@ Rules:
   ///
   /// Deliberately not the health context: pricing needs no measurements, no
   /// supplements and no symptoms, so none are sent.
-  static String catalogJson(List<Biomarker> catalog) => jsonEncode({
+  static String catalogJson(
+    List<Biomarker> catalog, {
+    List<BiomarkerPackage> packages = const [],
+    Map<String, Set<String>> packageMembers = const {},
+  }) => jsonEncode({
     'biomarkers': [
       for (final item in catalog)
         {
@@ -271,11 +283,34 @@ Rules:
           if (item.labName != null) 'current_lab': item.labName,
         },
     ],
+    // Members are named so the model can match a bundle on a price list by the
+    // tests it contains, not only by a name that differs lab to lab.
+    if (packages.isNotEmpty)
+      'packages': [
+        for (final item in packages)
+          {
+            'package_id': item.id,
+            'name': item.name,
+            'current_price_eur': item.priceEur,
+            if (item.labName != null) 'current_lab': item.labName,
+            'contains': [
+              for (final memberId
+                  in packageMembers[item.id] ?? const <String>{})
+                catalog
+                        .where((marker) => marker.id == memberId)
+                        .map((marker) => marker.displayName)
+                        .firstOrNull ??
+                    memberId,
+            ],
+          },
+      ],
   });
 
   Future<LabPriceProposalSet> propose({
     required List<Biomarker> catalog,
     required AiTaskSettings settings,
+    List<BiomarkerPackage> packages = const [],
+    Map<String, Set<String>> packageMembers = const {},
     String? sourceText,
     String? sourceUrl,
     String? instructions,
@@ -307,13 +342,18 @@ Rules:
           client: client,
           key: key,
           batch: batch,
+          // Packages ride on the first batch only. A bundle is one row, there
+          // are a handful of them, and repeating them per batch would invite
+          // the same package being priced several times over.
+          packages: identical(batch, batches.first) ? packages : const [],
+          packageMembers: packageMembers,
           settings: settings,
           sourceText: sourceText,
           sourceUrl: sourceUrl,
           instructions: instructions,
         );
         merged.addAll(set.proposals);
-        unknown.addAll(set.unknownBiomarkerIds);
+        unknown.addAll(set.unknownTargetIds);
         inputTokens += set.usage?.inputTokens ?? 0;
         outputTokens += set.usage?.outputTokens ?? 0;
       } on Object catch (error) {
@@ -330,10 +370,10 @@ Rules:
         'No prices could be read. Failed batches: ${failures.join('; ')}.',
       );
     }
-    merged.sort((a, b) => a.biomarkerName.compareTo(b.biomarkerName));
+    merged.sort((a, b) => a.targetName.compareTo(b.targetName));
     return LabPriceProposalSet(
       proposals: List.unmodifiable(merged),
-      unknownBiomarkerIds: List.unmodifiable(unknown),
+      unknownTargetIds: List.unmodifiable(unknown),
       sourceUrl: sourceUrl,
       usage: TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens),
       failedBatches: List.unmodifiable(failures),
@@ -344,6 +384,8 @@ Rules:
     required AiProviderClient client,
     required String key,
     required List<Biomarker> batch,
+    required List<BiomarkerPackage> packages,
+    required Map<String, Set<String>> packageMembers,
     required AiTaskSettings settings,
     String? sourceText,
     String? sourceUrl,
@@ -374,7 +416,11 @@ Rules:
         model: settings.model,
         systemPrompt: systemPrompt,
         userPrompt: prompt.toString(),
-        contextJson: catalogJson(catalog),
+        contextJson: catalogJson(
+          catalog,
+          packages: packages,
+          packageMembers: packageMembers,
+        ),
         reasoningLevel: settings.reasoningLevel,
         webSearch: settings.webSearch,
         requireJson: true,
@@ -385,6 +431,7 @@ Rules:
     return parseResponse(
       response.text,
       catalog: catalog,
+      packages: packages,
       sourceUrl: sourceUrl,
       usage: response.usage,
     );
@@ -397,6 +444,7 @@ Rules:
   static LabPriceProposalSet parseResponse(
     String text, {
     required List<Biomarker> catalog,
+    List<BiomarkerPackage> packages = const [],
     String? sourceUrl,
     TokenUsage? usage,
   }) {
@@ -448,8 +496,9 @@ Rules:
 
       proposals.add(
         LabPriceProposal(
-          biomarkerId: biomarker.id,
-          biomarkerName: biomarker.displayName,
+          targetId: biomarker.id,
+          targetName: biomarker.displayName,
+          isPackage: false,
           oldPriceEur: old,
           newPriceEur: price,
           labName: lab.isEmpty ? (biomarker.labName ?? '') : lab,
@@ -459,10 +508,51 @@ Rules:
         ),
       );
     }
-    proposals.sort((a, b) => a.biomarkerName.compareTo(b.biomarkerName));
+    final packagesById = {for (final item in packages) item.id: item};
+    final packageRows = decoded['package_prices'];
+    for (final row in packageRows is List ? packageRows : const []) {
+      if (row is! Map) continue;
+      final id = '${row['package_id'] ?? ''}'.trim();
+      final package = packagesById[id];
+      if (package == null) {
+        if (id.isNotEmpty) unknown.add(id);
+        continue;
+      }
+      final price = _toDouble(row['price_eur']);
+      if (price == null || price <= 0 || !price.isFinite) continue;
+      final currency = '${row['currency'] ?? 'EUR'}'.trim().toUpperCase();
+      final quote = '${row['quote'] ?? ''}'.trim();
+      final lab = '${row['lab_name'] ?? ''}'.trim();
+      final old = package.priceEur;
+      proposals.add(
+        LabPriceProposal(
+          targetId: package.id,
+          targetName: package.name,
+          isPackage: true,
+          oldPriceEur: old,
+          newPriceEur: price,
+          labName: lab.isEmpty ? (package.labName ?? '') : lab,
+          currency: currency.isEmpty ? 'EUR' : currency,
+          quote: quote,
+          reviewReasons: <LabPriceReviewReason>{
+            if (quote.isEmpty) LabPriceReviewReason.unsourced,
+            if (currency.isNotEmpty && currency != 'EUR')
+              LabPriceReviewReason.foreignCurrency,
+            if (!hasLabPrice(old)) LabPriceReviewReason.firstPrice,
+            if (hasLabPrice(old) && _isLargeChange(old!, price))
+              LabPriceReviewReason.largeChange,
+            if (lab.isNotEmpty &&
+                (package.labName ?? '').isNotEmpty &&
+                lab.toLowerCase() != package.labName!.toLowerCase())
+              LabPriceReviewReason.conflictingLab,
+          },
+        ),
+      );
+    }
+    proposals.sort((a, b) => a.targetName.compareTo(b.targetName));
     return LabPriceProposalSet(
       proposals: List.unmodifiable(proposals),
-      unknownBiomarkerIds: List.unmodifiable(unknown),
+      unknownTargetIds: List.unmodifiable(unknown),
       sourceUrl: sourceUrl,
       usage: usage,
     );
@@ -480,8 +570,29 @@ Rules:
   static const _schema = <String, Object?>{
     'type': 'object',
     'additionalProperties': false,
-    'required': ['prices'],
+    'required': ['prices', 'package_prices'],
     'properties': {
+      'package_prices': {
+        'type': 'array',
+        'items': {
+          'type': 'object',
+          'additionalProperties': false,
+          'required': [
+            'package_id',
+            'price_eur',
+            'currency',
+            'quote',
+            'lab_name',
+          ],
+          'properties': {
+            'package_id': {'type': 'string'},
+            'price_eur': {'type': 'number'},
+            'currency': {'type': 'string'},
+            'lab_name': {'type': 'string'},
+            'quote': {'type': 'string'},
+          },
+        },
+      },
       'prices': {
         'type': 'array',
         'items': {

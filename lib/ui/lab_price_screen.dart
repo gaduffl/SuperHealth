@@ -299,15 +299,15 @@ class _LabPriceReviewScreenState extends State<LabPriceReviewScreen> {
                       ),
                     ),
                   ),
-                if (set.unknownBiomarkerIds.isNotEmpty)
+                if (set.unknownTargetIds.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Text(
                       _priceText(
                         context,
-                        '${set.unknownBiomarkerIds.length} price(s) named a biomarker '
+                        '${set.unknownTargetIds.length} price(s) named a biomarker '
                             'that is not in your catalog and were dropped.',
-                        '${set.unknownBiomarkerIds.length} Preis(e) nannten einen Biomarker, '
+                        '${set.unknownTargetIds.length} Preis(e) nannten einen Biomarker, '
                             'der nicht in deinem Katalog ist, und wurden verworfen.',
                       ),
                       style: Theme.of(context).textTheme.bodySmall,
@@ -404,7 +404,15 @@ class _Section extends StatelessWidget {
           CheckboxListTile(
             value: approved.contains(proposal),
             onChanged: (value) => onChanged(proposal, value ?? false),
-            title: Text(proposal.biomarkerName),
+            title: Row(
+              children: [
+                if (proposal.isPackage) ...[
+                  const Icon(Icons.inventory_2_outlined, size: 16),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(child: Text(proposal.targetName)),
+              ],
+            ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
