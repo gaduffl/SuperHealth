@@ -626,6 +626,103 @@ class HealthEvent {
   );
 }
 
+/// A set of biomarkers a lab sells as one item, at one price.
+///
+/// "Großes Blutbild" is a dozen markers for less than the dozen cost apart, so
+/// a plan that needs several of them should be costed at the bundle rather than
+/// summed. Household level, like [Biomarker]: it describes a lab's offering,
+/// not a person.
+class BiomarkerPackage {
+  const BiomarkerPackage({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+    this.priceEur,
+    this.labName,
+    this.priceCheckedAt,
+    this.notes = '',
+    this.deleted = false,
+  });
+
+  final String id;
+  final String name;
+  final double? priceEur;
+  final String? labName;
+  final DateTime? priceCheckedAt;
+  final String notes;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  /// See [hasLabPrice]: a zero is an absent price, not a free bundle.
+  bool get hasPrice => hasLabPrice(priceEur);
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'name': name,
+    'price_eur': priceEur,
+    'lab_name': labName,
+    'price_checked_at': priceCheckedAt == null ? null : _iso(priceCheckedAt!),
+    'notes': notes,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  static BiomarkerPackage fromMap(Map<String, Object?> map) => BiomarkerPackage(
+    id: map['id']!.toString(),
+    name: map['name']?.toString() ?? '',
+    priceEur: (map['price_eur'] as num?)?.toDouble(),
+    labName: map['lab_name']?.toString(),
+    priceCheckedAt: map['price_checked_at'] == null
+        ? null
+        : DateTime.parse(map['price_checked_at']!.toString()).toLocal(),
+    notes: map['notes']?.toString() ?? '',
+    createdAt: DateTime.parse(map['created_at']!.toString()).toLocal(),
+    updatedAt: DateTime.parse(map['updated_at']!.toString()).toLocal(),
+    deleted: _boolFromDb(map['deleted']),
+  );
+}
+
+/// One biomarker's membership of a [BiomarkerPackage].
+class BiomarkerPackageItem {
+  const BiomarkerPackageItem({
+    required this.id,
+    required this.packageId,
+    required this.biomarkerId,
+    required this.createdAt,
+    required this.updatedAt,
+    this.deleted = false,
+  });
+
+  final String id;
+  final String packageId;
+  final String biomarkerId;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'package_id': packageId,
+    'biomarker_id': biomarkerId,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+
+  static BiomarkerPackageItem fromMap(Map<String, Object?> map) =>
+      BiomarkerPackageItem(
+        id: map['id']!.toString(),
+        packageId: map['package_id']!.toString(),
+        biomarkerId: map['biomarker_id']!.toString(),
+        createdAt: DateTime.parse(map['created_at']!.toString()).toLocal(),
+        updatedAt: DateTime.parse(map['updated_at']!.toString()).toLocal(),
+        deleted: _boolFromDb(map['deleted']),
+      );
+}
+
 /// Whether a stored price means anything.
 ///
 /// A legacy import writes 0 where its source had no price, and a lab test that

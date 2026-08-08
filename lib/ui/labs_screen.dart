@@ -20,6 +20,7 @@ import 'biomarker_detail_sheet.dart';
 import 'biomarker_lists_sheet.dart';
 import 'charts.dart';
 import 'common.dart';
+import 'biomarker_package_screen.dart';
 import 'dialogs.dart';
 import 'lab_price_screen.dart';
 import 'dose_underlay.dart';
@@ -457,6 +458,16 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                       ? null
                       : () => _importLabPdf(context, controller),
                   icon: const Icon(Icons.document_scanner_outlined),
+                ),
+                const SizedBox(width: 6),
+                IconButton.filledTonal(
+                  tooltip: _labsText(context, 'Test packages', 'Testpakete'),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const BiomarkerPackageScreen(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.inventory_2_outlined),
                 ),
                 const SizedBox(width: 6),
                 IconButton.filledTonal(
@@ -2602,50 +2613,86 @@ class _PlanTiers extends StatelessWidget {
   final Future<void> Function(LabPlanItem, bool)? onToggle;
 
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      for (final tier in LabTier.values)
-        ExpansionTile(
-          initiallyExpanded: tier == LabTier.core,
-          tilePadding: EdgeInsets.zero,
-          title: Text(_label(context, tier)),
-          subtitle: Text(
-            _labsText(
-              context,
-              '${plan.itemsThrough(tier).length} tests · '
-                  '${plan.knownTotal(tier).toStringAsFixed(2)} € known'
-                  '${plan.missingPriceCount(tier) == 0 ? '' : ' + ${plan.missingPriceCount(tier)} unpriced'}',
-              '${plan.itemsThrough(tier).length} Tests · '
-                  '${plan.knownTotal(tier).toStringAsFixed(2)} € bekannt'
-                  '${plan.missingPriceCount(tier) == 0 ? '' : ' + ${plan.missingPriceCount(tier)} ohne Preis'}',
-            ),
-          ),
-          children: [
-            for (final item in plan.itemsThrough(tier))
-              CheckboxListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.only(left: 8),
-                title: Text(item.biomarkerName),
+  Widget build(BuildContext context) {
+    // Packages are read here rather than passed down, because the costing they
+    // produce is what every tier line reports.
+    final controller = context.watch<AppController>();
+    return Column(
+      children: [
+        for (final tier in LabTier.values)
+          Builder(
+            builder: (context) {
+              final costing = controller.costFor(plan, tier);
+              return ExpansionTile(
+                initiallyExpanded: tier == LabTier.core,
+                tilePadding: EdgeInsets.zero,
+                title: Text(_label(context, tier)),
                 subtitle: Text(
-                  [
-                    item.evidenceClass.name,
-                    item.rationale,
-                    if (item.preparation.isNotEmpty) item.preparation,
-                    !hasLabPrice(item.priceEur)
-                        ? _labsText(context, 'Price unknown', 'Preis unbekannt')
-                        : '${item.priceEur!.toStringAsFixed(2)} €',
-                  ].join(' · '),
+                  _labsText(
+                    context,
+                    '${plan.itemsThrough(tier).length} tests · '
+                        '${costing.totalEur.toStringAsFixed(2)} € known'
+                        '${costing.unpricedCount == 0 ? '' : ' + ${costing.unpricedCount} unpriced'}'
+                        '${costing.appliedPackages.isEmpty ? '' : ' · ${costing.appliedPackages.length} package(s)'}',
+                    '${plan.itemsThrough(tier).length} Tests · '
+                        '${costing.totalEur.toStringAsFixed(2)} € bekannt'
+                        '${costing.unpricedCount == 0 ? '' : ' + ${costing.unpricedCount} ohne Preis'}'
+                        '${costing.appliedPackages.isEmpty ? '' : ' · ${costing.appliedPackages.length} Paket(e)'}',
+                  ),
                 ),
-                value: item.checked,
-                onChanged: onToggle == null
-                    ? null
-                    : (checked) => onToggle!(item, checked ?? false),
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-          ],
-        ),
-    ],
-  );
+                children: [
+                  // Named before the tests, because a bundle changes what the tier
+                  // costs and the reader has to see why the total is not the sum.
+                  for (final applied in costing.appliedPackages)
+                    ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.only(left: 8),
+                      leading: const Icon(Icons.inventory_2_outlined, size: 20),
+                      title: Text(applied.package.name),
+                      subtitle: Text(
+                        _labsText(
+                          context,
+                          '${applied.package.priceEur!.toStringAsFixed(2)} € for '
+                              '${applied.coveredBiomarkerIds.length} test(s)'
+                              '${applied.savingEur == null ? '' : ' · saves ${applied.savingEur!.toStringAsFixed(2)} €'}',
+                          '${applied.package.priceEur!.toStringAsFixed(2)} € für '
+                              '${applied.coveredBiomarkerIds.length} Test(s)'
+                              '${applied.savingEur == null ? '' : ' · spart ${applied.savingEur!.toStringAsFixed(2)} €'}',
+                        ),
+                      ),
+                    ),
+                  for (final item in plan.itemsThrough(tier))
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.only(left: 8),
+                      title: Text(item.biomarkerName),
+                      subtitle: Text(
+                        [
+                          item.evidenceClass.name,
+                          item.rationale,
+                          if (item.preparation.isNotEmpty) item.preparation,
+                          !hasLabPrice(item.priceEur)
+                              ? _labsText(
+                                  context,
+                                  'Price unknown',
+                                  'Preis unbekannt',
+                                )
+                              : '${item.priceEur!.toStringAsFixed(2)} €',
+                        ].join(' · '),
+                      ),
+                      value: item.checked,
+                      onChanged: onToggle == null
+                          ? null
+                          : (checked) => onToggle!(item, checked ?? false),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                ],
+              );
+            },
+          ),
+      ],
+    );
+  }
 
   String _label(BuildContext context, LabTier tier) => switch (tier) {
     LabTier.core => _labsText(context, 'Core', 'Basis'),

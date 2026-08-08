@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 9;
+  static const schemaVersion = 10;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -59,6 +59,8 @@ class AppDatabase {
     'lab_plan_items',
     'advisor_messages',
     'trend_dose_links',
+    'biomarker_packages',
+    'biomarker_package_items',
   ];
 
   Future<Database> get database async => _database ??= await _open();
@@ -430,6 +432,8 @@ class AppDatabase {
       ''');
 
       await txn.execute(_createTrendDoseLinks);
+      await txn.execute(_createBiomarkerPackages);
+      await txn.execute(_createBiomarkerPackageItems);
 
       await txn.execute('''
         CREATE TABLE sync_shadow (
@@ -507,8 +511,44 @@ class AppDatabase {
     'CREATE UNIQUE INDEX idx_trend_dose_definition ON trend_dose_links(profile_id, definition_id) WHERE deleted = 0 AND definition_id IS NOT NULL',
   ];
 
+  /// Shared by [_create] and [_upgrade], as [_createTrendDoseLinks] is.
+  ///
+  /// A package is a lab's offering — "großes Blutbild" — not a person's, so it
+  /// sits alongside `biomarkers` at household level and is absent from
+  /// [profileTables].
+  static const _createBiomarkerPackages = '''
+        CREATE TABLE biomarker_packages (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          price_eur REAL,
+          lab_name TEXT,
+          price_checked_at TEXT,
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted INTEGER NOT NULL DEFAULT 0
+        )
+      ''';
+
+  static const _createBiomarkerPackageItems = '''
+        CREATE TABLE biomarker_package_items (
+          id TEXT PRIMARY KEY,
+          package_id TEXT NOT NULL REFERENCES biomarker_packages(id),
+          biomarker_id TEXT NOT NULL REFERENCES biomarkers(id),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted INTEGER NOT NULL DEFAULT 0
+        )
+      ''';
+
+  static const _biomarkerPackageIndexes = <String>[
+    'CREATE UNIQUE INDEX idx_package_name ON biomarker_packages(name) WHERE deleted = 0',
+    'CREATE UNIQUE INDEX idx_package_member ON biomarker_package_items(package_id, biomarker_id) WHERE deleted = 0',
+  ];
+
   static const _indexes = <String>[
     ..._trendDoseLinkIndexes,
+    ..._biomarkerPackageIndexes,
     'CREATE INDEX idx_supplements_name ON supplements(active, deleted, name)',
     'CREATE INDEX idx_schedules_profile ON supplement_schedules(profile_id, active, deleted)',
     'CREATE INDEX idx_intakes_profile_time ON supplement_intakes(profile_id, taken_at)',
@@ -620,6 +660,16 @@ class AppDatabase {
           ELSE stock_unit
         END
       ''');
+    }
+    if (oldVersion < 10) {
+      // New tables, so nothing to back-fill: no package exists until the owner
+      // records one. Members reference biomarkers, which every v10 database
+      // already has.
+      await db.execute(_createBiomarkerPackages);
+      await db.execute(_createBiomarkerPackageItems);
+      for (final statement in _biomarkerPackageIndexes) {
+        await db.execute(statement);
+      }
     }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;
