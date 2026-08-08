@@ -289,10 +289,38 @@ and a running clock rather than only greying a button, because a still screen
 and a hung request look identical. Progress reporting never throws — commentary
 must not cost the caller their result.
 
-**Backgrounding does not stop a Dart isolate, but a sleeping device does.** The
-lab planner holds a wakelock for the duration. That is a mitigation, not a
-guarantee: only a foreground service survives the process being killed, so do
-not describe the wakelock as making a long call background-safe.
+**Backgrounding does not stop a Dart isolate; a sleeping device and a reclaimed
+process do.** `LongTaskGuard` answers both — a wakelock against sleep, a
+foreground service (`dataSync`) against the kill list. Take it through the guard
+rather than either mechanism directly, and remember they are not
+interchangeable: only the service survives memory pressure, so a wakelock alone
+must never be described as making a long call background-safe.
+
+**Nothing runs inside the foreground service.** The work stays on the main
+isolate, where secure storage, the database and the context builder already are;
+a second isolate would have to re-establish all three. The service buys process
+priority, nothing more — so it takes no task handler and no repeating callback.
+
+**The guard is best effort, and the screen says which it got.** Every platform
+call in `LongTaskGuard` swallows its failure: a guard that could not be taken
+makes the task fragile, but a guard that threw would lose the task outright.
+`hasForegroundService` reports what was actually taken, and the progress card
+only promises "you can switch away" when it is true — otherwise it falls back to
+telling the user to keep the app open. Holds are refcounted, and `release()`
+never stops a service the guard did not start.
+
+**A notification the platform shows needs the user's language at the call
+site.** `AppController` cannot resolve `AppLanguage.system` — only the widget
+tree knows what the user is reading — so `generateLabPlan` takes a required
+`LongTaskNotice` rather than defaulting to English. Do the same for any other
+string that leaves the app.
+
+**Android manifest changes are not optional plugin extras.** A foreground
+service needs its `<service>` declaration, its `foregroundServiceType`, and the
+matching `FOREGROUND_SERVICE_*` permission in
+`android/app/src/main/AndroidManifest.xml`. `flutter_foreground_task`'s own
+manifest contributes neither the service nor the typed permission, and the
+failure is silent at build time and fatal at runtime.
 
 **Easy mode is per profile, and its capabilities live in one place.**
 `FeatureVisibility` names every difference; screens ask it (`controller
@@ -391,3 +419,7 @@ which remain unexamined rather than known-good:
 - The backup/restore checksum scheme.
 - Localisation coverage beyond unit and migration strings.
 - Index coverage and query performance on the larger tables.
+- Foreground-service behaviour on a real device. `LongTaskGuard`'s bookkeeping is
+  tested against injected seams, but the service actually starting, surviving
+  Doze, and stopping cleanly has never run anywhere: CI builds the APK and never
+  installs it. Treat the first report from a device as the real verification.

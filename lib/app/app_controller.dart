@@ -12,8 +12,6 @@ import '../ai/ai_models.dart';
 import '../ai/ai_settings.dart';
 import '../ai/api_key_store.dart';
 import '../ai/document_parsing_service.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
-
 import '../ai/lab_planner_service.dart';
 import '../ai/lab_price_service.dart';
 import '../ai/provider_clients.dart';
@@ -21,6 +19,7 @@ import '../ai/supplement_label_service.dart';
 import '../analysis/correlation_service.dart';
 import '../analysis/lab_plan_pricing.dart';
 import 'feature_visibility.dart';
+import 'long_task_guard.dart';
 import '../analysis/supplement_insights.dart';
 import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
@@ -61,6 +60,7 @@ class AppController extends ChangeNotifier {
     AppearanceSettingsStore? appearanceSettingsStore,
     InitialSetupProgressStore? initialSetupProgressStore,
     RestoreSyncGateStore? restoreSyncGateStore,
+    LongTaskGuard? longTaskGuard,
   }) : _database = database,
        repository = repository,
        keyStore = keyStore,
@@ -90,7 +90,8 @@ class AppController extends ChangeNotifier {
            appearanceSettingsStore ?? AppearanceSettingsStore(),
        _initialSetupProgressStore =
            initialSetupProgressStore ?? InitialSetupProgressStore(),
-       _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore();
+       _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore(),
+       _longTaskGuard = longTaskGuard ?? LongTaskGuard();
 
   final AppDatabase _database;
 
@@ -114,6 +115,7 @@ class AppController extends ChangeNotifier {
   final SupplementLabelService _supplementLabelService;
   final ProviderCapabilityRegistry capabilityRegistry;
   final ReminderService _reminderService;
+  final LongTaskGuard _longTaskGuard;
   final PortableBackupService? _portableBackupService;
   final DocumentsDirectory? _documentsDirectory;
   final AppearanceSettingsStore _appearanceSettingsStore;
@@ -172,6 +174,16 @@ class AppController extends ChangeNotifier {
   /// A long wait with a moving number reads as work; a still one reads as a
   /// hang, and the two are otherwise indistinguishable.
   DateTime? labPlanStartedAt;
+
+  /// Whether the running generation is held by a foreground service, and so
+  /// survives the app leaving the foreground.
+  ///
+  /// False when the service could not be started — the plan still generates,
+  /// but only for as long as the process lives. The screen has to be able to
+  /// tell the two apart, because "you can switch away" is a promise the app
+  /// cannot keep without this.
+  bool get labPlanSurvivesBackground => _longTaskGuard.hasForegroundService;
+
   final Map<AiProvider, bool> hasApiKey = {};
   final Map<AiProvider, List<AiModelInfo>> availableModels = {};
   ReminderPermissionStatus reminderPermissionStatus =
@@ -1706,7 +1718,13 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// [notice] is what the ongoing notification says while this runs. It is
+  /// required rather than defaulted because the controller cannot resolve the
+  /// device locale — under [AppLanguage.system] only the widget tree knows
+  /// which language the user is reading, and a silent English fallback is
+  /// exactly the untranslated string this app does not allow.
   Future<LabPlanGeneration> generateLabPlan({
+    required LongTaskNotice notice,
     DateTime? targetDate,
     String priorities = '',
   }) async {
@@ -1716,11 +1734,10 @@ class AppController extends ChangeNotifier {
     }
     return _withBusy(() async {
       labPlanStartedAt = DateTime.now();
-      // The isolate keeps running when the app is backgrounded, but a sleeping
-      // device suspends it and drops the request. This holds the screen awake
-      // for the duration — a mitigation, not a guarantee: only a foreground
-      // service survives the process being killed outright.
-      await _holdScreenAwake(true);
+      // Minutes of work on the main isolate. Backgrounding the app does not
+      // stop it, but a sleeping device suspends it and a reclaimed process
+      // kills it outright — the guard answers both.
+      await _longTaskGuard.hold(notice);
       try {
         final result = await _labPlannerService.generate(
           profileId: _profileId,
@@ -1741,21 +1758,9 @@ class AppController extends ChangeNotifier {
         // leave the screen claiming work that stopped.
         labPlanStage = null;
         labPlanStartedAt = null;
-        await _holdScreenAwake(false);
+        await _longTaskGuard.release();
       }
     });
-  }
-
-  /// Keeps the device awake while a long model call is in flight.
-  ///
-  /// Never throws: a platform without the plugin, or a refusal, must not cost
-  /// the caller their generation.
-  Future<void> _holdScreenAwake(bool hold) async {
-    try {
-      await WakelockPlus.toggle(enable: hold);
-    } on Object {
-      // Best effort. The request runs either way; it is just more fragile.
-    }
   }
 
   Future<void> saveDraftLabPlan() async {
