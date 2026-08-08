@@ -283,6 +283,14 @@ symptoms — because pricing does not need them. Before adding a flow, ask what
 the smallest input that answers the question is, rather than reaching for the
 health context because it already exists.
 
+**A package is a price, a list is a recall schedule.** They hold the same
+biomarkers for different reasons, so a package is *expanded* into a list rather
+than stored in one: "due" is a per-marker question — ferritin every six months,
+TSH every twelve — and a bundle-level interval would discard what the list
+already knows. `biomarker_list_items.biomarker_id` stays `NOT NULL` for that
+reason. Adding a package never overwrites an entry already on the list; the
+interval and notes on it were set deliberately.
+
 **A bundle is costed instead of its parts, never as well as them.**
 `LabPlanPricing` picks packages greedily by saving and removes their covered
 tests from the pool, so overlapping bundles (kleines ⊂ großes Blutbild) cannot

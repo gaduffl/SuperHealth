@@ -1503,6 +1503,50 @@ class AppController extends ChangeNotifier {
     await refreshActiveData();
   }
 
+  /// Adds every member of [package] to [list], skipping the ones already in it.
+  ///
+  /// The package is expanded rather than stored as a unit. A list is a recall
+  /// schedule and "due" is a per-marker question — ferritin every six months,
+  /// TSH every twelve — so collapsing a bundle into one interval would throw
+  /// away information the list already holds. The bundle matters at purchase
+  /// time, which is where the planner applies it.
+  ///
+  /// Returns how many were added and how many were already present, because
+  /// "nothing happened" and "it was already complete" look identical otherwise.
+  Future<({int added, int alreadyPresent})> addPackageToBiomarkerList({
+    required BiomarkerList list,
+    required BiomarkerPackage package,
+    int? dueIntervalDays,
+  }) => _withBusy(() async {
+    final memberIds = biomarkerPackageMembers[package.id] ?? const <String>{};
+    final byId = {for (final item in biomarkers) item.id: item};
+    var added = 0;
+    var present = 0;
+    for (final memberId in memberIds) {
+      final biomarker = byId[memberId];
+      if (biomarker == null) continue;
+      // An existing entry keeps its own interval and notes: the owner set
+      // those deliberately, and a bulk add is not the place to overwrite them.
+      if (list.items.any((item) => item.biomarkerId == memberId)) {
+        present++;
+        continue;
+      }
+      await repository.saveBiomarkerListItem(
+        BiomarkerListItem(
+          id: repository.newId(),
+          listId: list.id,
+          biomarkerId: biomarker.id,
+          dueIntervalDays: dueIntervalDays,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        ),
+      );
+      added++;
+    }
+    await refreshActiveData();
+    return (added: added, alreadyPresent: present);
+  });
+
   Future<void> removeBiomarkerListItem(BiomarkerListItem item) async {
     await repository.softDelete('biomarker_list_items', item.id);
     await refreshActiveData();
