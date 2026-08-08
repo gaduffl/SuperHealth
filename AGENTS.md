@@ -283,6 +283,15 @@ symptoms — because pricing does not need them. Before adding a flow, ask what
 the smallest input that answers the question is, rather than reaching for the
 health context because it already exists.
 
+**A bundle is costed instead of its parts, never as well as them.**
+`LabPlanPricing` picks packages greedily by saving and removes their covered
+tests from the pool, so overlapping bundles (kleines ⊂ großes Blutbild) cannot
+both charge for the markers they share. A package needs at least two planned
+tests to apply — one is that test's price under another name. When a covered
+test has no individual price the saving is *unknown*, not zero: the bundle is
+still applied because it turns an unknown into a number, but it reports
+`savingEur == null` rather than inventing one.
+
 **A zero price is an absent price.** The legacy import writes 0 where its source
 had no figure, so `priceEur == null` is not the test for "unpriced" — use
 `hasLabPrice()` / `Biomarker.hasPrice`. Getting this wrong made a 169-marker

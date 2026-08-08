@@ -70,6 +70,16 @@ final _isoInstantPattern = RegExp(
 final _dateOnlyPattern = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$');
 
 const _synchronizedReferences = <_SynchronizedReference>[
+  _SynchronizedReference(
+    'biomarker_package_items',
+    'package_id',
+    'biomarker_packages',
+  ),
+  _SynchronizedReference(
+    'biomarker_package_items',
+    'biomarker_id',
+    'biomarkers',
+  ),
   _SynchronizedReference('supplement_schedules', 'profile_id', 'profiles'),
   _SynchronizedReference(
     'supplement_schedules',
@@ -674,6 +684,92 @@ class HealthRepository {
       orderBy: 'category, display_name COLLATE NOCASE',
     );
     return rows.map(Biomarker.fromMap).toList();
+  }
+
+  Future<List<BiomarkerPackage>> biomarkerPackages() async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'biomarker_packages',
+      where: 'deleted = 0',
+      orderBy: 'name COLLATE NOCASE',
+    );
+    return rows.map(BiomarkerPackage.fromMap).toList();
+  }
+
+  /// Members per package, keyed by package id.
+  Future<Map<String, Set<String>>> biomarkerPackageMembers() async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'biomarker_package_items',
+      columns: ['package_id', 'biomarker_id'],
+      where: 'deleted = 0',
+    );
+    final members = <String, Set<String>>{};
+    for (final row in rows) {
+      members
+          .putIfAbsent('${row['package_id']}', () => <String>{})
+          .add('${row['biomarker_id']}');
+    }
+    return members;
+  }
+
+  /// Writes a package and replaces its membership in one transaction.
+  ///
+  /// Members are tombstoned rather than deleted, because a removed member is a
+  /// change other devices have to learn about — dropping the row would let the
+  /// old membership win on the next merge.
+  Future<void> saveBiomarkerPackage(
+    BiomarkerPackage package,
+    Set<String> biomarkerIds,
+  ) async {
+    final name = package.name.trim();
+    if (name.isEmpty) {
+      throw ArgumentError.value(package.name, 'name', 'must not be empty');
+    }
+    final db = await _database.database;
+    final now = DateTime.now();
+    await db.transaction((txn) async {
+      await txn.insert(
+        'biomarker_packages',
+        package.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      final existing = await txn.query(
+        'biomarker_package_items',
+        where: 'package_id = ?',
+        whereArgs: [package.id],
+      );
+      final byBiomarker = {
+        for (final row in existing) '${row['biomarker_id']}': row,
+      };
+      for (final entry in byBiomarker.entries) {
+        final wanted = biomarkerIds.contains(entry.key);
+        final isDeleted = entry.value['deleted'] == 1;
+        // Only touch a row whose state actually has to change, so updated_at
+        // does not churn and make every save look like an edit to sync.
+        if (isDeleted != wanted) continue;
+        await txn.update(
+          'biomarker_package_items',
+          {
+            'deleted': wanted ? 0 : 1,
+            'updated_at': now.toUtc().toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [entry.value['id']],
+        );
+      }
+      for (final biomarkerId in biomarkerIds) {
+        if (byBiomarker.containsKey(biomarkerId)) continue;
+        await txn.insert('biomarker_package_items', {
+          'id': newId(),
+          'package_id': package.id,
+          'biomarker_id': biomarkerId,
+          'created_at': now.toUtc().toIso8601String(),
+          'updated_at': now.toUtc().toIso8601String(),
+          'deleted': 0,
+        });
+      }
+    });
   }
 
   Future<void> saveBiomarker(Biomarker biomarker) async {

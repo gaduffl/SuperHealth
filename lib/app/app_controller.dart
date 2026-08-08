@@ -17,6 +17,7 @@ import '../ai/lab_price_service.dart';
 import '../ai/provider_clients.dart';
 import '../ai/supplement_label_service.dart';
 import '../analysis/correlation_service.dart';
+import '../analysis/lab_plan_pricing.dart';
 import '../analysis/supplement_insights.dart';
 import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
@@ -129,6 +130,8 @@ class AppController extends ChangeNotifier {
   List<Supplement> supplements = const [];
   List<SupplementSchedule> schedules = const [];
   List<SupplementSchedule> householdSchedules = const [];
+  List<BiomarkerPackage> biomarkerPackages = const [];
+  Map<String, Set<String>> biomarkerPackageMembers = const {};
   List<SupplementIntake> intakes = const [];
   List<InventoryMovement> inventoryMovements = const [];
   Map<String, double> stockLevels = const {};
@@ -537,6 +540,8 @@ class AppController extends ChangeNotifier {
       repository.messages(profile.id, 'primary'),
       repository.householdSchedules(),
       repository.trendDoseLinks(profile.id),
+      repository.biomarkerPackages(),
+      repository.biomarkerPackageMembers(),
     ]);
     supplements = values[0] as List<Supplement>;
     schedules = values[1] as List<SupplementSchedule>;
@@ -557,6 +562,8 @@ class AppController extends ChangeNotifier {
     advisorMessages = values[16] as List<AdvisorMessage>;
     householdSchedules = values[17] as List<SupplementSchedule>;
     trendDoseLinks = values[18] as List<TrendDoseLink>;
+    biomarkerPackages = values[19] as List<BiomarkerPackage>;
+    biomarkerPackageMembers = values[20] as Map<String, Set<String>>;
     notifyListeners();
   }
 
@@ -564,6 +571,8 @@ class AppController extends ChangeNotifier {
     supplements = const [];
     schedules = const [];
     householdSchedules = const [];
+    biomarkerPackages = const [];
+    biomarkerPackageMembers = const {};
     intakes = const [];
     inventoryMovements = const [];
     stockLevels = const {};
@@ -1230,6 +1239,27 @@ class AppController extends ChangeNotifier {
         await refreshActiveData();
         return applied;
       });
+
+  /// What a tier costs once packages replace the parts they cover.
+  LabPlanCosting costFor(LabPlan plan, LabTier tier) =>
+      const LabPlanPricing().cost(
+        items: plan.itemsThrough(tier),
+        packages: biomarkerPackages,
+        membersByPackageId: biomarkerPackageMembers,
+      );
+
+  Future<void> saveBiomarkerPackage(
+    BiomarkerPackage package,
+    Set<String> biomarkerIds,
+  ) async {
+    await repository.saveBiomarkerPackage(package, biomarkerIds);
+    await refreshActiveData();
+  }
+
+  Future<void> deleteBiomarkerPackage(BiomarkerPackage package) async {
+    await repository.softDelete('biomarker_packages', package.id);
+    await refreshActiveData();
+  }
 
   Future<void> saveBiomarkerRange(BiomarkerReferenceRange range) async {
     await repository.saveBiomarkerRange(range);
