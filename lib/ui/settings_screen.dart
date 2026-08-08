@@ -44,6 +44,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _refreshOneDriveStatus();
+    // Reads a file, so it cannot be done during build. The section shows
+    // "nothing recorded yet" until this lands, which is also the truth on a
+    // fresh install.
+    context.read<AppController>().refreshLabPlanLogSummary();
   }
 
   Future<void> _refreshOneDriveStatus() async {
@@ -589,6 +593,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
+          if (controller.labPlanLogAvailable) ...[
+            SectionHeader(
+              title: _settingsText(
+                context,
+                'Lab planner diagnostics',
+                'Laborplaner-Diagnose',
+              ),
+              subtitle: _settingsText(
+                context,
+                'A record of what each lab plan generation actually did',
+                'Ein Protokoll darüber, was jede Laborplan-Erstellung wirklich '
+                    'getan hat',
+              ),
+            ),
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.bug_report_outlined),
+                    title: Text(
+                      _settingsText(
+                        context,
+                        'Export the generation log',
+                        'Erstellungsprotokoll exportieren',
+                      ),
+                    ),
+                    subtitle: Text(
+                      controller.labPlanLogSummary.isEmpty
+                          ? _settingsText(
+                              context,
+                              'Nothing recorded yet. Generate a lab plan and '
+                                  'the log fills itself.',
+                              'Noch nichts aufgezeichnet. Erstelle einen '
+                                  'Laborplan, dann füllt sich das Protokoll.',
+                            )
+                          : '${controller.labPlanLogSummary}\n'
+                                '${_settingsText(context, 'Includes model responses, so treat the file as health data. Your health record itself is not included.', 'Enthält Modellantworten — behandle die Datei als Gesundheitsdaten. Deine Gesundheitsakte selbst ist nicht enthalten.')}',
+                    ),
+                    isThreeLine: controller.labPlanLogSummary.isNotEmpty,
+                    trailing: const Icon(Icons.download_outlined),
+                    onTap: controller.labPlanLogSummary.isEmpty
+                        ? null
+                        : () => _exportLabPlanLog(context, controller),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline),
+                    title: Text(
+                      _settingsText(
+                        context,
+                        'Delete the log',
+                        'Protokoll löschen',
+                      ),
+                    ),
+                    onTap: controller.labPlanLogSummary.isEmpty
+                        ? null
+                        : () => _clearLabPlanLog(context, controller),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           SectionHeader(
             title: _settingsText(
               context,
@@ -698,6 +765,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await save();
     } on Object catch (error) {
       if (mounted) await showAppError(context, error);
+    }
+  }
+
+  Future<void> _exportLabPlanLog(
+    BuildContext context,
+    AppController controller,
+  ) async {
+    try {
+      final file = await controller.exportLabPlanLog();
+      if (!context.mounted) return;
+      // Same shape as the lab plan export: the user picks the destination
+      // before anything is written, so health data never lands somewhere they
+      // did not choose.
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: _settingsText(
+          context,
+          'Save ${file.fileName}',
+          '${file.fileName} speichern',
+        ),
+        fileName: file.fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['txt'],
+        bytes: file.bytes,
+      );
+      if (path != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _settingsText(context, 'Log saved.', 'Protokoll gespeichert.'),
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
+  }
+
+  Future<void> _clearLabPlanLog(
+    BuildContext context,
+    AppController controller,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          _settingsText(
+            context,
+            'Delete the diagnostic log?',
+            'Diagnoseprotokoll löschen?',
+          ),
+        ),
+        content: Text(
+          _settingsText(
+            context,
+            'The record of previous generations is removed. Anything still '
+                'unexplained becomes harder to explain.',
+            'Das Protokoll früherer Erstellungen wird entfernt. Was noch '
+                'ungeklärt ist, lässt sich danach schwerer klären.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(_settingsText(context, 'Cancel', 'Abbrechen')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(_settingsText(context, 'Delete', 'Löschen')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await controller.clearLabPlanLog();
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
     }
   }
 
