@@ -94,9 +94,46 @@ extension LabPlanStageX on LabPlanStage {
   };
 }
 
-/// Reports a stage change. Never throws: progress is commentary, and losing it
-/// must not lose the plan.
-typedef LabPlanProgress = void Function(LabPlanStage stage);
+/// Where a generation is and what the model is currently producing.
+///
+/// The stage alone changes about four times across several minutes, so between
+/// changes the screen is as still as a hang. [activity] moves continuously
+/// while a response streams, which is the difference between "slow" and "stuck".
+class LabPlanUpdate {
+  const LabPlanUpdate({required this.stage, this.activity});
+
+  final LabPlanStage stage;
+
+  /// The live stream state, or null before the current call starts producing
+  /// — and for providers with no streaming path, for the whole call.
+  final ProviderActivity? activity;
+}
+
+/// Reports progress. Never throws: progress is commentary, and losing it must
+/// not lose the plan.
+typedef LabPlanProgress = void Function(LabPlanUpdate update);
+
+/// How long a streaming call may go silent before it is worth flagging.
+///
+/// Generous on purpose: a model can think for a long time between visible
+/// tokens, and crying "stuck" at a model that is merely slow trains the user to
+/// ignore the warning that matters.
+const labPlanQuietThreshold = Duration(seconds: 90);
+
+/// Whether a run that was streaming has gone quiet.
+///
+/// Returns false when [lastActivityAt] is null, which covers two honest cases:
+/// the call has not started producing yet, and the provider has no streaming
+/// path at all. Neither is evidence of a stall, and claiming one would make the
+/// warning worthless.
+bool labPlanHasGoneQuiet({
+  required DateTime? lastActivityAt,
+  required DateTime now,
+  Duration threshold = labPlanQuietThreshold,
+}) {
+  if (lastActivityAt == null) return false;
+  return now.difference(lastActivityAt) >= threshold;
+}
 
 class LabPlannerService {
   LabPlannerService({
@@ -292,13 +329,22 @@ be empty. A rejected plan remains a draft and cannot be saved.
     String priorities = '',
     LabPlanProgress? onProgress,
   }) async {
-    void report(LabPlanStage stage) {
+    var stage = LabPlanStage.preparingContext;
+    void emit(LabPlanUpdate update) {
+      stage = update.stage;
       try {
-        onProgress?.call(stage);
+        onProgress?.call(update);
       } on Object {
         // Commentary must never cost the caller their plan.
       }
     }
+
+    void report(LabPlanStage next) => emit(LabPlanUpdate(stage: next));
+
+    // Forwards stream activity under whatever stage is current, so the caller
+    // never has to track which call the bytes belong to.
+    void reportActivity(ProviderActivity activity) =>
+        emit(LabPlanUpdate(stage: stage, activity: activity));
 
     report(LabPlanStage.preparingContext);
     final key = await _keyStore.read(settings.provider);
@@ -364,6 +410,7 @@ $_schemaInstructions
             ? context.fileSha256
             : null,
       ),
+      onActivity: reportActivity,
     );
 
     late final LabPlanGeneration candidate;
@@ -402,6 +449,7 @@ $_schemaInstructions
               ? context.fileSha256
               : null,
         ),
+        onActivity: reportActivity,
       );
       candidate = await _parse(
         response,
@@ -417,7 +465,7 @@ $_schemaInstructions
     report(LabPlanStage.verifying);
     return _verify(
       candidate,
-      onProgress: report,
+      onProgress: emit,
       key: key,
       settings: settings,
       client: client,
@@ -474,7 +522,14 @@ $_verificationSchemaInstructions
             ? context.fileSha256
             : null,
       ),
+      onActivity: (activity) => onProgress(
+        LabPlanUpdate(stage: LabPlanStage.verifying, activity: activity),
+      ),
     );
+    // The last thing that happens, and until now the one stage that was
+    // declared but never reported — leaving the bar short of full on a run
+    // that had in fact finished every model call.
+    onProgress(const LabPlanUpdate(stage: LabPlanStage.reading));
     final verification = _parseVerification(response, context);
     final warnings = _dedupeStrings([
       ...candidate.warnings,

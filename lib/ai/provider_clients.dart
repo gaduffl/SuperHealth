@@ -16,12 +16,128 @@ class AiProviderException implements Exception {
       statusCode == null ? message : '$message (HTTP $statusCode)';
 }
 
+/// A live sign that a streamed call is still producing.
+///
+/// Sent while the response is still arriving, so a caller can tell a slow model
+/// from a wedged connection. The two are indistinguishable from the outside
+/// otherwise, and a minutes-long call gives plenty of time to wonder.
+class ProviderActivity {
+  const ProviderActivity({
+    required this.outputChars,
+    required this.thinkingChars,
+    this.thinkingTail = '',
+  });
+
+  /// Characters of answer text received so far.
+  final int outputChars;
+
+  /// Characters of reasoning received so far.
+  final int thinkingChars;
+
+  /// The most recent reasoning text, for display. Bounded by the client, since
+  /// a whole reasoning trace is far more than a progress card can show.
+  final String thinkingTail;
+
+  bool get isThinking => thinkingChars > 0 && outputChars == 0;
+  int get totalChars => outputChars + thinkingChars;
+}
+
+/// Reports that a streamed response is still arriving.
+///
+/// Called from inside the stream loop, so it must be cheap and must not throw:
+/// commentary must never cost the caller their response. Providers without a
+/// streaming path never call it.
+typedef ProviderActivityCallback = void Function(ProviderActivity activity);
+
+/// Accumulates stream deltas and reports them at a rate a UI can survive.
+///
+/// A long turn delivers thousands of deltas. Forwarding each one would spend
+/// the call rebuilding a progress card, so this coalesces them and emits at
+/// most one update per [interval] — plus a final one on [flush], so the last
+/// state is never the one that happened to be throttled away.
+class ActivityReporter {
+  ActivityReporter(this._onActivity, {this.interval = _defaultInterval});
+
+  static const _defaultInterval = Duration(milliseconds: 400);
+
+  /// How much reasoning to keep. A trace runs to thousands of characters; a
+  /// progress card shows a couple of lines, and holding the rest would grow
+  /// without bound across a long turn.
+  static const tailChars = 400;
+
+  final ProviderActivityCallback? _onActivity;
+  final Duration interval;
+
+  int _outputChars = 0;
+  int _thinkingChars = 0;
+  final StringBuffer _tail = StringBuffer();
+  DateTime? _lastEmit;
+
+  bool get isEnabled => _onActivity != null;
+
+  void addOutput(String delta) {
+    if (_onActivity == null || delta.isEmpty) return;
+    _outputChars += delta.length;
+    _emit();
+  }
+
+  void addThinking(String delta) {
+    if (_onActivity == null || delta.isEmpty) return;
+    _thinkingChars += delta.length;
+    _tail.write(delta);
+    // Trimming on write keeps the buffer bounded regardless of trace length.
+    if (_tail.length > tailChars * 2) {
+      final kept = _tail.toString();
+      _tail
+        ..clear()
+        ..write(kept.substring(kept.length - tailChars));
+    }
+    _emit();
+  }
+
+  /// Emits the current state regardless of the interval. Call once a stream
+  /// ends, so the final counts are not lost to throttling.
+  void flush() {
+    if (_onActivity == null) return;
+    _lastEmit = null;
+    _emit();
+  }
+
+  void _emit() {
+    final now = DateTime.now();
+    final last = _lastEmit;
+    if (last != null && now.difference(last) < interval) return;
+    _lastEmit = now;
+    final kept = _tail.toString();
+    try {
+      _onActivity!(
+        ProviderActivity(
+          outputChars: _outputChars,
+          thinkingChars: _thinkingChars,
+          thinkingTail: kept.length > tailChars
+              ? kept.substring(kept.length - tailChars)
+              : kept,
+        ),
+      );
+    } on Object {
+      // Commentary must never cost the caller their response.
+    }
+  }
+}
+
 abstract class AiProviderClient {
   AiProvider get provider;
 
   Future<List<AiModelInfo>> listModels(String apiKey);
 
-  Future<ProviderResponse> respond(String apiKey, ProviderRequest request);
+  /// [onActivity] is called while a streamed response arrives. It is optional
+  /// and best effort: a provider with no streaming path in this app simply
+  /// never calls it, and a caller that passes nothing loses only commentary.
+  Future<ProviderResponse> respond(
+    String apiKey,
+    ProviderRequest request, {
+    ProviderActivityCallback? onActivity,
+  });
 
   /// The provider's exact token count for the context payload, or null when
   /// no documented counting endpoint exists. Implementations never throw;
@@ -310,8 +426,9 @@ class OpenAiClient extends _BaseClient {
   @override
   Future<ProviderResponse> respond(
     String apiKey,
-    ProviderRequest request,
-  ) async {
+    ProviderRequest request, {
+    ProviderActivityCallback? onActivity,
+  }) async {
     validate(request);
     final capabilities = capabilityRegistry.forModel(provider, request.model);
     String? contextFileId;
@@ -375,7 +492,7 @@ class OpenAiClient extends _BaseClient {
                 },
         };
       }
-      final raw = await _streamResponse(apiKey, body);
+      final raw = await _streamResponse(apiKey, body, onActivity);
       final status = raw['status']?.toString();
       if (status == 'failed') {
         final error = raw['error'];
@@ -454,6 +571,7 @@ class OpenAiClient extends _BaseClient {
   Future<Map<String, Object?>> _streamResponse(
     String apiKey,
     Map<String, Object?> body,
+    ProviderActivityCallback? onActivity,
   ) async {
     final response = await retryTransient(
       () => dio.post<ResponseBody>(
@@ -466,9 +584,17 @@ class OpenAiClient extends _BaseClient {
     if (streamBody == null) {
       throw const AiProviderException('OpenAI returned an empty stream.');
     }
+    final reporter = ActivityReporter(onActivity);
     await for (final event in sseJsonEvents(streamBody)) {
       switch (event['type']) {
+        case 'response.output_text.delta':
+          reporter.addOutput(event['delta']?.toString() ?? '');
+        // Reasoning arrives as a summary rather than the raw trace; it is still
+        // the only account this provider gives of what it is doing.
+        case 'response.reasoning_summary_text.delta':
+          reporter.addThinking(event['delta']?.toString() ?? '');
         case 'response.completed' || 'response.incomplete' || 'response.failed':
+          reporter.flush();
           return objectMap(event['response']);
         case 'error':
           throw AiProviderException(
@@ -577,8 +703,9 @@ class AnthropicClient extends _BaseClient {
   @override
   Future<ProviderResponse> respond(
     String apiKey,
-    ProviderRequest request,
-  ) async {
+    ProviderRequest request, {
+    ProviderActivityCallback? onActivity,
+  }) async {
     validate(request);
     final capabilities = capabilityRegistry.forModel(provider, request.model);
     String? contextFileId;
@@ -682,7 +809,8 @@ class AnthropicClient extends _BaseClient {
       ];
       final options = _options(apiKey, betas: betas);
 
-      var raw = await _streamMessage(body, options);
+      final reporter = ActivityReporter(onActivity);
+      var raw = await _streamMessage(body, options, reporter);
       final textParts = <String>[..._textBlocks(raw)];
       final citations = <String>{...collectUrls(raw)};
       // A server-tool loop that hits its iteration limit pauses the turn.
@@ -695,7 +823,7 @@ class AnthropicClient extends _BaseClient {
         final messages = List<Object?>.from(body['messages']! as List)
           ..add({'role': 'assistant', 'content': raw['content']});
         body['messages'] = messages;
-        raw = await _streamMessage(body, options);
+        raw = await _streamMessage(body, options, reporter);
         textParts.addAll(_textBlocks(raw));
         citations.addAll(collectUrls(raw));
       }
@@ -797,6 +925,7 @@ class AnthropicClient extends _BaseClient {
   Future<Map<String, Object?>> _streamMessage(
     Map<String, Object?> body,
     Options options,
+    ActivityReporter reporter,
   ) async {
     final response = await retryTransient(
       () => dio.post<ResponseBody>(
@@ -828,10 +957,13 @@ class AnthropicClient extends _BaseClient {
           if (block == null || delta is! Map) break;
           switch (delta['type']) {
             case 'text_delta':
-              block['text'] = '${block['text'] ?? ''}${delta['text'] ?? ''}';
+              final text = delta['text']?.toString() ?? '';
+              block['text'] = '${block['text'] ?? ''}$text';
+              reporter.addOutput(text);
             case 'thinking_delta':
-              block['thinking'] =
-                  '${block['thinking'] ?? ''}${delta['thinking'] ?? ''}';
+              final thinking = delta['thinking']?.toString() ?? '';
+              block['thinking'] = '${block['thinking'] ?? ''}$thinking';
+              reporter.addThinking(thinking);
             case 'signature_delta':
               block['signature'] =
                   '${block['signature'] ?? ''}${delta['signature'] ?? ''}';
@@ -879,6 +1011,8 @@ class AnthropicClient extends _BaseClient {
           );
       }
     }
+    // Emit the final counts, which the interval would otherwise have swallowed.
+    reporter.flush();
     if (message == null) {
       throw const AiProviderException(
         'Anthropic ended the stream without a message.',
@@ -980,10 +1114,14 @@ class GeminiClient extends _BaseClient {
   }
 
   @override
+  /// [onActivity] is never called: this client posts and waits rather than
+  /// streaming, so there is no intermediate state to report. A caller shows
+  /// "no live detail" rather than a frozen count.
   Future<ProviderResponse> respond(
     String apiKey,
-    ProviderRequest request,
-  ) async {
+    ProviderRequest request, {
+    ProviderActivityCallback? onActivity,
+  }) async {
     validate(request);
     // This client has no documented native multi-turn wire shape in the app,
     // so history is serialized between the stable context and the task
