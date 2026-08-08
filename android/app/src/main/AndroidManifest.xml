@@ -16,6 +16,18 @@
     -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!--
+      Generating a lab plan is two model passes over a whole health context and
+      runs for minutes on the main isolate. Without a foreground service the
+      process is a candidate for the kill list the moment the app is not in
+      front, and the plan dies silently part-way through.
+
+      DATA_SYNC is the matching type: the work is fetching a result over the
+      network. Android 14+ requires the permission to name the type, and the
+      service below has to declare it too.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <application
         android:label="SuperHealth"
         android:name="${applicationName}"
@@ -60,6 +72,18 @@
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+        <!--
+          Holds process priority while a lab plan generates. Nothing runs inside
+          it — the work stays on the main isolate, which is where the database
+          and secure storage are.
+
+          The class name is flutter_foreground_task's own service and must match
+          exactly; the plugin starts this class by name.
+        -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

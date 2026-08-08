@@ -11,6 +11,7 @@ import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../app/long_task_guard.dart';
 import '../app/shell_navigation.dart';
 import '../biomarkers/biomarker_status_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
@@ -504,6 +505,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
             _LabPlanProgressCard(
               stage: controller.labPlanStage!,
               startedAt: controller.labPlanStartedAt,
+              survivesBackground: controller.labPlanSurvivesBackground,
             ),
           if (controller.biomarkers.isEmpty)
             EmptyState(
@@ -1015,6 +1017,18 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
         await controller.generateLabPlan(
           targetDate: targetDate,
           priorities: priorities.text,
+          notice: LongTaskNotice(
+            title: _labsText(
+              context,
+              'Planning your lab visit',
+              'Laborbesuch wird geplant',
+            ),
+            text: _labsText(
+              context,
+              'This takes a few minutes.',
+              'Das dauert einige Minuten.',
+            ),
+          ),
         );
       } on Object catch (error) {
         if (context.mounted) await showAppError(context, error);
@@ -3066,10 +3080,18 @@ class _BiomarkerTile extends StatelessWidget {
 /// button reports only that something is happening, which is what a hang looks
 /// like too — so the stage is named and the clock keeps moving.
 class _LabPlanProgressCard extends StatefulWidget {
-  const _LabPlanProgressCard({required this.stage, required this.startedAt});
+  const _LabPlanProgressCard({
+    required this.stage,
+    required this.startedAt,
+    required this.survivesBackground,
+  });
 
   final LabPlanStage stage;
   final DateTime? startedAt;
+
+  /// Whether a foreground service is holding the run. Decides which promise the
+  /// card is allowed to make about leaving the app.
+  final bool survivesBackground;
 
   @override
   State<_LabPlanProgressCard> createState() => _LabPlanProgressCardState();
@@ -3150,13 +3172,26 @@ class _LabPlanProgressCardState extends State<_LabPlanProgressCard> {
             ),
             const SizedBox(height: 10),
             Text(
-              _labsText(
-                context,
-                'This takes a few minutes and runs on your device. Keep the app '
-                    'open — the screen is held awake until it finishes.',
-                'Das dauert einige Minuten und läuft auf deinem Gerät. Lass die '
-                    'App offen — der Bildschirm bleibt bis zum Ende aktiv.',
-              ),
+              widget.survivesBackground
+                  ? _labsText(
+                      context,
+                      'This takes a few minutes and runs on your device. You '
+                          'can switch away — it keeps going in the background '
+                          'and shows a notification until it finishes.',
+                      'Das dauert einige Minuten und läuft auf deinem Gerät. '
+                          'Du kannst die App verlassen — sie arbeitet im '
+                          'Hintergrund weiter und zeigt bis zum Ende eine '
+                          'Benachrichtigung.',
+                    )
+                  : _labsText(
+                      context,
+                      'This takes a few minutes and runs on your device. Keep '
+                          'the app open — the screen is held awake until it '
+                          'finishes.',
+                      'Das dauert einige Minuten und läuft auf deinem Gerät. '
+                          'Lass die App offen — der Bildschirm bleibt bis zum '
+                          'Ende aktiv.',
+                    ),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
