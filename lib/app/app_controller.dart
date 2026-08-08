@@ -12,6 +12,8 @@ import '../ai/ai_models.dart';
 import '../ai/ai_settings.dart';
 import '../ai/api_key_store.dart';
 import '../ai/document_parsing_service.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+
 import '../ai/lab_planner_service.dart';
 import '../ai/lab_price_service.dart';
 import '../ai/provider_clients.dart';
@@ -161,6 +163,15 @@ class AppController extends ChangeNotifier {
   AiTaskSettings? advisorSettings;
   AiTaskSettings? parsingSettings;
   AiTaskSettings? pricingSettings;
+
+  /// The stage a lab plan is at, or null when none is running. A greyed-out
+  /// button says only that something is happening; these calls run for minutes.
+  LabPlanStage? labPlanStage;
+
+  /// When the running generation started, so the screen can show elapsed time.
+  /// A long wait with a moving number reads as work; a still one reads as a
+  /// hang, and the two are otherwise indistinguishable.
+  DateTime? labPlanStartedAt;
   final Map<AiProvider, bool> hasApiKey = {};
   final Map<AiProvider, List<AiModelInfo>> availableModels = {};
   ReminderPermissionStatus reminderPermissionStatus =
@@ -1704,17 +1715,47 @@ class AppController extends ChangeNotifier {
       throw StateError('Configure the advisor model first.');
     }
     return _withBusy(() async {
-      final result = await _labPlannerService.generate(
-        profileId: _profileId,
-        settings: settings,
-        targetDate: targetDate,
-        priorities: priorities,
-      );
-      draftLabPlan = result;
-      lastContextBytes = result.context.byteLength;
-      lastContextTokens = result.context.estimatedTokens;
-      return result;
+      labPlanStartedAt = DateTime.now();
+      // The isolate keeps running when the app is backgrounded, but a sleeping
+      // device suspends it and drops the request. This holds the screen awake
+      // for the duration — a mitigation, not a guarantee: only a foreground
+      // service survives the process being killed outright.
+      await _holdScreenAwake(true);
+      try {
+        final result = await _labPlannerService.generate(
+          profileId: _profileId,
+          settings: settings,
+          targetDate: targetDate,
+          priorities: priorities,
+          onProgress: (stage) {
+            labPlanStage = stage;
+            notifyListeners();
+          },
+        );
+        draftLabPlan = result;
+        lastContextBytes = result.context.byteLength;
+        lastContextTokens = result.context.estimatedTokens;
+        return result;
+      } finally {
+        // Cleared however this ends. A stage left behind after a failure would
+        // leave the screen claiming work that stopped.
+        labPlanStage = null;
+        labPlanStartedAt = null;
+        await _holdScreenAwake(false);
+      }
     });
+  }
+
+  /// Keeps the device awake while a long model call is in flight.
+  ///
+  /// Never throws: a platform without the plugin, or a refusal, must not cost
+  /// the caller their generation.
+  Future<void> _holdScreenAwake(bool hold) async {
+    try {
+      await WakelockPlus.toggle(enable: hold);
+    } on Object {
+      // Best effort. The request runs either way; it is just more fragile.
+    }
   }
 
   Future<void> saveDraftLabPlan() async {

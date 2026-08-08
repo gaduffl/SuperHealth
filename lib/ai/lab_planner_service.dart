@@ -54,6 +54,50 @@ class LabPlanFormatException implements Exception {
   String toString() => message;
 }
 
+/// Where a lab-plan generation has got to.
+///
+/// A greyed-out button says only "something is happening". These calls run for
+/// minutes — two model passes over a whole health context — and a wait with no
+/// account of itself is indistinguishable from a hang.
+enum LabPlanStage {
+  /// Assembling the health context and measuring what it will cost to send.
+  preparingContext,
+
+  /// First pass: the model is drafting the plan.
+  drafting,
+
+  /// The draft did not satisfy the schema, so it is being repaired.
+  repairingDraft,
+
+  /// Second pass: a reviewer model checks the draft against the context.
+  verifying,
+
+  /// Reading the response into a plan.
+  reading,
+}
+
+extension LabPlanStageX on LabPlanStage {
+  String get englishLabel => switch (this) {
+    LabPlanStage.preparingContext => 'Gathering your health record',
+    LabPlanStage.drafting => 'Drafting the plan',
+    LabPlanStage.repairingDraft => 'Correcting the draft',
+    LabPlanStage.verifying => 'Checking the plan against your record',
+    LabPlanStage.reading => 'Reading the result',
+  };
+
+  String get germanLabel => switch (this) {
+    LabPlanStage.preparingContext => 'Gesundheitsdaten werden gesammelt',
+    LabPlanStage.drafting => 'Plan wird erstellt',
+    LabPlanStage.repairingDraft => 'Entwurf wird korrigiert',
+    LabPlanStage.verifying => 'Plan wird gegen deine Daten geprüft',
+    LabPlanStage.reading => 'Ergebnis wird gelesen',
+  };
+}
+
+/// Reports a stage change. Never throws: progress is commentary, and losing it
+/// must not lose the plan.
+typedef LabPlanProgress = void Function(LabPlanStage stage);
+
 class LabPlannerService {
   LabPlannerService({
     required HealthRepository repository,
@@ -246,7 +290,17 @@ be empty. A rejected plan remains a draft and cannot be saved.
     required AiTaskSettings settings,
     DateTime? targetDate,
     String priorities = '',
+    LabPlanProgress? onProgress,
   }) async {
+    void report(LabPlanStage stage) {
+      try {
+        onProgress?.call(stage);
+      } on Object {
+        // Commentary must never cost the caller their plan.
+      }
+    }
+
+    report(LabPlanStage.preparingContext);
     final key = await _keyStore.read(settings.provider);
     if (key == null || key.trim().isEmpty) {
       throw StateError(
@@ -289,6 +343,7 @@ $_schemaInstructions
         contextJson: context.json,
       ),
     );
+    report(LabPlanStage.drafting);
     var response = await client.respond(
       key,
       ProviderRequest(
@@ -321,6 +376,7 @@ $_schemaInstructions
         targetDate: targetDate,
       );
     } on LabPlanFormatException catch (firstError) {
+      report(LabPlanStage.repairingDraft);
       response = await client.respond(
         key,
         ProviderRequest(
@@ -358,8 +414,10 @@ $_schemaInstructions
     // Verification is deliberately outside the candidate repair path. A bad
     // verifier response fails closed; it must never be mistaken for a plan or
     // silently trigger a rewritten clinical recommendation.
+    report(LabPlanStage.verifying);
     return _verify(
       candidate,
+      onProgress: report,
       key: key,
       settings: settings,
       client: client,
@@ -370,6 +428,7 @@ $_schemaInstructions
 
   Future<LabPlanGeneration> _verify(
     LabPlanGeneration candidate, {
+    required LabPlanProgress onProgress,
     required String key,
     required AiTaskSettings settings,
     required AiProviderClient client,
