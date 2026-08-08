@@ -84,6 +84,7 @@ class _BiomarkerListsSheet extends StatelessWidget {
                 onEdit: () => _editList(context, existing: list),
                 onDelete: () => _deleteList(context, list),
                 onAddItem: () => _editItem(context, list),
+                onAddPackage: () => _addPackage(context, list),
                 onEditItem: (item) => _editItem(context, list, existing: item),
               ),
         ],
@@ -315,6 +316,61 @@ class _BiomarkerListsSheet extends StatelessWidget {
     }
   }
 
+  Future<void> _addPackage(BuildContext context, BiomarkerList list) async {
+    final package = await showDialog<BiomarkerPackage>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text(_listsText(context, 'Add a package', 'Paket hinzufügen')),
+        children: [
+          for (final item in controller.biomarkerPackages)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, item),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(item.name),
+                subtitle: Text(
+                  _listsText(
+                    context,
+                    '${(controller.biomarkerPackageMembers[item.id] ?? const <String>{}).length} test(s) will be added individually',
+                    '${(controller.biomarkerPackageMembers[item.id] ?? const <String>{}).length} Test(s) werden einzeln hinzugefügt',
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (package == null || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    // Resolved before the await, so the context is not read across the gap.
+    String message(int added, int present) => _listsText(
+      context,
+      added == 0
+          ? 'Every test in ${package.name} was already on this list.'
+          : '$added test(s) added from ${package.name}'
+                '${present == 0 ? '.' : ', $present already there.'}',
+      added == 0
+          ? 'Alle Tests aus ${package.name} waren bereits auf dieser Liste.'
+          : '$added Test(s) aus ${package.name} hinzugefügt'
+                '${present == 0 ? '.' : ', $present bereits vorhanden.'}',
+    );
+    try {
+      final currentList = controller.biomarkerLists.firstWhere(
+        (item) => item.id == list.id,
+        orElse: () => list,
+      );
+      final result = await controller.addPackageToBiomarkerList(
+        list: currentList,
+        package: package,
+      );
+      messenger.showSnackBar(
+        SnackBar(content: Text(message(result.added, result.alreadyPresent))),
+      );
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
+  }
+
   Future<void> _deleteList(BuildContext context, BiomarkerList list) async {
     final confirmed = await showConfirmAction(
       context,
@@ -342,6 +398,7 @@ class _ListCard extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onAddItem,
+    required this.onAddPackage,
     required this.onEditItem,
   });
 
@@ -350,6 +407,7 @@ class _ListCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onAddItem;
+  final VoidCallback onAddPackage;
   final ValueChanged<BiomarkerListItem> onEditItem;
 
   @override
@@ -408,12 +466,32 @@ class _ListCard extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onAddItem,
-              icon: const Icon(Icons.add),
-              label: Text(
-                _listsText(context, 'Add biomarker', 'Biomarker hinzufügen'),
-              ),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                TextButton.icon(
+                  onPressed: onAddItem,
+                  icon: const Icon(Icons.add),
+                  label: Text(
+                    _listsText(
+                      context,
+                      'Add biomarker',
+                      'Biomarker hinzufügen',
+                    ),
+                  ),
+                ),
+                // A package is expanded into its members rather than stored as
+                // one entry: "due" is a per-marker question, and each member
+                // keeps its own interval afterwards.
+                if (controller.biomarkerPackages.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: onAddPackage,
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    label: Text(
+                      _listsText(context, 'Add a package', 'Paket hinzufügen'),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
