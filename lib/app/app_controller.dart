@@ -1192,6 +1192,8 @@ class AppController extends ChangeNotifier {
     return _withBusy(
       () => _labPriceService.propose(
         catalog: biomarkers.where((item) => !item.deleted).toList(),
+        packages: biomarkerPackages,
+        packageMembers: biomarkerPackageMembers,
         settings: settings,
         sourceText: sourceText,
         sourceUrl: sourceUrl,
@@ -1209,10 +1211,36 @@ class AppController extends ChangeNotifier {
       _withBusy(() async {
         if (approved.isEmpty) return 0;
         final byId = {for (final item in biomarkers) item.id: item};
+        final packagesById = {
+          for (final item in biomarkerPackages) item.id: item,
+        };
         final now = DateTime.now();
         var applied = 0;
         for (final proposal in approved) {
-          final biomarker = byId[proposal.biomarkerId];
+          if (proposal.isPackage) {
+            final package = packagesById[proposal.targetId];
+            if (package == null) continue;
+            await repository.saveBiomarkerPackage(
+              BiomarkerPackage(
+                id: package.id,
+                name: package.name,
+                priceEur: proposal.newPriceEur,
+                labName: proposal.labName.isEmpty
+                    ? package.labName
+                    : proposal.labName,
+                priceCheckedAt: now,
+                notes: package.notes,
+                createdAt: package.createdAt,
+                updatedAt: now,
+              ),
+              // Membership is not the model's business: it priced the bundle,
+              // it did not redefine what is in it.
+              biomarkerPackageMembers[package.id] ?? const <String>{},
+            );
+            applied++;
+            continue;
+          }
+          final biomarker = byId[proposal.targetId];
           if (biomarker == null) continue;
           await repository.saveBiomarker(
             Biomarker(
