@@ -23,7 +23,15 @@ class HealthScreen extends StatefulWidget {
 
 class _HealthScreenState extends State<HealthScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 3, vsync: this);
+  /// Easy mode leaves only Biomarkers: the journal and context panes are the
+  /// symptom-and-tag half of the app. A TabController cannot change length, so
+  /// this is read once and the shell rebuilds the screen on a profile switch.
+  late final TabController _tabs = TabController(
+    length: (context.read<AppController>().activeProfile?.easyMode ?? true)
+        ? 1
+        : 3,
+    vsync: this,
+  );
   int? _handledRequestToken;
 
   @override
@@ -48,6 +56,7 @@ class _HealthScreenState extends State<HealthScreen>
   @override
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
+    final visibility = context.watch<AppController>().visibility;
     _applyRequest(context.watch<ShellNavigation>());
     return Column(
       children: [
@@ -56,25 +65,31 @@ class _HealthScreenState extends State<HealthScreen>
           child: TabBar(
             controller: _tabs,
             tabs: [
-              Tab(
-                icon: const Icon(Icons.monitor_heart_outlined),
-                text: strings.journal,
-              ),
+              if (visibility.symptomsAndTags)
+                Tab(
+                  icon: const Icon(Icons.monitor_heart_outlined),
+                  text: strings.journal,
+                ),
               Tab(
                 icon: const Icon(Icons.science_outlined),
                 text: strings.biomarkers,
               ),
-              Tab(
-                icon: const Icon(Icons.assignment_ind_outlined),
-                text: strings.context,
-              ),
+              if (visibility.symptomsAndTags)
+                Tab(
+                  icon: const Icon(Icons.assignment_ind_outlined),
+                  text: strings.context,
+                ),
             ],
           ),
         ),
         Expanded(
           child: TabBarView(
             controller: _tabs,
-            children: const [_JournalPane(), LabsScreen(), _ContextPane()],
+            children: [
+              if (visibility.symptomsAndTags) const _JournalPane(),
+              const LabsScreen(),
+              if (visibility.symptomsAndTags) const _ContextPane(),
+            ],
           ),
         ),
       ],

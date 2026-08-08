@@ -39,6 +39,22 @@ void main() {
               deleted INTEGER NOT NULL DEFAULT 0
             )
           ''');
+            // v11 alters profiles, so a fixture without it fails here while
+            // working fine against a real database of this version.
+            await db.execute('''
+              CREATE TABLE profiles (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                date_of_birth TEXT,
+                sex TEXT,
+                height_cm REAL,
+                weight_kg REAL,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
+              )
+            ''');
             await db.insert('biomarkers', {
               'id': 'hb',
               'canonical_name': 'haemoglobin',

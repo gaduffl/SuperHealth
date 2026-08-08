@@ -176,6 +176,13 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ],
             const SizedBox(height: 16),
+            // Hiding screens makes the app smaller, not easier. The loop that
+            // matters — report in, status out, question answered — is four
+            // navigations deep in the full app; here it is one.
+            if (controller.visibility.leadWithLabReport) ...[
+              _LabReportCard(controller: controller, navigation: navigation),
+              const SizedBox(height: 16),
+            ],
             _OverviewTiles(
               controller: controller,
               navigation: navigation,
@@ -189,16 +196,17 @@ class _DashboardScreenState extends State<DashboardScreen>
                 'Wähle einen Tag, um Dosen zu prüfen oder nachzutragen.',
               ),
             ),
-            DayStrip(
-              selectedDay: _selectedDay,
-              onSelected: (day) => setState(() => _selectedDay = day),
-              weekdayLabel: (day) =>
-                  strings.formatTrackingWeekday(day).substring(0, 2),
-              dayLabel: (day) =>
-                  strings.formatNumber(day.day.toDouble(), decimalDigits: 0),
-              semanticLabel: strings.formatTrackingDate,
-              markerFor: (day) => _completionFor(controller, day),
-            ),
+            if (controller.visibility.pastDayEditing)
+              DayStrip(
+                selectedDay: _selectedDay,
+                onSelected: (day) => setState(() => _selectedDay = day),
+                weekdayLabel: (day) =>
+                    strings.formatTrackingWeekday(day).substring(0, 2),
+                dayLabel: (day) =>
+                    strings.formatNumber(day.day.toDouble(), decimalDigits: 0),
+                semanticLabel: strings.formatTrackingDate,
+                markerFor: (day) => _completionFor(controller, day),
+              ),
             const SizedBox(height: 8),
             _YourDayCard(
               day: _selectedDay,
@@ -1568,3 +1576,110 @@ IconData _periodIcon(DosePeriod period) => switch (period) {
   DosePeriod.evening => Icons.wb_incandescent_outlined,
   DosePeriod.bedtime => Icons.bedtime_outlined,
 };
+
+/// The one card easy mode leads with: a lab report in, and a question about it
+/// out. Both halves are one tap from Today rather than four navigations deep.
+class _LabReportCard extends StatelessWidget {
+  const _LabReportCard({required this.controller, required this.navigation});
+
+  final AppController controller;
+  final ShellNavigation navigation;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final service = BiomarkerStatusService();
+    final profile = controller.activeProfile;
+    final latest = <String, Measurement>{};
+    for (final measurement in controller.measurements) {
+      final existing = latest[measurement.biomarkerId];
+      if (existing == null || measurement.takenAt.isAfter(existing.takenAt)) {
+        latest[measurement.biomarkerId] = measurement;
+      }
+    }
+    final now = DateTime.now();
+    // Only markers with a result: an unmeasured one has no status to report,
+    // and counting it would make the catalog look like unfinished work.
+    final attention = profile == null
+        ? const <Biomarker>[]
+        : controller.biomarkers.where((item) {
+            if (!latest.containsKey(item.id)) return false;
+            final status = service.evaluate(
+              biomarker: item,
+              measurement: latest[item.id],
+              profile: profile,
+              targets: controller.profileTargets,
+              referenceRanges: controller.biomarkerRanges,
+              now: now,
+            );
+            return status.isBelow || status.isAbove;
+          }).toList();
+
+    return Card(
+      color: scheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              strings.pick('Your lab results', 'Deine Laborwerte'),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              latest.isEmpty
+                  ? strings.pick(
+                      'Add a lab report and every value is read out for you.',
+                      'Füge einen Laborbericht hinzu — alle Werte werden für dich ausgelesen.',
+                    )
+                  : attention.isEmpty
+                  ? strings.pick(
+                      'All ${latest.length} recorded values are in their normal range.',
+                      'Alle ${latest.length} erfassten Werte liegen im Normalbereich.',
+                    )
+                  : strings.pick(
+                      '${attention.length} of ${latest.length} values are outside their normal range.',
+                      '${attention.length} von ${latest.length} Werten liegen außerhalb des Normalbereichs.',
+                    ),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: () => navigation.go(AppSection.labs),
+                  icon: const Icon(Icons.document_scanner_outlined),
+                  label: Text(
+                    strings.pick('Add a lab report', 'Laborbericht hinzufügen'),
+                  ),
+                ),
+                if (latest.isNotEmpty)
+                  FilledButton.tonalIcon(
+                    onPressed: () => navigation.askAdvisor(
+                      strings.pick(
+                        'Please explain my latest lab results in plain language, '
+                            'and tell me what to do about anything outside its range.',
+                        'Bitte erkläre meine neuesten Laborwerte in einfacher Sprache '
+                            'und sage mir, was ich bei Werten außerhalb des Bereichs tun soll.',
+                      ),
+                    ),
+                    icon: const Icon(Icons.forum_outlined),
+                    label: Text(
+                      strings.pick(
+                        'Ask about my results',
+                        'Zu meinen Werten fragen',
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

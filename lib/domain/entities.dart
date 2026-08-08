@@ -99,6 +99,7 @@ class Profile {
     this.heightCm,
     this.weightKg,
     this.notes = '',
+    this.easyMode = false,
     this.deleted = false,
   });
 
@@ -109,6 +110,16 @@ class Profile {
   final double? heightCm;
   final double? weightKg;
   final String notes;
+
+  /// Whether this profile sees the simplified app. Per profile, because one
+  /// device holds several people.
+  ///
+  /// Defaults to *false* even though new profiles start simple: a `Profile` is
+  /// rebuilt field by field whenever one is edited, and an omitted flag must
+  /// never silently take features away. `createProfile` opts new profiles in
+  /// explicitly, so that decision lives in exactly one place.
+  final bool easyMode;
+
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
@@ -133,6 +144,7 @@ class Profile {
     'height_cm': heightCm,
     'weight_kg': weightKg,
     'notes': notes,
+    'easy_mode': easyMode ? 1 : 0,
     'created_at': _iso(createdAt),
     'updated_at': _iso(updatedAt),
     'deleted': deleted ? 1 : 0,
@@ -148,6 +160,7 @@ class Profile {
     heightCm: (map['height_cm'] as num?)?.toDouble(),
     weightKg: (map['weight_kg'] as num?)?.toDouble(),
     notes: map['notes']?.toString() ?? '',
+    easyMode: _boolFromDb(map['easy_mode']),
     createdAt: _date(map['created_at']),
     updatedAt: _date(map['updated_at']),
     deleted: _boolFromDb(map['deleted']),

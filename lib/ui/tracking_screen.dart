@@ -12,6 +12,7 @@ import '../analysis/supplement_insights.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../app/appearance_settings.dart';
+import '../app/feature_visibility.dart';
 import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
 import '../reminders/reminder_planner.dart';
@@ -55,10 +56,21 @@ class TrackingScreen extends StatefulWidget {
 class _TrackingScreenState extends State<TrackingScreen>
     with SingleTickerProviderStateMixin {
   static const _insights = SupplementInsights();
-  static const _tabCount = 4;
+
+  /// Easy mode keeps the catalog and the weekly plan — what to take and when.
+  /// Stock and history are bookkeeping about the taking, not the taking.
+  static int _tabCountFor(FeatureVisibility visibility) =>
+      visibility.stockManagement && visibility.supplementHistory ? 4 : 2;
 
   late final TabController _tabs = TabController(
-    length: _tabCount,
+    length: _tabCountFor(
+      FeatureVisibility.forProfile(
+        easyMode:
+            // Read once: a TabController cannot change length, so switching
+            // profiles rebuilds this screen from its key rather than mutating.
+            context.read<AppController>().activeProfile?.easyMode ?? true,
+      ),
+    ),
     vsync: this,
   );
   final _search = TextEditingController();
@@ -105,6 +117,7 @@ class _TrackingScreenState extends State<TrackingScreen>
     final controller = context.watch<AppController>();
     final navigation = context.watch<ShellNavigation>();
     final strings = AppLocalizations.of(context);
+    final visibility = controller.visibility;
     _applyRequest(navigation);
     return PageBody(
       child: Column(
@@ -124,14 +137,16 @@ class _TrackingScreenState extends State<TrackingScreen>
                   icon: const Icon(Icons.calendar_view_week_outlined),
                   text: strings.pick('Plan', 'Plan'),
                 ),
-                Tab(
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  text: strings.stock,
-                ),
-                Tab(
-                  icon: const Icon(Icons.analytics_outlined),
-                  text: strings.history,
-                ),
+                if (visibility.stockManagement)
+                  Tab(
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    text: strings.stock,
+                  ),
+                if (visibility.supplementHistory)
+                  Tab(
+                    icon: const Icon(Icons.analytics_outlined),
+                    text: strings.history,
+                  ),
               ],
             ),
           ),
@@ -141,8 +156,8 @@ class _TrackingScreenState extends State<TrackingScreen>
               children: [
                 _catalog(context, controller),
                 _weeklyPlan(context, controller),
-                _stock(context, controller),
-                _history(context, controller),
+                if (visibility.stockManagement) _stock(context, controller),
+                if (visibility.supplementHistory) _history(context, controller),
               ],
             ),
           ),

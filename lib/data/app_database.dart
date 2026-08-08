@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 10;
+  static const schemaVersion = 11;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -90,6 +90,7 @@ class AppDatabase {
           height_cm REAL,
           weight_kg REAL,
           notes TEXT NOT NULL DEFAULT '',
+          easy_mode INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           deleted INTEGER NOT NULL DEFAULT 0
@@ -670,6 +671,16 @@ class AppDatabase {
       for (final statement in _biomarkerPackageIndexes) {
         await db.execute(statement);
       }
+    }
+    if (oldVersion < 11) {
+      // New profiles start simple; the ones already here do not. Someone who
+      // has been using the full app would experience a default-on easy mode as
+      // features vanishing, so the column defaults on for new rows and is
+      // back-filled off for every row that predates it.
+      await db.execute(
+        'ALTER TABLE profiles ADD COLUMN easy_mode INTEGER NOT NULL DEFAULT 1',
+      );
+      await db.execute('UPDATE profiles SET easy_mode = 0');
     }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;

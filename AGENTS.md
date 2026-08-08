@@ -283,6 +283,21 @@ symptoms — because pricing does not need them. Before adding a flow, ask what
 the smallest input that answers the question is, rather than reaching for the
 health context because it already exists.
 
+**Easy mode is per profile, and its capabilities live in one place.**
+`FeatureVisibility` names every difference; screens ask it (`controller
+.visibility.stockManagement`) rather than testing `easyMode` inline, because
+scattered checks drift until the mode means something different in each corner.
+It is not only subtraction: easy mode turns reminders *on* by default and leads
+Today with the lab-report shortcut, since hiding screens makes an app smaller
+rather than easier.
+
+**A flag that removes features defaults to off.** `Profile.easyMode` defaults to
+`false` even though new profiles start simple, because a `Profile` is rebuilt
+field by field whenever one is edited — an omitted flag would have made renaming
+a profile silently take features away. `createProfile` opts new profiles in
+explicitly, so that decision has exactly one home. Apply the same reasoning to
+any future flag whose *true* value hides something.
+
 **A package is a price, a list is a recall schedule.** They hold the same
 biomarkers for different reasons, so a package is *expanded* into a list rather
 than stored in one: "due" is a per-marker question — ferritin every six months,

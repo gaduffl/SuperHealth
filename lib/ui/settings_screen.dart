@@ -66,6 +66,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
+    final visibility = controller.visibility;
     final strings = AppLocalizations.of(context);
     final oneDriveReady =
         _oneDriveSignedIn == true &&
@@ -200,32 +201,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
             settings: controller.advisorSettings,
             allowTools: true,
           ),
-          _ModelConfigurationCard(
-            key: ValueKey('parsing-${controller.parsingSettings?.model}'),
-            task: AiTask.parsing,
-            title: _settingsText(
-              context,
-              'Lab document parser',
-              'Analyse von Labordokumenten',
+          if (visibility.multipleAiRoles)
+            _ModelConfigurationCard(
+              key: ValueKey('parsing-${controller.parsingSettings?.model}'),
+              task: AiTask.parsing,
+              title: _settingsText(
+                context,
+                'Lab document parser',
+                'Analyse von Labordokumenten',
+              ),
+              settings: controller.parsingSettings,
+              allowTools: false,
             ),
-            settings: controller.parsingSettings,
-            allowTools: false,
-          ),
           // Its own model because pricing is a cheap, mechanical job — read a
           // page, match names, copy numbers — and should not ride on whatever
           // expensive reasoning model the advisor is set to. Tools are allowed
           // so it can look prices up when no source page is supplied.
-          _ModelConfigurationCard(
-            key: ValueKey('pricing-${controller.pricingSettings?.model}'),
-            task: AiTask.pricing,
-            title: _settingsText(
-              context,
-              'Lab price updates',
-              'Laborpreis-Aktualisierung',
+          if (visibility.multipleAiRoles)
+            _ModelConfigurationCard(
+              key: ValueKey('pricing-${controller.pricingSettings?.model}'),
+              task: AiTask.pricing,
+              title: _settingsText(
+                context,
+                'Lab price updates',
+                'Laborpreis-Aktualisierung',
+              ),
+              settings: controller.pricingSettings,
+              allowTools: true,
             ),
-            settings: controller.pricingSettings,
-            allowTools: true,
-          ),
           SectionHeader(
             title: _settingsText(
               context,
@@ -405,71 +408,101 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           _ReminderStatusCard(controller: controller),
-          SectionHeader(
-            title: _settingsText(
-              context,
-              'Portable backup',
-              'Portables Backup',
-            ),
-            subtitle: _settingsText(
-              context,
-              'A self-contained copy for safekeeping or moving devices',
-              'Eine eigenständige Kopie zur Aufbewahrung oder für den Gerätewechsel',
-            ),
-          ),
+          // Per profile, not per device: one install holds several people, and
+          // simplifying the app for one of them must not simplify it for all.
           Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.ios_share_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'Export portable backup',
-                      'Portables Backup exportieren',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'Includes health data and locally available PDFs. API keys, '
-                          'OneDrive credentials, remote IDs, and sync state are excluded.',
-                      'Enthält Gesundheitsdaten und lokal verfügbare PDFs. API-Schlüssel, '
-                          'OneDrive-Anmeldedaten, Remote-IDs und Synchronisierungsstatus sind ausgeschlossen.',
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: controller.busy
-                      ? null
-                      : () => _exportPortableBackup(controller),
+            child: SwitchListTile(
+              secondary: const Icon(Icons.auto_awesome_outlined),
+              title: Text(
+                _settingsText(context, 'Easy mode', 'Einfacher Modus'),
+              ),
+              subtitle: Text(
+                _settingsText(
+                  context,
+                  'Shows only doses, lab results and advice. Hides history, '
+                      'stock, symptoms, tags and catalogue management for this '
+                      'profile. Nothing already recorded is deleted.',
+                  'Zeigt nur Dosen, Laborwerte und Beratung. Blendet Verlauf, '
+                      'Bestand, Symptome, Tags und Katalogverwaltung für dieses '
+                      'Profil aus. Bereits Erfasstes wird nicht gelöscht.',
                 ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.restore_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'Restore portable backup',
-                      'Portables Backup wiederherstellen',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'Replaces all health records on this device after verification. '
-                          'Device API keys remain unchanged.',
-                      'Ersetzt nach Prüfung alle Gesundheitsdaten auf diesem Gerät. '
-                          'API-Schlüssel auf dem Gerät bleiben unverändert.',
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: controller.busy
-                      ? null
-                      : () => _restorePortableBackup(controller),
-                ),
-              ],
+              ),
+              value: controller.activeProfile?.easyMode ?? true,
+              onChanged: controller.activeProfile == null
+                  ? null
+                  : (value) => controller.setEasyMode(value),
             ),
           ),
+          // Device-wide: one backup covers every profile on the install, so
+          // it belongs to whoever set the device up rather than to each
+          // person using it.
+          if (visibility.deviceBackup) ...[
+            SectionHeader(
+              title: _settingsText(
+                context,
+                'Portable backup',
+                'Portables Backup',
+              ),
+              subtitle: _settingsText(
+                context,
+                'A self-contained copy for safekeeping or moving devices',
+                'Eine eigenständige Kopie zur Aufbewahrung oder für den Gerätewechsel',
+              ),
+            ),
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.ios_share_outlined),
+                    title: Text(
+                      _settingsText(
+                        context,
+                        'Export portable backup',
+                        'Portables Backup exportieren',
+                      ),
+                    ),
+                    subtitle: Text(
+                      _settingsText(
+                        context,
+                        'Includes health data and locally available PDFs. API keys, '
+                            'OneDrive credentials, remote IDs, and sync state are excluded.',
+                        'Enthält Gesundheitsdaten und lokal verfügbare PDFs. API-Schlüssel, '
+                            'OneDrive-Anmeldedaten, Remote-IDs und Synchronisierungsstatus sind ausgeschlossen.',
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: controller.busy
+                        ? null
+                        : () => _exportPortableBackup(controller),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.restore_outlined),
+                    title: Text(
+                      _settingsText(
+                        context,
+                        'Restore portable backup',
+                        'Portables Backup wiederherstellen',
+                      ),
+                    ),
+                    subtitle: Text(
+                      _settingsText(
+                        context,
+                        'Replaces all health records on this device after verification. '
+                            'Device API keys remain unchanged.',
+                        'Ersetzt nach Prüfung alle Gesundheitsdaten auf diesem Gerät. '
+                            'API-Schlüssel auf dem Gerät bleiben unverändert.',
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: controller.busy
+                        ? null
+                        : () => _restorePortableBackup(controller),
+                  ),
+                ],
+              ),
+            ),
+          ],
           SectionHeader(
             title: _settingsText(
               context,

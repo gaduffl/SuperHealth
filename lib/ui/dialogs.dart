@@ -321,6 +321,9 @@ Future<void> showProfileDialog(
             heightCm: parseOptionalDouble(height.text),
             weightKg: parseOptionalDouble(weight.text),
             notes: notes.text,
+            // Carried through: editing a name must not change which app the
+            // owner sees.
+            easyMode: existing.easyMode,
             createdAt: existing.createdAt,
             updatedAt: existing.updatedAt,
             deleted: existing.deleted,
@@ -1008,7 +1011,11 @@ Future<void> showAddScheduleDialog(
           'sunday',
         ]),
   };
-  var reminderEnabled = existing?.reminderEnabled ?? false;
+  // Easy mode turns this on rather than hiding it. A reminder that defaults
+  // to off is why a schedule silently produces nothing, and removing the
+  // switch instead of setting it would remove the feature's whole point.
+  var reminderEnabled =
+      existing?.reminderEnabled ?? controller.visibility.remindersOnByDefault;
   var active = existing?.active ?? true;
   var startDate = existing?.startDate;
   var endDate = existing?.endDate;
