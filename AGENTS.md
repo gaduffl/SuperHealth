@@ -308,6 +308,25 @@ It also bounds the retained reasoning tail on write, so a long trace cannot grow
 without limit, and it swallows listener exceptions — it is called from inside
 the SSE loop, where a throw would abort a response that was arriving fine.
 
+**The lab planner writes a diagnostic trace as it runs, not at the end.**
+`LabPlanTrace` appends a JSON line per milestone straight to disk, because the
+runs worth explaining are the ones that never reach an end — and an in-memory
+record dies with the process that lost the plan. A run with no `run_end` is
+therefore itself the finding, and `formatTraceReport` names it "NEVER FINISHED"
+rather than leaving an absence the reader has to notice.
+
+**The trace records everything except the health context.** Model responses are
+kept in full (bounded to 20k chars per field) because an unparseable response is
+the artefact being diagnosed; the context is kept as sha, size and record count
+only, since it is megabytes, reproducible, and the most sensitive thing here.
+The exported file still names biomarkers, so every surface that offers it says
+so — an export that undersells what it contains is a privacy bug.
+
+**Trim the trace when a run starts, never when it ends.** Trimming after a run
+is how the evidence for the last failure disappears exactly when it is wanted.
+`trimTraceToRuns` also cuts on run boundaries: a run truncated at the top reads
+like a generation that began halfway through.
+
 **A generation is three sequential full-context model calls, not one.** Draft,
 optional repair, then an independent verification that re-sends the entire
 candidate — plus a token-count round trip and, on the file path, a context

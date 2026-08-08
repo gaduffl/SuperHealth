@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:collection/collection.dart';
@@ -12,6 +13,8 @@ import '../ai/ai_models.dart';
 import '../ai/ai_settings.dart';
 import '../ai/api_key_store.dart';
 import '../ai/document_parsing_service.dart';
+import '../ai/lab_plan_trace.dart';
+import '../ai/lab_plan_trace_store.dart';
 import '../ai/lab_planner_service.dart';
 import '../ai/lab_price_service.dart';
 import '../ai/provider_clients.dart';
@@ -61,6 +64,7 @@ class AppController extends ChangeNotifier {
     InitialSetupProgressStore? initialSetupProgressStore,
     RestoreSyncGateStore? restoreSyncGateStore,
     LongTaskGuard? longTaskGuard,
+    LabPlanTraceStore? labPlanTraceStore,
   }) : _database = database,
        repository = repository,
        keyStore = keyStore,
@@ -91,7 +95,8 @@ class AppController extends ChangeNotifier {
        _initialSetupProgressStore =
            initialSetupProgressStore ?? InitialSetupProgressStore(),
        _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore(),
-       _longTaskGuard = longTaskGuard ?? LongTaskGuard();
+       _longTaskGuard = longTaskGuard ?? LongTaskGuard(),
+       _labPlanTraceStore = labPlanTraceStore;
 
   final AppDatabase _database;
 
@@ -116,6 +121,11 @@ class AppController extends ChangeNotifier {
   final ProviderCapabilityRegistry capabilityRegistry;
   final ReminderService _reminderService;
   final LongTaskGuard _longTaskGuard;
+
+  /// Null in builds and tests that have no writable documents directory. The
+  /// diagnostics section reports that rather than offering an export that
+  /// cannot work.
+  final LabPlanTraceStore? _labPlanTraceStore;
   final PortableBackupService? _portableBackupService;
   final DocumentsDirectory? _documentsDirectory;
   final AppearanceSettingsStore _appearanceSettingsStore;
@@ -1744,6 +1754,13 @@ class AppController extends ChangeNotifier {
       throw StateError('Configure the advisor model first.');
     }
     return _withBusy(() async {
+      // Bound the log before the run appends to it, never after — trimming a
+      // finished run away is how the evidence for the last failure disappears.
+      try {
+        await _labPlanTraceStore?.trim();
+      } on Object {
+        // A log that cannot be tidied must not stop a plan being generated.
+      }
       labPlanStartedAt = DateTime.now();
       // Minutes of work on the main isolate. Backgrounding the app does not
       // stop it, but a sleeping device suspends it and a reclaimed process
@@ -1781,8 +1798,76 @@ class AppController extends ChangeNotifier {
         labPlanActivity = null;
         labPlanActivityAt = null;
         await _longTaskGuard.release();
+        // However this ended, the log now has something new to say about it.
+        await refreshLabPlanLogSummary();
       }
     });
+  }
+
+  /// Whether a diagnostic log can be produced at all on this build.
+  bool get labPlanLogAvailable => _labPlanTraceStore != null;
+
+  /// A one-line account of the most recent recorded runs, for the settings
+  /// screen. Empty when nothing has been recorded yet.
+  String labPlanLogSummary = '';
+
+  Future<void> refreshLabPlanLogSummary() async {
+    final store = _labPlanTraceStore;
+    if (store == null) return;
+    try {
+      final runs = parseTraceRuns(await store.read());
+      if (runs.isEmpty) {
+        labPlanLogSummary = '';
+      } else {
+        final newest = runs.first;
+        final ended = newest
+            .where((entry) => entry['event'] == 'run_end')
+            .toList();
+        final outcome = ended.isEmpty
+            // No run_end means the run never returned — the app was killed, or
+            // it is still going. Worth naming, since it is the failure the log
+            // exists to catch.
+            ? 'did not finish'
+            : (ended.last['data'] as Map?)?['success'] == true
+            ? 'succeeded'
+            : 'failed';
+        labPlanLogSummary =
+            '${runs.length} run(s) recorded; most recent $outcome';
+      }
+    } on Object {
+      labPlanLogSummary = '';
+    }
+    notifyListeners();
+  }
+
+  /// The diagnostic log as a readable report, ready to write to a file.
+  ///
+  /// Contains model responses — and a lab plan names biomarkers — so the caller
+  /// must present it as health data, not as an anonymous crash dump.
+  Future<ExportedFile> exportLabPlanLog() async {
+    final store = _labPlanTraceStore;
+    if (store == null) {
+      throw StateError('Diagnostics are not available in this build.');
+    }
+    final report = formatTraceReport(
+      await store.read(),
+      generatedAt: DateTime.now(),
+    );
+    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+      RegExp(r'[^0-9]'),
+      '',
+    );
+    return ExportedFile(
+      fileName: 'superhealth-lab-planner-log-$stamp.txt',
+      mimeType: 'text/plain',
+      bytes: Uint8List.fromList(utf8.encode(report)),
+    );
+  }
+
+  Future<void> clearLabPlanLog() async {
+    await _labPlanTraceStore?.clear();
+    labPlanLogSummary = '';
+    notifyListeners();
   }
 
   Future<void> saveDraftLabPlan() async {

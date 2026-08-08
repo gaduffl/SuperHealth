@@ -7,6 +7,7 @@ import 'ai/ai_settings.dart';
 import 'ai/api_key_store.dart';
 import 'ai/document_parsing_service.dart';
 import 'ai/health_context_builder.dart';
+import 'ai/lab_plan_trace_store.dart';
 import 'ai/lab_planner_service.dart';
 import 'ai/lab_price_service.dart';
 import 'ai/provider_clients.dart';
@@ -58,6 +59,9 @@ void main() {
     database,
     documentsDirectory: getApplicationDocumentsDirectory,
   );
+  final labPlanTraceStore = LabPlanTraceStore(
+    documentsDirectory: getApplicationDocumentsDirectory,
+  );
   final controller = AppController(
     database: database,
     repository: repository,
@@ -76,6 +80,7 @@ void main() {
       keyStore: keyStore,
       clientFactory: clientFactory,
       contextBuilder: labPlanningContextBuilder,
+      trace: labPlanTraceStore.trace(),
     ),
     documentParsingService: documentParsingService,
     correlationService: CorrelationService(repository),
@@ -87,6 +92,7 @@ void main() {
     reminderService: ReminderService(),
     portableBackupService: portableBackupService,
     documentsDirectory: getApplicationDocumentsDirectory,
+    labPlanTraceStore: labPlanTraceStore,
   );
 
   runApp(
