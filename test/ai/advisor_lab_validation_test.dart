@@ -513,8 +513,9 @@ class _Client implements AiProviderClient {
   @override
   Future<ProviderResponse> respond(
     String apiKey,
-    ProviderRequest request,
-  ) async {
+    ProviderRequest request, {
+    ProviderActivityCallback? onActivity,
+  }) async {
     calls++;
     requests.add(request);
     return _response(request);

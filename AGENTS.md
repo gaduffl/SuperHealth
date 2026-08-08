@@ -289,6 +289,31 @@ and a running clock rather than only greying a button, because a still screen
 and a hung request look identical. Progress reporting never throws — commentary
 must not cost the caller their result.
 
+**A stage label is not enough on its own.** There are only four stage changes
+across several minutes, so between them the screen is as still as a hang.
+`ProviderActivity` carries the live byte counts and a bounded tail of the
+model's reasoning out of the SSE loop, and the card shows them. The *point* is
+diagnostic: a count that keeps moving proves the run is slow, not stuck.
+
+**`labPlanHasGoneQuiet` is the stall signal, and it stays quiet when it does not
+know.** A null `lastActivityAt` covers both "has not started producing" and
+"this provider does not stream at all" — neither is evidence of a stall, and a
+warning that fires on both is one nobody reads. The 90-second threshold is
+deliberately generous for the same reason.
+
+**Stream deltas are coalesced, never forwarded raw.** `ActivityReporter` emits
+at most once per 400 ms and flushes at the end; a long turn delivers thousands
+of deltas, and one rebuild each would spend the call redrawing a progress card.
+It also bounds the retained reasoning tail on write, so a long trace cannot grow
+without limit, and it swallows listener exceptions — it is called from inside
+the SSE loop, where a throw would abort a response that was arriving fine.
+
+**A generation is three sequential full-context model calls, not one.** Draft,
+optional repair, then an independent verification that re-sends the entire
+candidate — plus a token-count round trip and, on the file path, a context
+upload. Minutes is the expected cost, not a symptom. Before treating slowness as
+a bug, check whether the byte counts were moving.
+
 **Backgrounding does not stop a Dart isolate; a sleeping device and a reclaimed
 process do.** `LongTaskGuard` answers both — a wakelock against sleep, a
 foreground service (`dataSync`) against the kill list. Take it through the guard

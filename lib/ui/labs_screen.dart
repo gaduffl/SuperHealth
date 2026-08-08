@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../ai/document_parsing_service.dart';
 import '../ai/lab_planner_service.dart';
+import '../ai/provider_clients.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../app/long_task_guard.dart';
@@ -506,6 +507,8 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
               stage: controller.labPlanStage!,
               startedAt: controller.labPlanStartedAt,
               survivesBackground: controller.labPlanSurvivesBackground,
+              activity: controller.labPlanActivity,
+              activityAt: controller.labPlanActivityAt,
             ),
           if (controller.biomarkers.isEmpty)
             EmptyState(
@@ -3084,6 +3087,8 @@ class _LabPlanProgressCard extends StatefulWidget {
     required this.stage,
     required this.startedAt,
     required this.survivesBackground,
+    required this.activity,
+    required this.activityAt,
   });
 
   final LabPlanStage stage;
@@ -3092,6 +3097,12 @@ class _LabPlanProgressCard extends StatefulWidget {
   /// Whether a foreground service is holding the run. Decides which promise the
   /// card is allowed to make about leaving the app.
   final bool survivesBackground;
+
+  /// What the model is producing right now, or null before the first byte.
+  final ProviderActivity? activity;
+
+  /// When [activity] last moved, for the quiet check.
+  final DateTime? activityAt;
 
   @override
   State<_LabPlanProgressCard> createState() => _LabPlanProgressCardState();
@@ -3119,8 +3130,17 @@ class _LabPlanProgressCardState extends State<_LabPlanProgressCard> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
     final started = widget.startedAt;
-    final elapsed = started == null ? null : DateTime.now().difference(started);
+    final elapsed = started == null ? null : now.difference(started);
+    final activity = widget.activity;
+    final quiet = labPlanHasGoneQuiet(
+      lastActivityAt: widget.activityAt,
+      now: now,
+    );
+    final quietFor = widget.activityAt == null
+        ? 0
+        : now.difference(widget.activityAt!).inSeconds;
     final stages = LabPlanStage.values;
     // The repair pass only happens when a draft fails validation, so counting
     // it into the total would understate progress on every healthy run.
@@ -3170,6 +3190,69 @@ class _LabPlanProgressCardState extends State<_LabPlanProgressCard> {
                 minHeight: 5,
               ),
             ),
+            if (activity != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                activity.isThinking
+                    ? _labsText(
+                        context,
+                        'Reasoning — ${activity.thinkingChars} characters so '
+                            'far',
+                        'Denkt nach — bisher ${activity.thinkingChars} Zeichen',
+                      )
+                    : _labsText(
+                        context,
+                        'Writing the plan — ${activity.outputChars} characters '
+                            'so far',
+                        'Schreibt den Plan — bisher ${activity.outputChars} '
+                            'Zeichen',
+                      ),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.onSecondaryContainer,
+                ),
+              ),
+              if (activity.thinkingTail.trim().isNotEmpty) ...[
+                const SizedBox(height: 6),
+                // The live tail of the model's reasoning. Bounded and dimmed:
+                // it is evidence that work is happening, not something the user
+                // is being asked to read.
+                Text(
+                  activity.thinkingTail.trim(),
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSecondaryContainer.withValues(alpha: 0.7),
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+            if (quiet) ...[
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.warning_amber, size: 16, color: scheme.error),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _labsText(
+                        context,
+                        'Nothing has arrived for ${quietFor}s. The connection '
+                            'may have dropped — cancel and retry if it stays '
+                            'silent.',
+                        'Seit ${quietFor}s kam nichts an. Die Verbindung ist '
+                            'womöglich abgebrochen — brich ab und versuch es '
+                            'erneut, wenn es still bleibt.',
+                      ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(color: scheme.error),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 10),
             Text(
               widget.survivesBackground

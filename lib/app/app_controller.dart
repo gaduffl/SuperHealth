@@ -175,6 +175,17 @@ class AppController extends ChangeNotifier {
   /// hang, and the two are otherwise indistinguishable.
   DateTime? labPlanStartedAt;
 
+  /// What the model is currently producing, or null before the first byte of
+  /// the current call arrives.
+  ProviderActivity? labPlanActivity;
+
+  /// When [labPlanActivity] last changed.
+  ///
+  /// This is the only thing that distinguishes a slow model from a dead
+  /// connection. The stage label and the elapsed clock both keep looking
+  /// healthy through a stall; a byte count that stopped moving does not.
+  DateTime? labPlanActivityAt;
+
   /// Whether the running generation is held by a foreground service, and so
   /// survives the app leaving the foreground.
   ///
@@ -1744,8 +1755,17 @@ class AppController extends ChangeNotifier {
           settings: settings,
           targetDate: targetDate,
           priorities: priorities,
-          onProgress: (stage) {
-            labPlanStage = stage;
+          onProgress: (update) {
+            labPlanStage = update.stage;
+            final activity = update.activity;
+            if (activity != null) {
+              labPlanActivity = activity;
+              labPlanActivityAt = DateTime.now();
+            } else {
+              // A stage change with no activity starts a fresh call, so the
+              // previous call's counts must not carry over and look live.
+              labPlanActivity = null;
+            }
             notifyListeners();
           },
         );
@@ -1758,6 +1778,8 @@ class AppController extends ChangeNotifier {
         // leave the screen claiming work that stopped.
         labPlanStage = null;
         labPlanStartedAt = null;
+        labPlanActivity = null;
+        labPlanActivityAt = null;
         await _longTaskGuard.release();
       }
     });
