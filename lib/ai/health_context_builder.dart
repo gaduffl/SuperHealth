@@ -49,6 +49,26 @@ class HealthContextEnvelope {
     return sections.keys.map((key) => key.toString()).toList()..sort();
   }
 
+  /// Section names and byte sizes, largest first, as `name=bytes` pairs.
+  ///
+  /// For diagnostics. The whole point of shrinking a context is knowing which
+  /// section to shrink, and that is invisible from a single total.
+  String largestSectionsDescription({int take = 8}) {
+    final sections = manifest['sections'];
+    if (sections is! Map) return '';
+    final sized = <MapEntry<String, int>>[];
+    for (final entry in sections.entries) {
+      final value = entry.value;
+      final bytes = value is Map ? value['bytes'] : null;
+      if (bytes is int) sized.add(MapEntry(entry.key.toString(), bytes));
+    }
+    sized.sort((a, b) => b.value.compareTo(a.value));
+    return sized
+        .take(take)
+        .map((entry) => '${entry.key}=${entry.value}')
+        .join(', ');
+  }
+
   String get coverageInstruction =>
       'Before answering, review every manifest section and verify material '
       'claims against raw_ledger. End with exactly one hidden receipt: '
@@ -57,6 +77,22 @@ class HealthContextEnvelope {
       '"section_hashes":${jsonEncode(sectionHashes)}}</context_coverage>. '
       'Do not mention the receipt in the visible answer.';
 }
+
+/// Bytes per token for the dense JSON this app sends.
+///
+/// Not a guess: a 2,020,279-byte package measured 847,443 input tokens on a
+/// real run, which is 2.38 bytes per token. Prose runs nearer 4, and the old
+/// 3.5 estimate under-counted by 46% — enough that [HealthContextBuilder
+/// .deliveryFor] passed a package as "inline" whose true size overshot the
+/// working-room budget the check exists to defend.
+///
+/// Deliberately a little below the measurement, because the failure directions
+/// are not symmetric: over-estimating routes to the lossless file path, while
+/// under-estimating silently degrades answer quality near the context limit.
+const jsonBytesPerToken = 2.3;
+
+int estimatedJsonTokens(int byteLength) =>
+    (byteLength / jsonBytesPerToken).ceil();
 
 /// Builds a layered, lossless package instead of pasting an unstructured
 /// database dump into the prompt.
@@ -102,6 +138,7 @@ class HealthContextBuilder {
     }
 
     _validateDeclaredCounts(source['manifest'], rawData, sections);
+    final windows = _sourceWindows(source['manifest']);
     final attentionIndex = _attentionIndex(rawData);
     final stableCore = <String, Object?>{
       'schema': packageSchema,
@@ -110,6 +147,7 @@ class HealthContextBuilder {
       'source_schema': source['schema'],
       'source_schema_version': source['schema_version'],
       'source_exclusions': _sourceExclusions(source['manifest']),
+      'source_windows': windows,
       'sections': sections,
       'attention_index': attentionIndex,
       'raw_ledger': rawData,
@@ -118,7 +156,13 @@ class HealthContextBuilder {
         .convert(utf8.encode(HealthRepository.stableJson(stableCore)))
         .toString();
     final manifest = <String, Object?>{
-      'complete': true,
+      // "Complete" has to mean what a reader would take it to mean. With a
+      // windowed section it is only complete within the declared window, and
+      // saying so plainly costs nothing next to a model that trusts the word.
+      'complete': windows.isEmpty,
+      'complete_within_declared_windows': true,
+      // Still lossless: what is carried is carried verbatim. Windowing removes
+      // rows; it never summarises or rewrites the ones that remain.
       'lossless': true,
       // Clinical evidence is isolated to the active profile. The supplement
       // catalog, inventory movements, and derived stock levels are deliberate
@@ -135,6 +179,7 @@ class HealthContextBuilder {
       'section_count': sections.length,
       'sections': sections,
       'excluded': _sourceExclusions(source['manifest']),
+      'windowed': windows,
       'integrity_algorithm': 'sha256',
       'context_sha256': digest,
     };
@@ -144,7 +189,12 @@ class HealthContextBuilder {
       'generated_at': DateTime.now().toUtc().toIso8601String(),
       'active_profile_id': profileId,
       'coverage_contract': {
-        'raw_ledger_is_complete': true,
+        // True only of the sections that are not windowed, which is why the
+        // window list sits beside this claim rather than somewhere the model
+        // might not read. A blanket "complete" over a windowed ledger is the
+        // one way this package could actively mislead.
+        'raw_ledger_is_complete': windows.isEmpty,
+        'windowed_sections': windows,
         'attention_index_is_not_a_summary_replacement': true,
         'evidence_scope': {
           'clinical_evidence': 'active_profile_only',
@@ -157,6 +207,10 @@ class HealthContextBuilder {
           'Verify every material claim against raw_ledger source rows.',
           'Scan every manifest section for interactions and contradictions.',
           'Never infer that a record is absent without checking its section count.',
+          if (windows.isNotEmpty)
+            'Sections listed in windowed_sections carry only a recent slice. '
+                'Read their stated replacement for anything older, and never '
+                'treat the start of a window as the start of a behaviour.',
           'Treat inventory_movements as household stock provenance only. '
               'Only active-profile supplement_intakes establish this person\'s '
               'supplement intake.',
@@ -174,8 +228,7 @@ class HealthContextBuilder {
       sha256: digest,
       fileSha256: sha256.convert(bytes).toString(),
       byteLength: bytes.length,
-      // A conservative display estimate. Providers remain authoritative.
-      estimatedTokens: (bytes.length / 3.5).ceil(),
+      estimatedTokens: estimatedJsonTokens(bytes.length),
       recordCount: recordCount,
       manifest: manifest,
       sectionHashes: sectionHashes,
@@ -353,9 +406,13 @@ class HealthContextBuilder {
       );
     }
     final stable = HealthRepository.stableJson(value);
+    final stableBytes = utf8.encode(stable);
     return {
       'records': rows.length,
-      'sha256': sha256.convert(utf8.encode(stable)).toString(),
+      // Recorded so it is possible to answer "which section is the context"
+      // from a diagnostic log, rather than guessing which one to shrink.
+      'bytes': stableBytes.length,
+      'sha256': sha256.convert(stableBytes).toString(),
       if (ids.isNotEmpty) 'record_ids': ids..sort(),
       if (earliest != null) 'earliest': earliest.toUtc().toIso8601String(),
       if (latest != null) 'latest': latest.toUtc().toIso8601String(),
@@ -417,6 +474,19 @@ class HealthContextBuilder {
       return const [];
     }
     return List<Object?>.from(rawManifest['excluded']! as List);
+  }
+
+  /// Sections carried only for a bounded period, with the reason and the
+  /// replacement for what falls outside.
+  ///
+  /// Carried verbatim into the package, because the reading protocol tells the
+  /// model never to infer that a record is absent — a window it cannot see
+  /// would turn that instruction into a lie.
+  Map<String, Object?> _sourceWindows(Object? rawManifest) {
+    if (rawManifest is! Map || rawManifest['windows'] is! Map) {
+      return const {};
+    }
+    return Map<String, Object?>.from(rawManifest['windows']! as Map);
   }
 
   Map<String, Object?> _attentionIndex(Map<String, Object?> data) => {

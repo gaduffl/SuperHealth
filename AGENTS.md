@@ -327,6 +327,41 @@ is how the evidence for the last failure disappears exactly when it is wanted.
 `trimTraceToRuns` also cuts on run boundaries: a run truncated at the top reads
 like a generation that began halfway through.
 
+**Dense JSON is ~2.3 bytes per token, not 3.5.** Measured, not guessed: a
+2,020,279-byte package billed 847,443 input tokens. The old divisor under-counted
+by 46%, which let `deliveryFor` pass a package as "inline" whose true size
+overshot the 0.72 working-room budget that check exists to defend — a quality
+guard silently bypassed, not merely a bad display number. Use
+`estimatedJsonTokens`, and keep it erring *high*: over-estimating routes to the
+lossless file path, under-estimating degrades answers near the context limit.
+
+**Every call in one logical run shares a `promptCacheKey`.** A lab plan sends the
+same ~800k-token context twice, minutes apart. Automatic prefix caching alone
+missed completely — 824k written, 832k written again, zero read — costing a
+second full prefill of four and a half minutes. The key is derived from the
+context hash, so editing one record starts a new cache line rather than reusing
+one built from data the plan is no longer about.
+
+**A windowed section must declare itself.** Lab planning carries four months of
+`supplement_intakes`, and that is only safe because the package says so:
+`manifest.windowed`, `coverage_contract.windowed_sections`, an extra reading-
+protocol line, and `complete: false`. The reading protocol tells the model never
+to infer that a record is absent — an undeclared window would make that
+instruction a lie.
+
+**Windowing a ledger loses duration, so give duration back.** Three years of a
+supplement and one month of it are identical inside a four-month slice, and
+"long-term exposure" versus "recently started" is exactly what decides whether a
+test is worth ordering. `supplement_intake_history` carries first dose, last
+dose and count over the *whole* ledger — one row per product. Apply the same
+reasoning before windowing anything else.
+
+**A context bound on `DateTime.now()` is not deterministic.** The window cutoff
+snaps to a UTC midnight (`labPlanningIntakeCutoff`), because the context hash
+identifies a body of evidence: the receipt validates against it and the prompt
+cache key is derived from it. An instant-based bound made two builds a second
+apart disagree, and the repository tests caught it.
+
 **A generation is three sequential full-context model calls, not one.** Draft,
 optional repair, then an independent verification that re-sends the entire
 candidate — plus a token-count round trip and, on the file path, a context
