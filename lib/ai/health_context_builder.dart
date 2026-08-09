@@ -457,7 +457,12 @@ class HealthContextBuilder {
       // from a diagnostic log, rather than guessing which one to shrink.
       'bytes': stableBytes.length,
       'sha256': sha256.convert(stableBytes).toString(),
-      if (ids.isNotEmpty) 'record_ids': ids..sort(),
+      // No `record_ids` here. Every one of those ids is already in the row it
+      // belongs to, so listing them again shipped ~113 KB — roughly 48k tokens
+      // on a real profile — of pure duplication in every call. The manifest's
+      // job is to prove what was supplied, and a count plus a content hash
+      // does that completely; an id list adds nothing the hash does not
+      // already cover. `ids` is still collected above, to reject duplicates.
       if (earliest != null) 'earliest': earliest.toUtc().toIso8601String(),
       if (latest != null) 'latest': latest.toUtc().toIso8601String(),
       if (units.isNotEmpty) 'units': units.toList()..sort(),

@@ -217,4 +217,42 @@ void main() {
     expect(catalogFingerprintOf(const {'measurements': 'abc'}), isNull);
     expect(catalogFingerprintOf(const {'biomarker_catalog': 'abc'}), isNotNull);
   });
+
+  test('the manifest proves coverage without repeating every id', () async {
+    // Those ids are already in the rows they belong to. Listing them again
+    // cost ~113 KB — roughly 48k tokens on a real profile — on every call.
+    final envelope = await HealthContextBuilder(repository).build(profile.id);
+    final sections = envelope.manifest['sections']! as Map<String, Object?>;
+
+    for (final entry in sections.entries) {
+      final section = entry.value! as Map;
+      expect(section.containsKey('record_ids'), isFalse, reason: entry.key);
+      // What replaces it still proves what was supplied.
+      expect(section['records'], isA<int>(), reason: entry.key);
+      expect(section['sha256'], isA<String>(), reason: entry.key);
+    }
+  });
+
+  test('duplicate ids are still rejected', () async {
+    // The id list is gone from the output, not from the check that uses it.
+    final loader = HealthContextBuilder.fromLoader(
+      (_) async => {
+        'schema': 'superhealth.health_context',
+        'schema_version': 1,
+        'active_profile_id': profile.id,
+        'manifest': {
+          'complete': true,
+          'counts': {'measurements': 2},
+        },
+        'data': {
+          'measurements': [
+            {'id': 'same', 'value': 1},
+            {'id': 'same', 'value': 2},
+          ],
+        },
+      },
+    );
+
+    await expectLater(loader.build(profile.id), throwsA(isA<StateError>()));
+  });
 }
