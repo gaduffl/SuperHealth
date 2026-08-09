@@ -16,6 +16,42 @@ class AiProviderException implements Exception {
       statusCode == null ? message : '$message (HTTP $statusCode)';
 }
 
+/// The most specific description available for a provider error payload.
+///
+/// Providers nest the reason differently — top level, under `error`, under
+/// `response.error` — and reading only one of those places turns a real
+/// diagnosis ("context length exceeded", "rate limit") into a shrug. When no
+/// known shape matches, the raw event is included rather than dropped: an
+/// unrecognised payload is exactly the case where the text matters most.
+String describeProviderError(Map<String, Object?> event, String fallback) {
+  Object? pick(Object? node, String key) => node is Map ? node[key] : null;
+
+  final candidates = <Object?>[
+    event['message'],
+    pick(event['error'], 'message'),
+    pick(pick(event['response'], 'error'), 'message'),
+  ];
+  final message = candidates
+      .map((value) => value?.toString().trim() ?? '')
+      .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+
+  final code = [
+    event['code'],
+    pick(event['error'], 'code'),
+    pick(pick(event['response'], 'error'), 'code'),
+  ].firstWhere((value) => value != null, orElse: () => null);
+
+  if (message.isNotEmpty) {
+    return code == null ? message : '$message (code $code)';
+  }
+
+  // Nothing recognised. Show what actually arrived, bounded, so the next
+  // report carries the shape instead of another shrug.
+  var raw = jsonEncode(event);
+  if (raw.length > 600) raw = '${raw.substring(0, 600)}…';
+  return '$fallback Raw event: $raw';
+}
+
 /// The cache key if a provider will accept it, otherwise null.
 ///
 /// Caching is an optimisation. The one thing it must never do is cost the
@@ -653,12 +689,20 @@ class OpenAiClient extends _BaseClient {
         // the only account this provider gives of what it is doing.
         case 'response.reasoning_summary_text.delta':
           reporter.addThinking(event['delta']?.toString() ?? '');
-        case 'response.completed' || 'response.incomplete' || 'response.failed':
+        case 'response.completed' || 'response.incomplete':
           reporter.flush();
           return objectMap(event['response']);
+        // A failed response used to be returned like a successful one; the
+        // caller then found no text and reported "OpenAI returned no text
+        // output", throwing away the reason the API had just given.
+        case 'response.failed':
+          reporter.flush();
+          throw AiProviderException(
+            describeProviderError(event, 'OpenAI reported a failed response.'),
+          );
         case 'error':
           throw AiProviderException(
-            event['message']?.toString() ?? 'OpenAI stream error.',
+            describeProviderError(event, 'OpenAI reported a stream error.'),
           );
       }
     }
@@ -1063,11 +1107,8 @@ class AnthropicClient extends _BaseClient {
             message['usage'] = {if (existing is Map) ...existing, ...usage};
           }
         case 'error':
-          final error = event['error'];
           throw AiProviderException(
-            error is Map && error['message'] != null
-                ? error['message'].toString()
-                : 'Anthropic reported a stream error.',
+            describeProviderError(event, 'Anthropic reported a stream error.'),
           );
       }
     }
