@@ -402,11 +402,19 @@ be empty. A rejected plan remains a draft and cannot be saved.
       );
     }
     final context = await _contextBuilder.build(profileId);
+    // Every call in this run shares one key, so the draft's prefill is still
+    // cached when the verification pass sends the same context minutes later.
+    // Keyed on the context hash: a changed record must not reuse a stale entry.
+    final cacheKey = _cacheKeyFor(context);
     await _trace.event('context_built', {
       'bytes': context.byteLength,
       'estimated_tokens': context.estimatedTokens,
       'record_count': context.recordCount,
       'sha256': context.sha256,
+      // Biggest sections first: the next question after "why is this slow" is
+      // always "what is actually in there", and a list of every section in
+      // alphabetical order does not answer it.
+      'largest_sections': context.largestSectionsDescription(),
     });
     // Adaptive thinking shares the output budget on current Anthropic models,
     // so the cap leaves room for reasoning plus the complete plan JSON while
@@ -471,6 +479,7 @@ $_schemaInstructions
           contextFileSha256: delivery == HealthContextDelivery.providerFile
               ? context.fileSha256
               : null,
+          promptCacheKey: cacheKey,
         ),
         onActivity: reportActivity,
       ),
@@ -522,6 +531,7 @@ $_schemaInstructions
             contextFileSha256: delivery == HealthContextDelivery.providerFile
                 ? context.fileSha256
                 : null,
+            promptCacheKey: cacheKey,
           ),
           onActivity: reportActivity,
         ),
@@ -572,6 +582,14 @@ $_schemaInstructions
     );
     return generation;
   }
+
+  /// A cache-routing key shared by every call over one context package.
+  ///
+  /// Derived from the context hash rather than the profile, so editing a single
+  /// record starts a new cache line instead of reusing one built from data the
+  /// plan is no longer about.
+  static String _cacheKeyFor(HealthContextEnvelope context) =>
+      'superhealth-labplan-${context.sha256}';
 
   /// Runs one model call, recording what came back — or what it threw.
   ///
@@ -649,6 +667,8 @@ $_verificationSchemaInstructions
           contextFileSha256: delivery == HealthContextDelivery.providerFile
               ? context.fileSha256
               : null,
+          // The same key the draft used: this is the call the cache exists for.
+          promptCacheKey: _cacheKeyFor(context),
         ),
         onActivity: (activity) => onProgress(
           LabPlanUpdate(stage: LabPlanStage.verifying, activity: activity),
@@ -1055,7 +1075,7 @@ $_verificationSchemaInstructions
   }
 
   int _estimatedTokens(String value) =>
-      (utf8.encode(value).length / 3.5).ceil();
+      estimatedJsonTokens(utf8.encode(value).length);
 
   bool _matchesCatalogName(Biomarker biomarker, String requestedName) {
     final normalized = HealthRepository.normalizeName(requestedName);

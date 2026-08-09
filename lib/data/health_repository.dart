@@ -2401,9 +2401,13 @@ class HealthRepository {
         'supplement_schedules',
         profileId,
       ),
-      'supplement_intakes': await _profileRows(
+      // Windowed for lab planning: the dose ledger is by far the largest
+      // clinical section and the planner needs current exposure, not every dose
+      // ever logged. See `supplement_intake_history` below — the window is
+      // never allowed to make a long-standing supplement look newly started.
+      'supplement_intakes': await _supplementIntakeRows(db, profileId, scope),
+      'supplement_intake_history': await _supplementIntakeHistory(
         db,
-        'supplement_intakes',
         profileId,
       ),
       // The raw movement ledger is stock provenance — purchases, corrections,
@@ -2544,6 +2548,10 @@ class HealthRepository {
       'generated_at': DateTime.now().toUtc().toIso8601String(),
       'active_profile_id': profileId,
       'manifest': {
+        // Asserts that every row this scope carries is present and unmodified,
+        // which is what the builder validates. It does not assert that no
+        // section is windowed — `windows` below is where that is declared, and
+        // the builder downgrades its own `complete` flag accordingly.
         'complete': true,
         'counts': counts,
         'excluded': [
@@ -2554,6 +2562,27 @@ class HealthRepository {
           'other_profiles_schedules_and_intakes',
           'advisor_messages_outside_active_conversation',
         ],
+        // A windowed section is not a complete one, and the reading protocol
+        // tells the model never to infer absence from a section it can see.
+        // Declaring the window is what keeps that instruction true: without
+        // this the model would read a four-month slice as the whole history.
+        'windows': scope == HealthContextScope.labPlanning
+            ? {
+                'supplement_intakes': {
+                  'days': labPlanningIntakeWindow.inDays,
+                  'from': labPlanningIntakeCutoff(
+                    DateTime.now(),
+                  ).toIso8601String(),
+                  'reason':
+                      'Recent exposure is what a lab plan reasons about. '
+                      'Doses before this date are summarised per supplement '
+                      'in supplement_intake_history, which covers the entire '
+                      'ledger — use it for how long something has been taken, '
+                      'and never read a first dose inside this window as the '
+                      'start of a supplement.',
+                },
+              }
+            : const <String, Object?>{},
         'scope': {
           'clinical_evidence': 'active_profile_only',
           'shared_supplement_catalog_and_inventory': 'household_wide',
@@ -2583,6 +2612,75 @@ class HealthRepository {
       'tables': tables,
     };
   }
+
+  /// How much of the dose ledger lab planning carries.
+  ///
+  /// Four months, because the biomarkers a plan reasons about reflect recent
+  /// exposure — HbA1c integrates roughly three — and the rows beyond that were
+  /// costing minutes of prefill without changing which tests to order.
+  ///
+  /// Advisory keeps the whole ledger: adherence and long-run patterns are the
+  /// question there, not an artefact of it.
+  static const labPlanningIntakeWindow = Duration(days: 122);
+
+  /// The window's lower bound, snapped to a UTC midnight.
+  ///
+  /// Quantised because the context hash must be deterministic: an instant-based
+  /// bound makes two builds a second apart produce different packages, which
+  /// breaks the receipt's premise that a hash identifies a body of evidence —
+  /// and defeats prompt caching, since the cache key is derived from that hash.
+  static DateTime labPlanningIntakeCutoff(DateTime now) {
+    final utc = now.toUtc();
+    return DateTime.utc(
+      utc.year,
+      utc.month,
+      utc.day,
+    ).subtract(labPlanningIntakeWindow);
+  }
+
+  Future<List<Map<String, Object?>>> _supplementIntakeRows(
+    Database db,
+    String profileId,
+    HealthContextScope scope,
+  ) {
+    if (scope != HealthContextScope.labPlanning) {
+      return _profileRows(db, 'supplement_intakes', profileId);
+    }
+    return db.query(
+      'supplement_intakes',
+      where: 'profile_id = ? AND deleted = 0 AND taken_at >= ?',
+      whereArgs: [
+        profileId,
+        labPlanningIntakeCutoff(DateTime.now()).toIso8601String(),
+      ],
+    );
+  }
+
+  /// One row per supplement covering the *entire* ledger, windowed or not.
+  ///
+  /// Without this, a window is actively misleading rather than merely partial:
+  /// a supplement taken daily for three years and one started last month look
+  /// identical inside a four-month slice, and "long-term high-dose exposure"
+  /// versus "recently started" is exactly the distinction that decides whether
+  /// a test is worth ordering. First dose, last dose and total count are cheap
+  /// — one row per product — and restore what the window removes.
+  Future<List<Map<String, Object?>>> _supplementIntakeHistory(
+    Database db,
+    String profileId,
+  ) => db.rawQuery(
+    '''
+    SELECT supplement_id,
+           MIN(taken_at) AS first_dose_at,
+           MAX(taken_at) AS last_dose_at,
+           COUNT(*) AS dose_count,
+           SUM(CASE WHEN skipped = 1 THEN 1 ELSE 0 END) AS skipped_count
+    FROM supplement_intakes
+    WHERE profile_id = ? AND deleted = 0
+    GROUP BY supplement_id
+    ORDER BY supplement_id
+    ''',
+    [profileId],
+  );
 
   Future<List<Map<String, Object?>>> _profileRows(
     Database db,

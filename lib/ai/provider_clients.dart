@@ -440,6 +440,11 @@ class OpenAiClient extends _BaseClient {
         'model': request.model,
         'store': false,
         'stream': true,
+        // Without this, two calls over the same context can land on different
+        // machines and each pay a full prefill. The key only routes; it never
+        // changes what is sent.
+        if (request.promptCacheKey != null)
+          'prompt_cache_key': request.promptCacheKey,
         'instructions': request.systemPrompt,
         // The stable context leads and the varying task prompt comes last so
         // OpenAI's automatic prefix caching serves repeated calls over the

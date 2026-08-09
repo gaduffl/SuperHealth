@@ -78,6 +78,7 @@ class ProviderRequest {
     this.jsonSchema,
     this.contextFile = false,
     this.contextFileSha256,
+    this.promptCacheKey,
   });
 
   final String model;
@@ -100,6 +101,15 @@ class ProviderRequest {
   final Map<String, Object?>? jsonSchema;
   final bool contextFile;
   final String? contextFileSha256;
+
+  /// Routes calls that share a prompt prefix to the same provider-side cache.
+  ///
+  /// Automatic prefix caching is best effort and misses when consecutive calls
+  /// land on different machines. A lab plan makes two calls over the same
+  /// ~800k-token context minutes apart, so a miss costs a second full prefill —
+  /// measured at four and a half minutes. Callers pass the same key for every
+  /// call in one logical run.
+  final String? promptCacheKey;
 }
 
 class ProviderResponse {
