@@ -350,6 +350,25 @@ what the user requested. `verificationInstructionBlock` passes the instruction a
 clinically significant omission still returns, as a `warning` rather than a
 `blocking_issue`. A reviewer that approves whatever it is told is not a review.
 
+**Never gate correctness on a model transcribing data it cannot compute.** The
+context receipt used to demand a verbatim echo of all 19 section digests —
+1,344 characters of random hex — and a run that produced an approved 43-item
+plan was thrown away because one of them came back 63 characters instead of 64.
+It proved nothing, either: the model *copies* those digests out of the manifest
+rather than deriving them, so a correct echo showed manifest access, which
+`sha256`, `file_sha256`, `record_count` and the section enumeration already
+show at a fraction of the surface. Ask what a receipt field proves that the
+cheaper fields do not, and price in the transcription failure rate before
+making it a gate.
+
+**A second-pass parse failure must not discard the first pass.** An unreadable
+verification means the plan is *unverified* — which `approved: false` states
+and `canSave` already enforces — not that a complete, paid-for draft is
+worthless. `_verify` catches `LabPlanFormatException` and returns an
+unapproved verification carrying the parse error as a blocking issue, so the
+user can still read the plan. Everything else — a dropped connection, a refusal
+— is a failure of the *call* rather than of the answer, and still rethrows.
+
 **Nothing in the context package may vary per build.** OpenAI caches the longest
 matching prefix, and the prefix covers the structured-output schema, the tool
 definitions and the whole input. `generated_at` sorted ahead of `raw_ledger`, so

@@ -85,7 +85,11 @@ void main() {
     );
     expect(envelope.sectionHashes['measurements'], hasLength(64));
     expect(envelope.coverageInstruction, contains('"file_sha256"'));
-    expect(envelope.coverageInstruction, contains('"section_hashes"'));
+    // The receipt never asks the model to transcribe the per-section digests.
+    // It cannot compute them, so echoing them proved nothing the section
+    // enumeration does not already prove — and one dropped character out of
+    // more than a thousand discarded a finished answer.
+    expect(envelope.coverageInstruction, isNot(contains('section_hashes')));
   });
 
   test(

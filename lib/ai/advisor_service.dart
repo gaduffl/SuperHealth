@@ -264,20 +264,10 @@ Be direct and useful. State what is known from the profile, what is inferred, an
         'Sections were not reviewed: ${missing.join(', ')}.',
       );
     }
-    final sectionHashes = decoded['section_hashes'];
-    if (sectionHashes is! Map ||
-        sectionHashes.length != context.sectionHashes.length) {
-      throw const AdvisorCoverageException(
-        'The context receipt section hashes are missing or incomplete.',
-      );
-    }
-    for (final entry in context.sectionHashes.entries) {
-      if (sectionHashes[entry.key]?.toString() != entry.value) {
-        throw AdvisorCoverageException(
-          'The context receipt section hash is wrong for ${entry.key}.',
-        );
-      }
-    }
+    // No per-section hash echo — see `_validateContextReceipt` in
+    // `lab_planner_service.dart` for why. Here the transcription risk was worse
+    // still: the advisor has no structured-output schema, so the receipt is
+    // written free-hand, and one wrong character discarded a whole answer.
     return response
         .replaceRange(matches.single.start, matches.single.end, '')
         .trim();
