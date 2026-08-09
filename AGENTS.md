@@ -345,6 +345,15 @@ could serve a plan. The caller falls back to the whole-context hash, which is
 merely less cacheable. Section names there must match `completeProfileSnapshot`
 exactly (`biomarker_catalog`, not `biomarkers`).
 
+**Never discard a provider error payload you do not recognise.** The OpenAI
+handler read only `event['message']`, so a nested shape produced the literal
+string "OpenAI stream error." with the real reason thrown away — and
+`response.failed` was returned like a success, so the caller reported "returned
+no text output" instead of the error the API had just given.
+`describeProviderError` checks every known nesting and, failing all of them,
+includes a bounded dump of the raw event. An unrecognised payload is exactly the
+case where the text matters most.
+
 **A cache hint must never be able to fail the request.** The first
 `prompt_cache_key` was a 20-character prefix plus a 64-character SHA — 84
 characters against OpenAI's limit of 64 — and the API rejected the whole call

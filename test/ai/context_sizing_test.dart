@@ -175,4 +175,60 @@ void main() {
       expect(providerStopReason(const {}), isNull);
     });
   });
+
+  group('provider error description', () {
+    test('reads a top-level message', () {
+      expect(
+        describeProviderError({'message': 'rate limit exceeded'}, 'fallback'),
+        'rate limit exceeded',
+      );
+    });
+
+    test('reads a nested one, which is what the shrug came from', () {
+      // The handler only read event['message'], so this shape produced
+      // "OpenAI stream error." with the real reason discarded.
+      expect(
+        describeProviderError({
+          'type': 'error',
+          'error': {'message': 'context length exceeded', 'code': 'ctx'},
+        }, 'fallback'),
+        'context length exceeded (code ctx)',
+      );
+    });
+
+    test('reads the error inside a failed response', () {
+      expect(
+        describeProviderError({
+          'response': {
+            'status': 'failed',
+            'error': {'message': 'server had an error'},
+          },
+        }, 'fallback'),
+        'server had an error',
+      );
+    });
+
+    test('an unrecognised shape keeps the payload instead of dropping it', () {
+      // The case where the text matters most: nobody knows the shape yet, so
+      // the next report has to carry it.
+      final described = describeProviderError({
+        'type': 'error',
+        'weird_field': 'something useful',
+      }, 'Provider reported a stream error.');
+
+      expect(described, contains('Provider reported a stream error.'));
+      expect(described, contains('weird_field'));
+      expect(described, contains('something useful'));
+    });
+
+    test('a huge payload is bounded', () {
+      final described = describeProviderError({
+        'type': 'error',
+        'blob': 'x' * 5000,
+      }, 'fallback');
+
+      expect(described.length, lessThan(1000));
+      expect(described, endsWith('…'));
+    });
+  });
 }
