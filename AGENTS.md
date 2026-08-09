@@ -345,6 +345,14 @@ could serve a plan. The caller falls back to the whole-context hash, which is
 merely less cacheable. Section names there must match `completeProfileSnapshot`
 exactly (`biomarker_catalog`, not `biomarkers`).
 
+**The manifest proves coverage with a count and a hash, not a list of ids.**
+`_sectionMetadata` used to emit `record_ids` for every section — ids already
+present in the rows they belong to, costing ~78 KB (~33k tokens) per call on a
+real profile for nothing the content hash did not already cover. Nothing ever
+read them. Before adding a field to the manifest, ask what it proves that
+`records` + `sha256` does not. The `ids` list is still built, purely to reject
+duplicates.
+
 **Never discard a provider error payload you do not recognise.** The OpenAI
 handler read only `event['message']`, so a nested shape produced the literal
 string "OpenAI stream error." with the real reason thrown away — and
