@@ -345,6 +345,15 @@ could serve a plan. The caller falls back to the whole-context hash, which is
 merely less cacheable. Section names there must match `completeProfileSnapshot`
 exactly (`biomarker_catalog`, not `biomarkers`).
 
+**A cache hint must never be able to fail the request.** The first
+`prompt_cache_key` was a 20-character prefix plus a 64-character SHA — 84
+characters against OpenAI's limit of 64 — and the API rejected the whole call
+with HTTP 400, killing the generation before a single token. `labPlanCacheKeyFor`
+now fits by construction, and `usablePromptCacheKey` drops anything a provider
+would reject rather than sending it. Dropping, never truncating: a shortened key
+could collide, and one catalog could be served another's prefix. A cold prefill
+is an acceptable outcome; no plan is not.
+
 **Routing is not the same as a cache hit.** A cross-run hit also needs the
 invariant data to *lead* the payload, and it does not: `stableJson` sorts keys,
 so the volatile `attention_index` precedes `raw_ledger` and caps the shared

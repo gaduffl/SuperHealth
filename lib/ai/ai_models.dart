@@ -102,6 +102,12 @@ class ProviderRequest {
   final bool contextFile;
   final String? contextFileSha256;
 
+  /// OpenAI rejects a `prompt_cache_key` longer than this with HTTP 400.
+  ///
+  /// Learned the hard way: a 20-character prefix plus a 64-character SHA is 84,
+  /// and the whole generation failed before the first token.
+  static const promptCacheKeyMaxLength = 64;
+
   /// Routes calls that share a prompt prefix to the same provider-side cache.
   ///
   /// Automatic prefix caching is best effort and misses when consecutive calls

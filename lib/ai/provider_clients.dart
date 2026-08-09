@@ -16,6 +16,21 @@ class AiProviderException implements Exception {
       statusCode == null ? message : '$message (HTTP $statusCode)';
 }
 
+/// The cache key if a provider will accept it, otherwise null.
+///
+/// Caching is an optimisation. The one thing it must never do is cost the
+/// caller their answer, so a key that would be rejected is dropped and the
+/// request proceeds without it — a cold prefill instead of no plan at all.
+/// Truncating instead would be worse: two different catalogs could collide on
+/// the shortened key and one could be served the other's prefix.
+String? usablePromptCacheKey(String? key) {
+  if (key == null) return null;
+  final trimmed = key.trim();
+  if (trimmed.isEmpty) return null;
+  if (trimmed.length > ProviderRequest.promptCacheKeyMaxLength) return null;
+  return trimmed;
+}
+
 /// Why a response stopped, whichever provider produced it.
 ///
 /// The three providers name this differently, and reading only Anthropic's
@@ -479,9 +494,12 @@ class OpenAiClient extends _BaseClient {
         'stream': true,
         // Without this, two calls over the same context can land on different
         // machines and each pay a full prefill. The key only routes; it never
-        // changes what is sent.
-        if (request.promptCacheKey != null)
-          'prompt_cache_key': request.promptCacheKey,
+        // changes what is sent — so an unusable one is dropped rather than
+        // sent. An over-long key was rejected with HTTP 400, and a request
+        // that dies before the first token because of a caching *hint* is a
+        // far worse outcome than a cold prefill.
+        if (usablePromptCacheKey(request.promptCacheKey) != null)
+          'prompt_cache_key': usablePromptCacheKey(request.promptCacheKey),
         'instructions': request.systemPrompt,
         // The stable context leads and the varying task prompt comes last so
         // OpenAI's automatic prefix caching serves repeated calls over the
