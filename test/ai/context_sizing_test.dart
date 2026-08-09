@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:super_health/ai/ai_models.dart';
 import 'package:super_health/ai/health_context_builder.dart';
+import 'package:super_health/ai/lab_planner_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 
 void main() {
@@ -78,6 +79,41 @@ void main() {
         ),
         HealthContextDelivery.inline,
       );
+    });
+  });
+
+  group('prompt cache key', () {
+    test('is short enough for the provider to accept', () {
+      // A 20-char prefix plus a 64-char SHA is 84. OpenAI caps it at 64 and
+      // rejects the whole request with HTTP 400 — the generation died before
+      // the first token.
+      final key = labPlanCacheKeyFor('a' * 64);
+
+      expect(
+        key.length,
+        lessThanOrEqualTo(ProviderRequest.promptCacheKeyMaxLength),
+      );
+      expect(key, startsWith('superhealth-lab-'));
+    });
+
+    test('still distinguishes two catalogs', () {
+      expect(labPlanCacheKeyFor('a' * 64), isNot(labPlanCacheKeyFor('b' * 64)));
+    });
+
+    test('an unusable key is dropped, not sent', () {
+      // Caching is an optimisation. It must never be the reason a plan fails,
+      // so an over-long key becomes a cold prefill rather than a 400.
+      expect(usablePromptCacheKey('x' * 65), isNull);
+      expect(usablePromptCacheKey(''), isNull);
+      expect(usablePromptCacheKey('   '), isNull);
+      expect(usablePromptCacheKey(null), isNull);
+      expect(usablePromptCacheKey('x' * 64), 'x' * 64);
+    });
+
+    test('it is never silently truncated into a collision', () {
+      // Shortening an over-long key would let two different catalogs share one,
+      // and one could be served the other's prefix.
+      expect(usablePromptCacheKey('x' * 100), isNull);
     });
   });
 

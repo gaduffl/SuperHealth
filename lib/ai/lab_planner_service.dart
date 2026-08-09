@@ -114,6 +114,22 @@ class LabPlanUpdate {
 /// not lose the plan.
 typedef LabPlanProgress = void Function(LabPlanUpdate update);
 
+/// Builds the routing key for one catalog, short enough for the provider.
+///
+/// Kept inside [ProviderRequest.promptCacheKeyMaxLength] by construction rather
+/// than by hope: the first version was a 20-character prefix plus a 64-character
+/// SHA, and OpenAI rejected all 84 of it with HTTP 400 — killing the generation
+/// before a single token. 40 hex characters is 160 bits, so two distinct
+/// catalogs colliding is not something that happens by accident.
+String labPlanCacheKeyFor(String catalogFingerprint) {
+  const prefix = 'superhealth-lab-';
+  final room = ProviderRequest.promptCacheKeyMaxLength - prefix.length;
+  final digest = catalogFingerprint.length > room
+      ? catalogFingerprint.substring(0, room)
+      : catalogFingerprint;
+  return '$prefix$digest';
+}
+
 /// How long a streaming call may go silent before it is worth flagging.
 ///
 /// Generous on purpose: a model can think for a long time between visible
@@ -594,7 +610,7 @@ $_schemaInstructions
   /// invariant data to lead the payload. See [HealthContextEnvelope
   /// .catalogFingerprint] for why it does not yet.
   static String _cacheKeyFor(HealthContextEnvelope context) =>
-      'superhealth-labplan-${context.catalogFingerprint}';
+      labPlanCacheKeyFor(context.catalogFingerprint);
 
   /// Runs one model call, recording what came back — or what it threw.
   ///
