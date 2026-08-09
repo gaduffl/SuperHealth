@@ -213,7 +213,7 @@ Return exactly one JSON object and no markdown. Use this shape:
   "title": "string",
   "planned_for": "YYYY-MM-DD or null",
   "warnings": ["string"],
-  "context_receipt": {"sha256":"exact package hash","file_sha256":"exact supplied file hash","record_count":123,"reviewed_sections":["every manifest section name"],"section_hashes":{"section":"exact manifest section hash"}},
+  "context_receipt": {"sha256":"exact package hash","file_sha256":"exact supplied file hash","record_count":123,"reviewed_sections":["every manifest section name"]},
   "tiers": [
     {"tier":"core","items":[ITEM...]},
     {"tier":"advanced","items":[ITEM...]},
@@ -235,7 +235,7 @@ this profile, and supported by the complete supplied health context.
   "summary": "concise German review summary",
   "blocking_issues": ["specific issue requiring a new plan"],
   "warnings": ["non-blocking caveat"],
-  "context_receipt": {"sha256":"exact package hash","file_sha256":"exact supplied file hash","record_count":123,"reviewed_sections":["every manifest section name"],"section_hashes":{"section":"exact manifest section hash"}}
+  "context_receipt": {"sha256":"exact package hash","file_sha256":"exact supplied file hash","record_count":123,"reviewed_sections":["every manifest section name"]}
 }
 approved must be a JSON boolean. summary must be non-empty. blocking_issues and
 warnings must be JSON string arrays. If approved is true, blocking_issues must
@@ -259,21 +259,12 @@ be empty. A rejected plan remains a draft and cannot be saved.
               ? {'type': 'string'}
               : {'type': 'string', 'enum': sections},
         },
-        'section_hashes': {
-          'type': 'object',
-          'properties': {
-            for (final name in sections) name: {'type': 'string'},
-          },
-          'required': sections,
-          'additionalProperties': false,
-        },
       },
       'required': [
         'sha256',
         'file_sha256',
         'record_count',
         'reviewed_sections',
-        'section_hashes',
       ],
       'additionalProperties': false,
     };
@@ -735,13 +726,32 @@ $_verificationSchemaInstructions
     // that had in fact finished every model call.
     onProgress(const LabPlanUpdate(stage: LabPlanStage.reading));
     await _trace.event('stage', {'stage': LabPlanStage.reading.name});
-    final LabPlanVerification verification;
+    // Not `final`: the catch below assigns a fallback, and flow analysis treats
+    // the try body as possibly having assigned already when the catch runs.
+    LabPlanVerification verification;
     try {
       verification = _parseVerification(response, context);
-    } on Object catch (error, stack) {
+    } on LabPlanFormatException catch (error, stack) {
       await _trace.failure('verification_parse_failed', error, stack, {
         'response_text': response.text,
       });
+      // Fail closed, but do not throw the plan away. An unreadable review means
+      // the plan is unverified, which `approved: false` already says and
+      // `canSave` already enforces — it does not mean the draft is worthless.
+      // Discarding it lost a complete, paid-for, 43-item plan because a
+      // checksum echo was one character short.
+      verification = LabPlanVerification(
+        approved: false,
+        summary:
+            'The independent review could not be read, so this draft is '
+            'unverified and cannot be saved.',
+        blockingIssues: ['Unreadable verification response: ${error.message}'],
+        warnings: const [],
+      );
+    } on Object catch (error, stack) {
+      // Anything else — a dropped connection, a refusal — is a failure of the
+      // call rather than of the answer, and the caller must see it.
+      await _trace.failure('verification_failed', error, stack);
       rethrow;
     }
     await _trace.event('verification_parsed', {
@@ -1113,20 +1123,13 @@ $_verificationSchemaInstructions
         'The model did not confirm review of: ${missing.join(', ')}.',
       );
     }
-    final sectionHashes = rawReceipt['section_hashes'];
-    if (sectionHashes is! Map ||
-        sectionHashes.length != context.sectionHashes.length) {
-      throw const LabPlanFormatException(
-        'The context receipt section hashes are missing or incomplete.',
-      );
-    }
-    for (final entry in context.sectionHashes.entries) {
-      if (sectionHashes[entry.key]?.toString() != entry.value) {
-        throw LabPlanFormatException(
-          'The context receipt section hash is wrong for ${entry.key}.',
-        );
-      }
-    }
+    // No per-section hash echo. It used to require the model to transcribe 19
+    // digests of 64 random hex characters, and a single dropped character threw
+    // away a complete, approved, paid-for plan. It proved nothing either: the
+    // model *copies* those hashes out of the manifest rather than computing
+    // them, so echoing one shows manifest access — which `sha256`,
+    // `file_sha256`, `record_count` and the section enumeration above already
+    // show, at a fraction of the transcription surface.
   }
 
   int _estimatedTokens(String value) =>

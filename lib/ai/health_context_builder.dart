@@ -51,9 +51,7 @@ class HealthContextEnvelope {
 
   /// Sections that are reference data rather than this person's record.
   ///
-  /// Identical across runs, across days, and across profiles on one device —
-  /// which is what makes them the only part of the package worth caching
-  /// beyond a single run.
+  /// Identical across runs, across days, and across profiles on one device.
   /// These are the snapshot's own section names — see
   /// `completeProfileSnapshot`. Getting one wrong is not a small mistake: the
   /// fingerprint would silently collapse, so [catalogFingerprintOf] refuses to
@@ -66,11 +64,14 @@ class HealthContextEnvelope {
   /// changes whenever any record changes, so every run would land on a fresh
   /// cache node and could never reuse the catalog the previous run prefilled.
   ///
-  /// Note this only *routes*. A cross-run hit also needs the invariant data to
-  /// lead the payload, and today it does not — `stableJson` sorts keys, so the
-  /// volatile `attention_index` precedes `raw_ledger` and caps the shared
-  /// prefix within the first few hundred bytes. Within a single run the whole
-  /// context string is identical, so draft and verify share everything.
+  /// Routing is necessary but not sufficient. Draft and verify inside one run
+  /// can never share a cache — their structured-output schemas differ, and the
+  /// schema is a prefix to the system message, so the two prefixes diverge at
+  /// position zero. Cross-run is the only win available, and it also needs the
+  /// invariant data to *lead* the payload, which today it does not: `stableJson`
+  /// sorts keys, so the volatile `attention_index` precedes `raw_ledger` and
+  /// caps the shared prefix within the first few hundred bytes. Quantising
+  /// `generated_at` to the day removed one cause of divergence, not the last.
   String get catalogFingerprint =>
       catalogFingerprintOf(sectionHashes) ?? sha256;
 
@@ -98,8 +99,8 @@ class HealthContextEnvelope {
       'Before answering, review every manifest section and verify material '
       'claims against raw_ledger. End with exactly one hidden receipt: '
       '<context_coverage>{"sha256":"$sha256","file_sha256":"$fileSha256",'
-      '"record_count":$recordCount,"reviewed_sections":${jsonEncode(sectionNames)},'
-      '"section_hashes":${jsonEncode(sectionHashes)}}</context_coverage>. '
+      '"record_count":$recordCount,'
+      '"reviewed_sections":${jsonEncode(sectionNames)}}</context_coverage>. '
       'Do not mention the receipt in the visible answer.';
 }
 

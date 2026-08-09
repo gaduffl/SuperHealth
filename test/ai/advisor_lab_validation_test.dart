@@ -190,19 +190,20 @@ void main() {
         ),
       );
 
-      await expectLater(
-        _planner(
-          fixture,
-          client,
-        ).generate(profileId: fixture.profile.id, settings: _settings),
-        throwsA(isA<LabPlanFormatException>()),
-      );
+      final result = await _planner(
+        fixture,
+        client,
+      ).generate(profileId: fixture.profile.id, settings: _settings);
+
+      expect(result.verification.approved, isFalse);
+      expect(result.canSave, isFalse);
+      expect(result.plan.items, isNotEmpty);
       expect(client.calls, 2);
     },
   );
 
   test(
-    'lab planner fails closed on a malformed independent verification',
+    'an unreadable verification blocks the save but keeps the draft',
     () async {
       final fixture = await _Fixture.create(withBiomarker: true);
       addTearDown(fixture.dispose);
@@ -215,19 +216,24 @@ void main() {
         ),
       );
 
-      await expectLater(
-        _planner(
-          fixture,
-          client,
-        ).generate(profileId: fixture.profile.id, settings: _settings),
-        throwsA(isA<LabPlanFormatException>()),
-      );
+      final result = await _planner(
+        fixture,
+        client,
+      ).generate(profileId: fixture.profile.id, settings: _settings);
+
+      // An unreadable review means unverified, not worthless. Throwing here
+      // discarded a complete, paid-for plan over a formatting slip in the
+      // second pass; `approved: false` already stops it being saved.
+      expect(result.verification.approved, isFalse);
+      expect(result.canSave, isFalse);
+      expect(result.plan.items, isNotEmpty);
+      expect(result.verification.blockingIssues.single, contains('Unreadable'));
       expect(client.calls, 2);
     },
   );
 
   test(
-    'lab planner fails closed on a mismatched verification receipt',
+    'a mismatched verification receipt blocks the save but keeps the draft',
     () async {
       final fixture = await _Fixture.create(withBiomarker: true);
       addTearDown(fixture.dispose);
@@ -242,14 +248,83 @@ void main() {
         ),
       );
 
-      await expectLater(
-        _planner(
-          fixture,
-          client,
-        ).generate(profileId: fixture.profile.id, settings: _settings),
-        throwsA(isA<LabPlanFormatException>()),
-      );
+      final result = await _planner(
+        fixture,
+        client,
+      ).generate(profileId: fixture.profile.id, settings: _settings);
+
+      expect(result.verification.approved, isFalse);
+      expect(result.canSave, isFalse);
+      expect(result.plan.items, isNotEmpty);
       expect(client.calls, 2);
+    },
+  );
+
+  test('a verification receipt without section hashes is accepted', () async {
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    final client = _Client(
+      (request) => ProviderResponse(
+        text: jsonEncode(
+          request.userPrompt.contains('Independently verify')
+              ? _verificationBody(request)
+              : _labBody(request),
+        ),
+        raw: const {},
+      ),
+    );
+
+    final result = await _planner(
+      fixture,
+      client,
+    ).generate(profileId: fixture.profile.id, settings: _settings);
+
+    // `_receipt` emits no `section_hashes` at all. Neither pass may demand one:
+    // the model copies those digests rather than computing them, so the echo
+    // was transcription risk with no evidential value.
+    expect(result.verification.approved, isTrue);
+    expect(result.canSave, isTrue);
+    for (final request in client.requests) {
+      expect(request.userPrompt, isNot(contains('section_hashes')));
+      expect(jsonEncode(request.jsonSchema), isNot(contains('section_hashes')));
+    }
+  });
+
+  test(
+    'a draft receipt with a wrong section digest is still accepted',
+    () async {
+      final fixture = await _Fixture.create(withBiomarker: true);
+      addTearDown(fixture.dispose);
+      final client = _Client(
+        (request) => ProviderResponse(
+          text: jsonEncode(
+            request.userPrompt.contains('Independently verify')
+                ? _verificationBody(
+                    request,
+                    receiptPatch: const {
+                      'section_hashes': {'measurements': 'nonsense'},
+                    },
+                  )
+                : _labBody(
+                    request,
+                    receiptPatch: const {
+                      'section_hashes': {'measurements': 'nonsense'},
+                    },
+                  ),
+          ),
+          raw: const {},
+        ),
+      );
+
+      final result = await _planner(
+        fixture,
+        client,
+      ).generate(profileId: fixture.profile.id, settings: _settings);
+
+      // The digest that broke a real run was 63 characters instead of 64. A
+      // stray or wrong one must not be a gate any more, in either pass.
+      expect(result.verification.approved, isTrue);
+      expect(result.canSave, isTrue);
     },
   );
 
@@ -403,11 +478,15 @@ Map<String, Object?> _labBody(
   List<Object?>? tiers,
   Map<String, Object?>? itemPatch,
   List<String> warnings = const [],
+  Map<String, Object?> receiptPatch = const {},
 }) => {
   'title': 'Plan',
   'planned_for': null,
   'warnings': warnings,
-  'context_receipt': _receipt(request, recordCount: recordCount),
+  'context_receipt': {
+    ..._receipt(request, recordCount: recordCount),
+    ...receiptPatch,
+  },
   'tiers':
       tiers ??
       [
@@ -469,10 +548,6 @@ Map<String, Object?> _receipt(ProviderRequest request, {Object? recordCount}) {
     'file_sha256': sha256.convert(utf8.encode(request.contextJson)).toString(),
     'record_count': recordCount ?? manifest['record_count'],
     'reviewed_sections': sections.keys.toList(),
-    'section_hashes': {
-      for (final entry in sections.entries)
-        entry.key: (entry.value as Map)['sha256'],
-    },
   };
 }
 
