@@ -119,6 +119,19 @@ const jsonBytesPerToken = 2.3;
 int estimatedJsonTokens(int byteLength) =>
     (byteLength / jsonBytesPerToken).ceil();
 
+/// The package's generation date, as `YYYY-MM-DD` in UTC.
+///
+/// Quantised so that two runs on the same day produce a byte-identical payload
+/// and can share a provider-side prompt cache. A full timestamp bought nothing
+/// — nothing reasons about the minute a snapshot was taken — and cost a cold
+/// prefill of the whole context on every run.
+String packageDateFor(DateTime now) {
+  final utc = now.toUtc();
+  final month = utc.month.toString().padLeft(2, '0');
+  final day = utc.day.toString().padLeft(2, '0');
+  return '${utc.year}-$month-$day';
+}
+
 /// Hashes the invariant sections into one stable routing key, or null when
 /// none of them are present.
 ///
@@ -230,7 +243,14 @@ class HealthContextBuilder {
     final package = <String, Object?>{
       'schema': packageSchema,
       'schema_version': packageVersion,
-      'generated_at': DateTime.now().toUtc().toIso8601String(),
+      // The UTC *date*, not the instant. The model needs this — how old a
+      // result is decides whether to re-order the test — but a timestamp that
+      // moves every build changes the payload every build, and OpenAI caches
+      // the longest matching prefix. `generated_at` sorts ahead of
+      // `raw_ledger`, so a fresh instant here made every run a guaranteed cache
+      // miss on the entire ~600k-token context. To the day is precise enough
+      // for reasoning about result age and byte-identical across a day's runs.
+      'generated_at': packageDateFor(DateTime.now()),
       'active_profile_id': profileId,
       'coverage_contract': {
         // True only of the sections that are not windowed, which is why the

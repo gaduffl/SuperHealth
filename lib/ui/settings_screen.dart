@@ -194,8 +194,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: _settingsText(context, 'AI roles', 'KI-Rollen'),
             subtitle: _settingsText(
               context,
-              'Choose separate models for the advisor, document parsing and price updates',
-              'Wähle getrennte Modelle für Beratung, Dokumentanalyse und Preis-Aktualisierung',
+              'Choose separate models for the advisor, lab planning, document parsing and price updates',
+              'Wähle getrennte Modelle für Beratung, Laborplanung, Dokumentanalyse und Preis-Aktualisierung',
             ),
           ),
           _ModelConfigurationCard(
@@ -205,6 +205,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             settings: controller.advisorSettings,
             allowTools: true,
           ),
+          // Its own model because lab planning is the most expensive call this
+          // app makes — two passes over a ~600k-token health context. It used
+          // to ride on the advisor's setting, so choosing a cheaper model here
+          // had no effect and no way to notice except the bill.
+          if (visibility.multipleAiRoles)
+            _ModelConfigurationCard(
+              key: ValueKey(
+                'labplanner-${controller.labPlannerSettings?.model}',
+              ),
+              task: AiTask.labPlanner,
+              title: _settingsText(
+                context,
+                'Lab visit planner',
+                'Laborbesuch-Planer',
+              ),
+              settings: controller.labPlannerSettings,
+              allowTools: true,
+            ),
           if (visibility.multipleAiRoles)
             _ModelConfigurationCard(
               key: ValueKey('parsing-${controller.parsingSettings?.model}'),
@@ -2813,11 +2831,12 @@ class _ModelConfigurationCardState extends State<_ModelConfigurationCard> {
 
     return Card(
       child: ExpansionTile(
-        leading: Icon(
-          widget.task == AiTask.advisor
-              ? Icons.psychology_outlined
-              : Icons.document_scanner_outlined,
-        ),
+        leading: Icon(switch (widget.task) {
+          AiTask.advisor => Icons.psychology_outlined,
+          AiTask.labPlanner => Icons.science_outlined,
+          AiTask.pricing => Icons.euro_outlined,
+          AiTask.parsing => Icons.document_scanner_outlined,
+        }),
         title: Text(widget.title),
         subtitle: Text(
           widget.settings == null

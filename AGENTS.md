@@ -335,6 +335,37 @@ guard silently bypassed, not merely a bad display number. Use
 `estimatedJsonTokens`, and keep it erring *high*: over-estimating routes to the
 lossless file path, under-estimating degrades answers near the context limit.
 
+**Every AI role that costs real money gets its own `AiTask`.** Lab planning
+used to read `advisorSettings`, so the most expensive call in the app silently
+ran on whatever the advisor was set to — a user who picked a cheaper model for
+it had no way to find out except the bill. `AiTask.labPlanner` falls back to the
+advisor's settings on load, because that is what existing installs have been
+using and showing it is the truth.
+
+**The verifier reviews the question that was asked.** `priorities` reaches both
+passes. It used to reach only the draft, so the reviewer saw tests omitted, found
+no justification in the stored record, and blocked a plan that was doing exactly
+what the user requested. `verificationInstructionBlock` passes the instruction as
+*data*, and is explicit that it justifies an omission without excusing it: a
+clinically significant omission still returns, as a `warning` rather than a
+`blocking_issue`. A reviewer that approves whatever it is told is not a review.
+
+**Nothing in the context package may vary per build.** OpenAI caches the longest
+matching prefix, and the prefix covers the structured-output schema, the tool
+definitions and the whole input. `generated_at` sorted ahead of `raw_ledger`, so
+a fresh timestamp made every run a guaranteed cold prefill of ~600k tokens.
+`packageDateFor` quantises it to the UTC day: precise enough to reason about
+result age, byte-identical across a day's runs. Before adding any field to the
+package, check whether it changes when the data has not.
+
+**Draft and verify can never share a cache, and that is deliberate.** Their
+structured-output schemas differ, and the schema is a *prefix to the system
+message*, so the two prefixes diverge at position zero. Unifying them would mean
+giving up schema-constrained output on the draft, where it pins 42 items to exact
+catalog ids. Cross-run caching wins the same tokens without that cost — priorities
+live in the trailing user message, so re-running with a different instruction
+still hits.
+
 **The cache key is the catalog fingerprint, and it refuses to guess.** Keying
 on the whole-context hash sends every run to a cold node, because that hash
 changes on every logged dose. `catalogFingerprintOf` hashes only the invariant

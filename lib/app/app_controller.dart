@@ -176,6 +176,11 @@ class AppController extends ChangeNotifier {
   AiTaskSettings? parsingSettings;
   AiTaskSettings? pricingSettings;
 
+  /// The lab planner's own model. Falls back to the advisor's on load, because
+  /// that is what every existing install has been using — showing it as the
+  /// current value is the truth, and lets the setting be changed from there.
+  AiTaskSettings? labPlannerSettings;
+
   /// The stage a lab plan is at, or null when none is running. A greyed-out
   /// button says only that something is happening; these calls run for minutes.
   LabPlanStage? labPlanStage;
@@ -243,6 +248,8 @@ class AppController extends ChangeNotifier {
       advisorSettings = await _aiSettingsStore.load(AiTask.advisor);
       parsingSettings = await _aiSettingsStore.load(AiTask.parsing);
       pricingSettings = await _aiSettingsStore.load(AiTask.pricing);
+      labPlannerSettings =
+          await _aiSettingsStore.load(AiTask.labPlanner) ?? advisorSettings;
       await refreshKeyStatus();
       restoreSyncDecisionPending = await _restoreSyncGateStore.isPending();
       await refreshProfiles();
@@ -1696,12 +1703,19 @@ class AppController extends ChangeNotifier {
       throw StateError('Code execution is not documented for this model.');
     }
     await _aiSettingsStore.save(task, settings);
-    if (task == AiTask.pricing) {
-      pricingSettings = settings;
-    } else if (task == AiTask.advisor) {
-      advisorSettings = settings;
-    } else {
-      parsingSettings = settings;
+    switch (task) {
+      case AiTask.pricing:
+        pricingSettings = settings;
+      case AiTask.advisor:
+        advisorSettings = settings;
+        // Until the planner is configured in its own right it mirrors the
+        // advisor, so changing the advisor must not leave the planner showing
+        // a model it is no longer using.
+        labPlannerSettings ??= settings;
+      case AiTask.labPlanner:
+        labPlannerSettings = settings;
+      case AiTask.parsing:
+        parsingSettings = settings;
     }
     await refreshInitialSetupProgress();
   }
@@ -1749,9 +1763,12 @@ class AppController extends ChangeNotifier {
     DateTime? targetDate,
     String priorities = '',
   }) async {
-    final settings = advisorSettings;
+    // Its own setting. This used to read advisorSettings, so a planner run
+    // silently used whatever the advisor was set to — on the most expensive
+    // call this app makes, with no way to tell from the screen.
+    final settings = labPlannerSettings ?? advisorSettings;
     if (settings == null) {
-      throw StateError('Configure the advisor model first.');
+      throw StateError('Configure the lab planner model first.');
     }
     return _withBusy(() async {
       // Bound the log before the run appends to it, never after — trimming a
