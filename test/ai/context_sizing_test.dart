@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:super_health/ai/ai_models.dart';
 import 'package:super_health/ai/health_context_builder.dart';
+import 'package:super_health/ai/provider_clients.dart';
 
 void main() {
   group('token estimation', () {
@@ -93,5 +94,49 @@ void main() {
     );
 
     expect(request.promptCacheKey, 'superhealth-labplan-abc');
+  });
+
+  group('stop reason', () {
+    test('reads Anthropic', () {
+      expect(providerStopReason({'stop_reason': 'max_tokens'}), 'max_tokens');
+    });
+
+    test('reads OpenAI, including why it was incomplete', () {
+      // "incomplete" alone does not say why, and a response truncated at the
+      // output limit looks exactly like one that simply failed to parse.
+      expect(
+        providerStopReason({
+          'status': 'incomplete',
+          'incomplete_details': {'reason': 'max_output_tokens'},
+        }),
+        'incomplete reason=max_output_tokens',
+      );
+      expect(providerStopReason({'status': 'completed'}), 'completed');
+    });
+
+    test('surfaces an OpenAI failure message', () {
+      expect(
+        providerStopReason({
+          'status': 'failed',
+          'error': {'message': 'context length exceeded'},
+        }),
+        contains('context length exceeded'),
+      );
+    });
+
+    test('reads Gemini', () {
+      expect(
+        providerStopReason({
+          'candidates': [
+            {'finishReason': 'MAX_TOKENS'},
+          ],
+        }),
+        'MAX_TOKENS',
+      );
+    });
+
+    test('returns null rather than inventing one', () {
+      expect(providerStopReason(const {}), isNull);
+    });
   });
 }

@@ -585,11 +585,16 @@ $_schemaInstructions
 
   /// A cache-routing key shared by every call over one context package.
   ///
-  /// Derived from the context hash rather than the profile, so editing a single
-  /// record starts a new cache line instead of reusing one built from data the
-  /// plan is no longer about.
+  /// Keyed on the biomarker catalog, not the whole context. The full context
+  /// hash changes whenever any record changes — which is most runs — so it
+  /// would send every run to a fresh cache node and guarantee a cold prefill.
+  /// The catalog is stable for weeks, so successive runs route together.
+  ///
+  /// Routing is necessary but not sufficient: a cross-run hit also needs the
+  /// invariant data to lead the payload. See [HealthContextEnvelope
+  /// .catalogFingerprint] for why it does not yet.
   static String _cacheKeyFor(HealthContextEnvelope context) =>
-      'superhealth-labplan-${context.sha256}';
+      'superhealth-labplan-${context.catalogFingerprint}';
 
   /// Runs one model call, recording what came back — or what it threw.
   ///
@@ -606,7 +611,7 @@ $_schemaInstructions
       await _trace.event('response_received', {
         'pass': pass,
         'text_chars': response.text.length,
-        'stop_reason': response.raw['stop_reason']?.toString(),
+        'stop_reason': providerStopReason(response.raw),
         'response_id': response.responseId,
         'usage': response.raw['usage']?.toString(),
         'citations': response.citations.length,

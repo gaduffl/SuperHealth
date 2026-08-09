@@ -335,6 +335,23 @@ guard silently bypassed, not merely a bad display number. Use
 `estimatedJsonTokens`, and keep it erring *high*: over-estimating routes to the
 lossless file path, under-estimating degrades answers near the context limit.
 
+**The cache key is the catalog fingerprint, and it refuses to guess.** Keying
+on the whole-context hash sends every run to a cold node, because that hash
+changes on every logged dose. `catalogFingerprintOf` hashes only the invariant
+sections — and returns *null* when none of them resolve, rather than a
+fingerprint over absences. That constant was a real bug caught by a test: one
+cache key shared by every profile and every catalog state, where a stale prefix
+could serve a plan. The caller falls back to the whole-context hash, which is
+merely less cacheable. Section names there must match `completeProfileSnapshot`
+exactly (`biomarker_catalog`, not `biomarkers`).
+
+**Routing is not the same as a cache hit.** A cross-run hit also needs the
+invariant data to *lead* the payload, and it does not: `stableJson` sorts keys,
+so the volatile `attention_index` precedes `raw_ledger` and caps the shared
+prefix within the first few hundred bytes. Within one run the context string is
+byte-identical, so draft and verify share everything. Do not claim cross-run
+caching works until the package is reordered.
+
 **Every call in one logical run shares a `promptCacheKey`.** A lab plan sends the
 same ~800k-token context twice, minutes apart. Automatic prefix caching alone
 missed completely — 824k written, 832k written again, zero read — costing a

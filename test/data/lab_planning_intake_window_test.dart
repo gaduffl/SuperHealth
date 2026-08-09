@@ -159,4 +159,62 @@ void main() {
     // total never says.
     expect(envelope.largestSectionsDescription(), contains('='));
   });
+
+  test(
+    'the cache key survives a change to the person, not the catalog',
+    () async {
+      // The whole point of keying on the catalog: the full context hash changes
+      // on every logged dose, which would send every run to a cold cache node.
+      final builder = HealthContextBuilder(repository);
+      final before = await builder.build(profile.id);
+
+      final now = DateTime.now().toUtc();
+      await repository.saveIntake(
+        SupplementIntake(
+          id: 'intake-new',
+          profileId: profile.id,
+          supplementId: 'supp-old',
+          takenAt: now,
+          dose: 2,
+          unit: 'capsule',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      final after = await builder.build(profile.id);
+
+      expect(after.sha256, isNot(before.sha256));
+      expect(after.catalogFingerprint, before.catalogFingerprint);
+    },
+  );
+
+  test('the cache key changes when the catalog does', () async {
+    // A stale catalog prefix would be worse than a cold one: the plan would be
+    // priced and named from biomarkers the app no longer has.
+    final builder = HealthContextBuilder(repository);
+    final before = await builder.build(profile.id);
+
+    final now = DateTime.now().toUtc();
+    await repository.saveBiomarker(
+      Biomarker(
+        id: 'bm-new',
+        canonicalName: 'ferritin',
+        displayName: 'Ferritin',
+        defaultUnit: 'ng/mL',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final after = await builder.build(profile.id);
+
+    expect(after.catalogFingerprint, isNot(before.catalogFingerprint));
+  });
+
+  test('a fingerprint is never invented from missing sections', () {
+    // The bug this replaced: a section name that does not match the snapshot
+    // silently produced one constant key for every profile and every catalog.
+    expect(catalogFingerprintOf(const {}), isNull);
+    expect(catalogFingerprintOf(const {'measurements': 'abc'}), isNull);
+    expect(catalogFingerprintOf(const {'biomarker_catalog': 'abc'}), isNotNull);
+  });
 }
