@@ -5,7 +5,13 @@ import 'ai_models.dart';
 /// Pricing is its own task because it is a cheap, mechanical job — read a page,
 /// match names, copy numbers — and should not ride on whatever expensive
 /// reasoning model the advisor is set to.
-enum AiTask { advisor, parsing, pricing }
+///
+/// Lab planning is its own task for the opposite reason. It is by far the most
+/// expensive thing this app does — two passes over a ~600k-token health context
+/// — and it used to silently ride on the advisor's model. Someone who set a
+/// cheaper model expecting the planner to use it had no way to discover that
+/// the planner was not listening, except from the bill.
+enum AiTask { advisor, parsing, pricing, labPlanner }
 
 class AiTaskSettings {
   const AiTaskSettings({
