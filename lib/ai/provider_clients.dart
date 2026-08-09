@@ -16,6 +16,43 @@ class AiProviderException implements Exception {
       statusCode == null ? message : '$message (HTTP $statusCode)';
 }
 
+/// Why a response stopped, whichever provider produced it.
+///
+/// The three providers name this differently, and reading only Anthropic's
+/// field logged `null` for every OpenAI call — hiding exactly the outcomes
+/// worth catching. A response truncated at the output limit and one that
+/// finished cleanly are indistinguishable from length alone, and both look
+/// like a plan that simply failed to parse.
+String? providerStopReason(Map<String, Object?> raw) {
+  // Anthropic: end_turn, max_tokens, refusal, pause_turn.
+  final anthropic = raw['stop_reason'];
+  if (anthropic != null) return anthropic.toString();
+
+  // OpenAI Responses: completed | incomplete | failed, with the interesting
+  // part in a side object — "incomplete" alone does not say why.
+  final status = raw['status'];
+  if (status != null) {
+    final detail = raw['incomplete_details'];
+    final reason = detail is Map ? detail['reason'] : null;
+    final error = raw['error'];
+    final message = error is Map ? error['message'] : null;
+    return [
+      status.toString(),
+      if (reason != null) 'reason=$reason',
+      if (message != null) 'error=$message',
+    ].join(' ');
+  }
+
+  // Gemini reports per-candidate.
+  final candidates = raw['candidates'];
+  if (candidates is List && candidates.isNotEmpty) {
+    final first = candidates.first;
+    final finish = first is Map ? first['finishReason'] : null;
+    if (finish != null) return finish.toString();
+  }
+  return null;
+}
+
 /// A live sign that a streamed call is still producing.
 ///
 /// Sent while the response is still arriving, so a caller can tell a slow model

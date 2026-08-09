@@ -49,6 +49,31 @@ class HealthContextEnvelope {
     return sections.keys.map((key) => key.toString()).toList()..sort();
   }
 
+  /// Sections that are reference data rather than this person's record.
+  ///
+  /// Identical across runs, across days, and across profiles on one device —
+  /// which is what makes them the only part of the package worth caching
+  /// beyond a single run.
+  /// These are the snapshot's own section names — see
+  /// `completeProfileSnapshot`. Getting one wrong is not a small mistake: the
+  /// fingerprint would silently collapse, so [catalogFingerprintOf] refuses to
+  /// produce one rather than return a constant.
+  static const invariantSections = {'biomarker_catalog', 'biomarker_ranges'};
+
+  /// A fingerprint of the reference data alone.
+  ///
+  /// Used to route prompt caching, in place of the whole-context hash: that
+  /// changes whenever any record changes, so every run would land on a fresh
+  /// cache node and could never reuse the catalog the previous run prefilled.
+  ///
+  /// Note this only *routes*. A cross-run hit also needs the invariant data to
+  /// lead the payload, and today it does not — `stableJson` sorts keys, so the
+  /// volatile `attention_index` precedes `raw_ledger` and caps the shared
+  /// prefix within the first few hundred bytes. Within a single run the whole
+  /// context string is identical, so draft and verify share everything.
+  String get catalogFingerprint =>
+      catalogFingerprintOf(sectionHashes) ?? sha256;
+
   /// Section names and byte sizes, largest first, as `name=bytes` pairs.
   ///
   /// For diagnostics. The whole point of shrinking a context is knowing which
@@ -93,6 +118,25 @@ const jsonBytesPerToken = 2.3;
 
 int estimatedJsonTokens(int byteLength) =>
     (byteLength / jsonBytesPerToken).ceil();
+
+/// Hashes the invariant sections into one stable routing key, or null when
+/// none of them are present.
+///
+/// Null rather than a fingerprint over absences, because a constant is the one
+/// genuinely dangerous answer here: every profile and every catalog state would
+/// share a single cache key, and a stale prefix could serve a plan. The caller
+/// falls back to the whole-context hash, which is merely less cacheable.
+///
+/// Top level because `HealthContextEnvelope` has its own `sha256` field, which
+/// shadows the crypto library's inside the class.
+String? catalogFingerprintOf(Map<String, String> sectionHashes) {
+  final parts = [
+    for (final name in HealthContextEnvelope.invariantSections.toList()..sort())
+      if (sectionHashes[name] != null) '$name=${sectionHashes[name]}',
+  ];
+  if (parts.isEmpty) return null;
+  return sha256.convert(utf8.encode(parts.join(' '))).toString();
+}
 
 /// Builds a layered, lossless package instead of pasting an unstructured
 /// database dump into the prompt.
