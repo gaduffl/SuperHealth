@@ -1927,24 +1927,7 @@ class AppController extends ChangeNotifier {
             : current,
     ];
     await repository.saveLabPlan(
-      LabPlan(
-        id: plan.id,
-        profileId: plan.profileId,
-        title: plan.title,
-        createdAt: plan.createdAt,
-        updatedAt: now,
-        plannedFor: plan.plannedFor,
-        currency: plan.currency,
-        contextHash: plan.contextHash,
-        provider: plan.provider,
-        model: plan.model,
-        status: plan.status,
-        verificationSummary: plan.verificationSummary,
-        verificationWarnings: plan.verificationWarnings,
-        verificationCitations: plan.verificationCitations,
-        verifiedAt: plan.verifiedAt,
-        items: updatedItems,
-      ),
+      plan.copyWith(updatedAt: now, items: updatedItems),
     );
     await refreshActiveData();
   }

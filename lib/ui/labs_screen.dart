@@ -639,11 +639,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                         '${due.lastMeasuredAt == null ? _labsText(context, 'never measured', 'noch nie gemessen') : _labsText(context, '${due.daysOverdue} days overdue', '${due.daysOverdue} Tage überfällig')}',
                       ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => showBiomarkerDetail(
-                        context,
-                        controller,
-                        due.biomarker,
-                      ),
+                      onTap: () => showBiomarkerDetail(context, due.biomarker),
                     ),
                 ],
               ),
@@ -1917,7 +1913,7 @@ class _BiomarkerHomeTile extends StatelessWidget {
         '${DateFormat('yyyy-MM-dd').format(measurement.takenAt)}',
       ),
       trailing: _BiomarkerStatusBadge(status: status),
-      onTap: () => showBiomarkerDetail(context, controller, biomarker),
+      onTap: () => showBiomarkerDetail(context, biomarker),
     ),
   );
 }
@@ -2179,7 +2175,7 @@ class _BiomarkerDashboardSection extends StatelessWidget {
             through: trend.points.last.day,
           );
     return InkWell(
-      onTap: () => showBiomarkerDetail(context, controller, biomarker),
+      onTap: () => showBiomarkerDetail(context, biomarker),
       child: Container(
         decoration: BoxDecoration(
           border: Border(
@@ -2649,68 +2645,90 @@ class _PlanTiers extends StatelessWidget {
           Builder(
             builder: (context) {
               final costing = controller.costFor(plan, tier);
-              return ExpansionTile(
-                initiallyExpanded: tier == LabTier.core,
-                tilePadding: EdgeInsets.zero,
-                title: Text(_label(context, tier)),
-                subtitle: Text(
-                  _labsText(
-                    context,
-                    '${plan.itemsThrough(tier).length} tests · '
-                        '${costing.totalEur.toStringAsFixed(2)} € known'
-                        '${costing.unpricedCount == 0 ? '' : ' + ${costing.unpricedCount} unpriced'}'
-                        '${costing.appliedPackages.isEmpty ? '' : ' · ${costing.appliedPackages.length} package(s)'}',
-                    '${plan.itemsThrough(tier).length} Tests · '
-                        '${costing.totalEur.toStringAsFixed(2)} € bekannt'
-                        '${costing.unpricedCount == 0 ? '' : ' + ${costing.unpricedCount} ohne Preis'}'
-                        '${costing.appliedPackages.isEmpty ? '' : ' · ${costing.appliedPackages.length} Paket(e)'}',
-                  ),
-                ),
+              final next = LabPlan.nextTierAfter(tier);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Named before the tests, because a bundle changes what the tier
-                  // costs and the reader has to see why the total is not the sum.
-                  for (final applied in costing.appliedPackages)
-                    ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.only(left: 8),
-                      leading: const Icon(Icons.inventory_2_outlined, size: 20),
-                      title: Text(applied.package.name),
-                      subtitle: Text(
-                        _labsText(
-                          context,
-                          '${applied.package.priceEur!.toStringAsFixed(2)} € for '
-                              '${applied.coveredBiomarkerIds.length} test(s)'
-                              '${applied.savingEur == null ? '' : ' · saves ${applied.savingEur!.toStringAsFixed(2)} €'}',
-                          '${applied.package.priceEur!.toStringAsFixed(2)} € für '
-                              '${applied.coveredBiomarkerIds.length} Test(s)'
-                              '${applied.savingEur == null ? '' : ' · spart ${applied.savingEur!.toStringAsFixed(2)} €'}',
-                        ),
+                  ExpansionTile(
+                    initiallyExpanded: tier == LabTier.core,
+                    tilePadding: EdgeInsets.zero,
+                    title: Text(_label(context, tier)),
+                    subtitle: Text(
+                      _labsText(
+                        context,
+                        '${plan.itemsThrough(tier).length} tests · '
+                            '${costing.totalEur.toStringAsFixed(2)} € known'
+                            '${costing.unpricedCount == 0 ? '' : ' + ${costing.unpricedCount} unpriced'}'
+                            '${costing.appliedPackages.isEmpty ? '' : ' · ${costing.appliedPackages.length} package(s)'}',
+                        '${plan.itemsThrough(tier).length} Tests · '
+                            '${costing.totalEur.toStringAsFixed(2)} € bekannt'
+                            '${costing.unpricedCount == 0 ? '' : ' + ${costing.unpricedCount} ohne Preis'}'
+                            '${costing.appliedPackages.isEmpty ? '' : ' · ${costing.appliedPackages.length} Paket(e)'}',
                       ),
                     ),
-                  for (final item in plan.itemsThrough(tier))
-                    CheckboxListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.only(left: 8),
-                      title: Text(item.biomarkerName),
-                      subtitle: Text(
-                        [
-                          item.evidenceClass.name,
-                          item.rationale,
-                          if (item.preparation.isNotEmpty) item.preparation,
-                          !hasLabPrice(item.priceEur)
-                              ? _labsText(
-                                  context,
-                                  'Price unknown',
-                                  'Preis unbekannt',
-                                )
-                              : '${item.priceEur!.toStringAsFixed(2)} €',
-                        ].join(' · '),
-                      ),
-                      value: item.checked,
-                      onChanged: onToggle == null
-                          ? null
-                          : (checked) => onToggle!(item, checked ?? false),
-                      controlAffinity: ListTileControlAffinity.leading,
+                    children: [
+                      // Named before the tests, because a bundle changes what the tier
+                      // costs and the reader has to see why the total is not the sum.
+                      for (final applied in costing.appliedPackages)
+                        ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.only(left: 8),
+                          leading: const Icon(
+                            Icons.inventory_2_outlined,
+                            size: 20,
+                          ),
+                          title: Text(applied.package.name),
+                          subtitle: Text(
+                            _labsText(
+                              context,
+                              '${applied.package.priceEur!.toStringAsFixed(2)} € for '
+                                  '${applied.coveredBiomarkerIds.length} test(s)'
+                                  '${applied.savingEur == null ? '' : ' · saves ${applied.savingEur!.toStringAsFixed(2)} €'}',
+                              '${applied.package.priceEur!.toStringAsFixed(2)} € für '
+                                  '${applied.coveredBiomarkerIds.length} Test(s)'
+                                  '${applied.savingEur == null ? '' : ' · spart ${applied.savingEur!.toStringAsFixed(2)} €'}',
+                            ),
+                          ),
+                        ),
+                      for (final item in plan.itemsThrough(tier))
+                        CheckboxListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.only(left: 8),
+                          title: Text(item.biomarkerName),
+                          subtitle: Text(
+                            [
+                              item.evidenceClass.name,
+                              item.rationale,
+                              if (item.preparation.isNotEmpty) item.preparation,
+                              !hasLabPrice(item.priceEur)
+                                  ? _labsText(
+                                      context,
+                                      'Price unknown',
+                                      'Preis unbekannt',
+                                    )
+                                  : '${item.priceEur!.toStringAsFixed(2)} €',
+                            ].join(' · '),
+                          ),
+                          value: item.checked,
+                          onChanged: onToggle == null
+                              ? null
+                              : (checked) => onToggle!(item, checked ?? false),
+                          controlAffinity: ListTileControlAffinity.leading,
+                        ),
+                    ],
+                  ),
+                  // Outside the ExpansionTile on purpose. What a cheaper plan
+                  // gives up is the reason to pick it or not, so it must be
+                  // readable without expanding anything.
+                  if (next != null)
+                    _TierTradeoff(
+                      plan: plan,
+                      tier: tier,
+                      next: next,
+                      nextLabel: _shortLabel(context, next),
+                      addedCostEur:
+                          controller.costFor(plan, next).totalEur -
+                          costing.totalEur,
                     ),
                 ],
               );
@@ -2719,6 +2737,14 @@ class _PlanTiers extends StatelessWidget {
       ],
     );
   }
+
+  /// The tier's own name, without the "includes …" note that only makes sense
+  /// on its own header.
+  String _shortLabel(BuildContext context, LabTier tier) => switch (tier) {
+    LabTier.core => _labsText(context, 'Core', 'Basis'),
+    LabTier.advanced => _labsText(context, 'Advanced', 'Erweitert'),
+    LabTier.comprehensive => _labsText(context, 'Comprehensive', 'Umfassend'),
+  };
 
   String _label(BuildContext context, LabTier tier) => switch (tier) {
     LabTier.core => _labsText(context, 'Core', 'Basis'),
@@ -2733,6 +2759,94 @@ class _PlanTiers extends StatelessWidget {
       'Umfassend (enthält alle)',
     ),
   };
+}
+
+/// What a cheaper tier gives up against the next one, and why.
+///
+/// Three separate claims, and only one of them comes from the model: the count
+/// and the names are derived from the plan, the added cost from the same
+/// package-aware costing the tier headers use, and the reasoning is the
+/// planner's own. When the planner did not record any, the panel says so
+/// rather than leaving the reader to guess whether the omissions were
+/// deliberate.
+class _TierTradeoff extends StatelessWidget {
+  const _TierTradeoff({
+    required this.plan,
+    required this.tier,
+    required this.next,
+    required this.nextLabel,
+    required this.addedCostEur,
+  });
+
+  final LabPlan plan;
+  final LabTier tier;
+  final LabTier next;
+  final String nextLabel;
+  final double addedCostEur;
+
+  @override
+  Widget build(BuildContext context) {
+    final omitted = plan.itemsOmittedVersusNext(tier);
+    if (omitted.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final reasoning = plan.tradeoffFor(tier);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.compare_arrows_outlined,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _labsText(
+                    context,
+                    'Not included versus $nextLabel: ${omitted.length} test(s)'
+                        '${addedCostEur <= 0 ? '' : ' · +${addedCostEur.toStringAsFixed(2)} €'}',
+                    'Nicht enthalten gegenüber $nextLabel: ${omitted.length} Test(s)'
+                        '${addedCostEur <= 0 ? '' : ' · +${addedCostEur.toStringAsFixed(2)} €'}',
+                  ),
+                  style: theme.textTheme.labelLarge,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            reasoning.isNotEmpty
+                ? reasoning
+                : _labsText(
+                    context,
+                    'This plan recorded no reasoning for leaving these out. '
+                        'Regenerate it to get one.',
+                    'Dieser Plan hat keine Begründung für die Auslassung '
+                        'gespeichert. Erzeuge ihn neu, um eine zu erhalten.',
+                  ),
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            omitted.map((item) => item.biomarkerName).join(' · '),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _BiomarkerCatalog extends StatefulWidget {
@@ -3058,7 +3172,7 @@ class _BiomarkerTile extends StatelessWidget {
           const Icon(Icons.chevron_right, size: 18),
         ],
       ),
-      onTap: () => showBiomarkerDetail(context, controller, biomarker),
+      onTap: () => showBiomarkerDetail(context, biomarker),
       onLongPress: () =>
           showAddBiomarkerDialog(context, controller, existing: biomarker),
     ),

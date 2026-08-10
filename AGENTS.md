@@ -361,6 +361,37 @@ show at a fraction of the surface. Ask what a receipt field proves that the
 cheaper fields do not, and price in the transcription failure rate before
 making it a gate.
 
+**A cheaper tier must say what it gives up.** Three tiers with different
+lengths do not explain themselves: nothing on screen tells the reader whether
+the missing tests were reasoned about or fell off the end. Each of the two
+cheaper tiers carries the count, the names, the price delta, and the planner's
+reasoning. Only the last of those comes from the model — the rest are derived
+from the plan, so the list can never disagree with the plan it describes.
+`itemsOmittedVersusNext` is exactly the next tier's own additions, because
+tiers are cumulative and each item names the tier that adds it. The reasoning
+is prose, not a gate: a tier without it says so and still shows the gap.
+
+**Rebuild a record with `copyWith`, never by re-listing its fields.** Two call
+sites re-typed all seventeen `LabPlan` fields to change one, which is how a
+newly added field silently stops being persisted — `_withVerification` would
+have dropped `tierTradeoffs` on every approved plan. A test asserts that
+`copyWith` carries what it does not replace.
+
+**A widget must not hold the record it was opened with.** The biomarker detail
+sheet kept the `Biomarker` it was constructed with and a non-listening
+`AppController`, so it was frozen at open time. Its own Edit action then
+re-seeded the form from that frozen copy: a saved price went to the database
+and vanished from the field, which is indistinguishable from the save having
+failed. Pass identity, resolve from the controller inside `build`, and handle
+the record having been deleted meanwhile.
+
+**A migration fixture needs every table a later migration will touch.** The
+fixtures in `test/data/` build deliberately small databases, which stays honest
+right up until a new migration alters a table they left out — v12 added a
+column to `lab_plans` and broke four fixtures that had never created it. Shared
+definitions live in `test/data/legacy_schema.dart`; add a table there when a
+migration starts altering it.
+
 **A second-pass parse failure must not discard the first pass.** An unreadable
 verification means the plan is *unverified* — which `approved: false` states
 and `canSave` already enforces — not that a complete, paid-for draft is

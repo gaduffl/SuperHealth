@@ -215,14 +215,24 @@ Return exactly one JSON object and no markdown. Use this shape:
   "warnings": ["string"],
   "context_receipt": {"sha256":"exact package hash","file_sha256":"exact supplied file hash","record_count":123,"reviewed_sections":["every manifest section name"]},
   "tiers": [
-    {"tier":"core","items":[ITEM...]},
-    {"tier":"advanced","items":[ITEM...]},
-    {"tier":"comprehensive","items":[ITEM...]}
+    {"tier":"core","items":[ITEM...],"tradeoff_versus_next":"German prose"},
+    {"tier":"advanced","items":[ITEM...],"tradeoff_versus_next":"German prose"},
+    {"tier":"comprehensive","items":[ITEM...],"tradeoff_versus_next":""}
   ]
 }
 ITEM is {"biomarker_id":"exact catalog id","biomarker_name":"exact catalog display name","priority":1,"rationale":"profile-specific concise rationale","evidence_class":"guideline|longevity|experimental|unclassified","preparation":"concise preparation/timing note"}.
 
 Each biomarker must appear exactly once, in the first tier where it is added. The app makes tiers cumulative: Advanced includes Core, and Comprehensive includes both. Use only biomarkers present in biomarker_catalog. Never invent prices or identifiers; the app resolves prices from the catalog. Put the highest-value, most actionable checks in Core. Include meaningful additions in all three tiers. Account for existing results, result age, conditions, medicines, supplements, goals, symptoms, and duplicate/redundant tests. This is a draft checklist, not a diagnosis.
+
+tradeoff_versus_next explains, for the two cheaper tiers, why the tests the next
+tier up adds were judged less urgent than the ones already included — 2 to 4
+German sentences, naming the notable omitted tests and giving the reason each
+can wait for this profile (recent enough result, no symptom pointing at it,
+nothing would change management, weaker evidence class). Do not simply re-list
+the omitted tests: the app already shows the reader exactly which tests are
+missing and what the extra tier costs. Say what the reader loses by stopping
+here. Comprehensive adds nothing beyond itself, so its value is the empty
+string.
 ''';
 
   static const _verificationSchemaInstructions = '''
@@ -240,6 +250,12 @@ this profile, and supported by the complete supplied health context.
 approved must be a JSON boolean. summary must be non-empty. blocking_issues and
 warnings must be JSON string arrays. If approved is true, blocking_issues must
 be empty. A rejected plan remains a draft and cannot be saved.
+
+Each tier carries a "tradeoff_versus_next" explaining why the tests the next
+tier up adds can wait. Review those claims as clinical assertions about this
+profile, against the raw ledger: a deferral the data contradicts belongs in
+blocking_issues, and one that is defensible but carries a real risk belongs in
+warnings.
 ''';
 
   /// Schema for the model-echoed integrity receipt. Section names are known
@@ -323,8 +339,9 @@ be empty. A rejected plan remains a draft and cannot be saved.
                     'additionalProperties': false,
                   },
                 },
+                'tradeoff_versus_next': {'type': 'string'},
               },
-              'required': ['tier', 'items'],
+              'required': ['tier', 'items', 'tradeoff_versus_next'],
               'additionalProperties': false,
             },
           },
@@ -796,6 +813,10 @@ $_verificationSchemaInstructions
         for (final tier in LabTier.values)
           {
             'tier': tier.name,
+            // The reviewer has to see the tradeoff claims too. "Ferritin can
+            // wait" is a clinical assertion about this profile, and an
+            // unreviewed one is exactly the kind the second pass exists for.
+            'tradeoff_versus_next': plan.tradeoffFor(tier),
             'items': [
               for (final item in plan.items.where((item) => item.tier == tier))
                 {
@@ -884,24 +905,12 @@ $_verificationSchemaInstructions
     required LabPlanVerification verification,
     required List<String> warnings,
     required List<String> citations,
-  }) => LabPlan(
-    id: plan.id,
-    profileId: plan.profileId,
-    title: plan.title,
-    createdAt: plan.createdAt,
-    updatedAt: plan.updatedAt,
-    plannedFor: plan.plannedFor,
-    currency: plan.currency,
-    contextHash: plan.contextHash,
-    provider: plan.provider,
-    model: plan.model,
+  }) => plan.copyWith(
     status: 'verified',
     verificationSummary: verification.summary,
     verificationWarnings: warnings,
     verificationCitations: citations,
     verifiedAt: DateTime.now(),
-    deleted: plan.deleted,
-    items: plan.items,
   );
 
   Future<LabPlanGeneration> _parse(
@@ -923,6 +932,7 @@ $_verificationSchemaInstructions
     final items = <LabPlanItem>[];
     final seen = <String>{};
     final presentTiers = <LabTier>{};
+    final tradeoffs = <LabTier, String>{};
     for (final rawTier in tiers) {
       if (rawTier is! Map) {
         throw const LabPlanFormatException('Every tier must be an object.');
@@ -936,6 +946,14 @@ $_verificationSchemaInstructions
         throw LabPlanFormatException(
           'Tier “$tierName” appears more than once.',
         );
+      }
+      // Explanatory prose, so a missing one is not a reason to throw a whole
+      // plan away — the screen says the tradeoff was not recorded and still
+      // lists the tests and the price the next tier adds, both of which are
+      // derived here rather than taken from the model.
+      final tradeoff = rawTier['tradeoff_versus_next']?.toString().trim() ?? '';
+      if (tradeoff.isNotEmpty && LabPlan.nextTierAfter(tier.first) != null) {
+        tradeoffs[tier.first] = tradeoff;
       }
       final rawItems = rawTier['items'];
       if (rawItems is! List || rawItems.isEmpty) {
@@ -1040,6 +1058,7 @@ $_verificationSchemaInstructions
       provider: settings.provider.name,
       model: settings.model,
       items: items,
+      tierTradeoffs: tradeoffs,
     );
     final rawWarnings = decoded['warnings'];
     final warnings = rawWarnings is List

@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
+import 'package:provider/provider.dart';
 
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
@@ -62,26 +64,39 @@ String _detailStatusDetail(BuildContext context, BiomarkerStatus status) {
 
 Future<void> showBiomarkerDetail(
   BuildContext context,
-  AppController controller,
   Biomarker biomarker,
 ) => showModalBottomSheet<void>(
   context: context,
   isScrollControlled: true,
   showDragHandle: true,
+  // The id, not the object: the sheet re-reads the biomarker on every build so
+  // an edit made from inside it is visible the moment it is saved.
   builder: (context) => FractionallySizedBox(
     heightFactor: 0.9,
-    child: _BiomarkerDetail(controller: controller, biomarker: biomarker),
+    child: _BiomarkerDetail(biomarkerId: biomarker.id),
   ),
 );
 
 class _BiomarkerDetail extends StatelessWidget {
-  const _BiomarkerDetail({required this.controller, required this.biomarker});
+  const _BiomarkerDetail({required this.biomarkerId});
 
-  final AppController controller;
-  final Biomarker biomarker;
+  /// Identity, never a captured copy.
+  ///
+  /// This sheet used to hold the `Biomarker` it was opened with and read a
+  /// non-listening `AppController`, so it was frozen at open time. Its own
+  /// "Edit" action then re-seeded the dialog from that frozen copy: a saved
+  /// price was written to the database and immediately disappeared from the
+  /// form, which is indistinguishable from the save having failed.
+  final String biomarkerId;
 
   @override
   Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final biomarker = controller.biomarkers.firstWhereOrNull(
+      (item) => item.id == biomarkerId && !item.deleted,
+    );
+    // Deleted from the sheet's own menu, or from elsewhere while it was open.
+    if (biomarker == null) return const SizedBox.shrink();
     final now = DateTime.now();
     final profile = controller.activeProfile!;
     final statusService = BiomarkerStatusService();
@@ -210,6 +225,14 @@ class _BiomarkerDetail extends StatelessWidget {
                         if (biomarker.category.isNotEmpty) biomarker.category,
                         if (biomarker.defaultUnit.isNotEmpty)
                           biomarker.defaultUnit,
+                        // Shown here because this is where it is edited from,
+                        // and a price you cannot see is a price you cannot
+                        // tell was saved. It also drives the lab plan tiers.
+                        if (biomarker.hasPrice)
+                          '${biomarker.priceEur!.toStringAsFixed(2)} €'
+                              '${biomarker.labName?.trim().isNotEmpty == true ? ' · ${biomarker.labName!.trim()}' : ''}'
+                        else
+                          _detailText(context, 'No price', 'Kein Preis'),
                         if (biomarker.isTemporary)
                           _detailText(
                             context,

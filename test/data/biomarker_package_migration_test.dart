@@ -5,6 +5,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
+import 'legacy_schema.dart';
 
 void main() {
   setUpAll(sqfliteFfiInit);
@@ -19,6 +20,9 @@ void main() {
         options: OpenDatabaseOptions(
           version: 9,
           onCreate: (db, _) async {
+            // Present in a real database at this version; the v12 upgrade
+            // adds a column to it.
+            await db.execute(legacyLabPlansTable);
             // Only what this migration touches. A fixture that creates every
             // table would hide an ALTER against one it forgot.
             await db.execute('''

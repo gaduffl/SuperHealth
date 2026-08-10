@@ -44,10 +44,22 @@ class LabPlanExportService {
   ExportedFile _json(LabPlan plan) {
     final tiers = <String, Object?>{};
     for (final tier in LabTier.values) {
+      final omitted = plan.itemsOmittedVersusNext(tier);
       tiers[tier.name] = {
         'known_total_eur': plan.knownTotal(tier),
         'missing_prices': plan.missingPriceCount(tier),
         'items': plan.itemsThrough(tier).map((item) => item.toMap()).toList(),
+        // What this tier gives up, so an exported cheaper plan carries the same
+        // disclosure the screen shows rather than reading as a complete list.
+        'omitted_versus_next': [
+          for (final item in omitted)
+            {
+              'biomarker_id': item.biomarkerId,
+              'biomarker_name': item.biomarkerName,
+            },
+        ],
+        'added_cost_of_next_eur': plan.addedCostOfNext(tier),
+        'tradeoff_versus_next': plan.tradeoffFor(tier),
       };
     }
     final value = {
@@ -98,6 +110,26 @@ class LabPlanExportService {
       ['Cumulative tier', 'Known total EUR', 'Missing prices'],
       for (final tier in LabTier.values)
         [tier.name, plan.knownTotal(tier), plan.missingPriceCount(tier)],
+      [],
+      [
+        'Cheaper tier',
+        'Tests not included',
+        'Added cost of next tier EUR',
+        'Why they can wait',
+        'Not included',
+      ],
+      for (final tier in LabTier.values)
+        if (plan.itemsOmittedVersusNext(tier).isNotEmpty)
+          [
+            tier.name,
+            plan.itemsOmittedVersusNext(tier).length,
+            plan.addedCostOfNext(tier),
+            plan.tradeoffFor(tier),
+            plan
+                .itemsOmittedVersusNext(tier)
+                .map((item) => item.biomarkerName)
+                .join(' | '),
+          ],
       [],
       ['Verification status', plan.status],
       ['Independent review', plan.verificationSummary],
@@ -192,6 +224,7 @@ class LabPlanExportService {
             _tierHeader(plan, tier),
             pw.SizedBox(height: 6),
             ...plan.itemsThrough(tier).map(_pdfItem),
+            _tierTradeoff(plan, tier),
             pw.SizedBox(height: 14),
           ],
         ],
@@ -219,6 +252,38 @@ class LabPlanExportService {
           style: const pw.TextStyle(fontSize: 9),
         ),
       ],
+    );
+  }
+
+  /// Says what the tier leaves out, so a printed cheaper plan handed to a lab
+  /// is not mistaken for the whole recommendation.
+  pw.Widget _tierTradeoff(LabPlan plan, LabTier tier) {
+    final omitted = plan.itemsOmittedVersusNext(tier);
+    if (omitted.isEmpty) return pw.SizedBox();
+    final added = plan.addedCostOfNext(tier);
+    final reasoning = plan.tradeoffFor(tier);
+    return pw.Container(
+      width: double.infinity,
+      margin: const pw.EdgeInsets.only(top: 8),
+      padding: const pw.EdgeInsets.all(8),
+      color: PdfColors.grey100,
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            'Not included versus ${_tierName(LabPlan.nextTierAfter(tier)!)}: '
+            '${omitted.length} test(s)'
+            '${added <= 0 ? '' : ' · +${added.toStringAsFixed(2)} EUR'}',
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+          ),
+          if (reasoning.isNotEmpty)
+            pw.Text(reasoning, style: const pw.TextStyle(fontSize: 8)),
+          pw.Text(
+            omitted.map((item) => item.biomarkerName).join(' · '),
+            style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+          ),
+        ],
+      ),
     );
   }
 
@@ -280,5 +345,11 @@ class LabPlanExportService {
     LabTier.core => 'Core',
     LabTier.advanced => 'Advanced (includes Core)',
     LabTier.comprehensive => 'Comprehensive (includes all)',
+  };
+
+  String _tierName(LabTier tier) => switch (tier) {
+    LabTier.core => 'Core',
+    LabTier.advanced => 'Advanced',
+    LabTier.comprehensive => 'Comprehensive',
   };
 }
