@@ -65,14 +65,59 @@ void main() {
     expect(intakes.length, lessThan(36));
   });
 
-  test('advisory still carries the whole ledger', () async {
-    // Adherence and long-run patterns are the advisor's question; windowing
-    // there would remove the evidence rather than the noise.
+  test('advisory still accounts for every dose ever taken', () async {
+    // Adherence and long-run patterns are the advisor's question, so unlike
+    // the planner's window nothing here is dropped: recent doses stay dose by
+    // dose and everything older is counted in weekly buckets. The invariant is
+    // arithmetic — carried rows plus summarised doses equal the whole ledger.
     final data =
         (await snapshot(HealthContextScope.advisory))['data']!
             as Map<String, Object?>;
+    final carried = data['supplement_intakes']! as List;
+    final weeks = (data['supplement_intakes_weekly']! as List).cast<Map>();
+    final summarised = weeks.fold<int>(
+      0,
+      (total, week) =>
+          total + (week['doses']! as int) + (week['skipped']! as int),
+    );
 
-    expect(data['supplement_intakes'], hasLength(36));
+    expect(carried.length + summarised, 36);
+    // Doses a month apart never share a week, so the buckets cannot be hiding
+    // a collapse: one bucket per older dose.
+    expect(weeks, hasLength(summarised));
+    expect(carried.length, lessThan(36));
+  });
+
+  test('a weekly bucket identifies itself without repeating itself', () async {
+    final data =
+        (await snapshot(HealthContextScope.advisory))['data']!
+            as Map<String, Object?>;
+    final week = (data['supplement_intakes_weekly']! as List).first as Map;
+
+    expect(week['supplement_id'], 'supp-old');
+    expect(week['week_starting'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+    expect(DateTime.parse('${week['week_starting']}').weekday, DateTime.monday);
+    expect(week['days_with_a_dose'], 1);
+    expect(week['total_dose'], 1);
+    // No id: it could only spell out the supplement and the week again, which
+    // is the mistake `record_ids` already made at 113 KB.
+    expect(week.containsKey('id'), isFalse);
+    // Dates, not timestamps — the declaration says this grain drops the time
+    // of day, and carrying it anyway would make that false.
+    expect(week['first_dose_on'], isNot(contains('T')));
+  });
+
+  test('the advisory cutoff is a UTC Monday', () async {
+    // Snapped to a Monday, not just a day: a mid-week bound would leave one
+    // stub bucket that reads like a dosing change, and it would move the
+    // package's shape every day rather than once a week.
+    final cutoff = HealthRepository.advisoryIntakeCutoff(
+      DateTime.utc(2026, 8, 9, 17, 43, 12),
+    );
+
+    expect(cutoff.weekday, DateTime.monday);
+    expect(cutoff.isUtc, isTrue);
+    expect(cutoff, DateTime.utc(2026, 6, 8));
   });
 
   test('the window never makes a long habit look newly started', () async {
@@ -114,7 +159,10 @@ void main() {
     expect(envelope.manifest['complete_within_declared_windows'], isTrue);
   });
 
-  test('the advisory package claims completeness, because it is', () async {
+  test('the advisory package stops calling itself lossless', () async {
+    // A window removes rows and says so; the survivors are still verbatim. A
+    // summary keeps every record but stops carrying it row by row, and calling
+    // that lossless would be false in exactly the case a reader relies on it.
     final envelope = await HealthContextBuilder(
       repository,
       scope: HealthContextScope.advisory,
@@ -124,9 +172,29 @@ void main() {
                 as Map<String, Object?>)['coverage_contract']!
             as Map<String, Object?>;
 
-    expect(contract['raw_ledger_is_complete'], isTrue);
-    expect(envelope.manifest['complete'], isTrue);
+    expect(envelope.manifest['lossless'], isFalse);
+    expect(envelope.manifest['lossless_outside_declared_summaries'], isTrue);
+    final summaries = contract['summarised_sections']! as Map<String, Object?>;
+    final weekly = summaries['supplement_intakes_weekly']! as Map;
+    // What the grain costs is named, rather than left to be discovered.
+    expect(weekly['loses'], contains('time of day'));
+    expect(weekly['grain'], contains('week'));
+    expect(weekly['covers'], contains('none omitted'));
+    expect(
+      (contract['required_reading_protocol']! as List).join(' '),
+      contains('summarised_sections'),
+    );
   });
+
+  test(
+    'the planner package stays lossless, because it summarises nothing',
+    () async {
+      final envelope = await HealthContextBuilder(repository).build(profile.id);
+
+      expect(envelope.manifest['lossless'], isTrue);
+      expect(envelope.manifest['summarised'], isEmpty);
+    },
+  );
 
   test('the window bound is stable across builds on the same day', () async {
     // The context hash identifies a body of evidence — the receipt, and now the

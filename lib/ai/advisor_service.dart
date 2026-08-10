@@ -12,6 +12,20 @@ import 'api_key_store.dart';
 import 'health_context_builder.dart';
 import 'provider_clients.dart';
 
+/// Routes every turn of one conversation to the same provider-side cache.
+///
+/// A chat re-sends the entire health context on every turn, so this is where a
+/// warm prefix is worth the most in the app — more than the lab planner, which
+/// runs twice and stops. Keyed on the catalog fingerprint rather than the whole
+/// context hash: the reference data is what stays byte-identical between turns,
+/// and a hash that moves whenever any dose is logged would send every turn to a
+/// cold node.
+String advisorCacheKeyFor(HealthContextEnvelope context) =>
+    ProviderRequest.cacheKey(
+      'superhealth-advisor-',
+      context.catalogFingerprint,
+    );
+
 class AdvisorTurn {
   const AdvisorTurn({
     required this.userMessage,
@@ -164,6 +178,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       contextFileSha256: delivery == HealthContextDelivery.providerFile
           ? context.fileSha256
           : null,
+      promptCacheKey: advisorCacheKeyFor(context),
     );
     var response = await client.respond(key, request);
     String verifiedText;
@@ -192,6 +207,10 @@ Be direct and useful. State what is known from the profile, what is inferred, an
           contextFileSha256: delivery == HealthContextDelivery.providerFile
               ? context.fileSha256
               : null,
+          // The same key the first attempt used. A repair re-sends the whole
+          // context seconds later; there is no call in the app with a better
+          // chance of a warm prefix.
+          promptCacheKey: advisorCacheKeyFor(context),
         ),
       );
       verifiedText = _validateAndStripCoverage(response.text, context);

@@ -184,7 +184,7 @@ class HealthContextBuilder {
     final source = await _loadSnapshot(profileId);
     _validateSource(source, profileId);
 
-    final rawData = _canonicalData(source['data']);
+    final rawData = _canonicalData(source['data'], profileId);
     final sections = <String, Object?>{};
     final sectionHashes = <String, String>{};
     var recordCount = 0;
@@ -197,6 +197,7 @@ class HealthContextBuilder {
 
     _validateDeclaredCounts(source['manifest'], rawData, sections);
     final windows = _sourceWindows(source['manifest']);
+    final summaries = _sourceSummaries(source['manifest']);
     final attentionIndex = _attentionIndex(rawData);
     final stableCore = <String, Object?>{
       'schema': packageSchema,
@@ -206,6 +207,7 @@ class HealthContextBuilder {
       'source_schema_version': source['schema_version'],
       'source_exclusions': _sourceExclusions(source['manifest']),
       'source_windows': windows,
+      'source_summaries': summaries,
       'sections': sections,
       'attention_index': attentionIndex,
       'raw_ledger': rawData,
@@ -219,9 +221,14 @@ class HealthContextBuilder {
       // saying so plainly costs nothing next to a model that trusts the word.
       'complete': windows.isEmpty,
       'complete_within_declared_windows': true,
-      // Still lossless: what is carried is carried verbatim. Windowing removes
-      // rows; it never summarises or rewrites the ones that remain.
-      'lossless': true,
+      // Lossless means what is carried is carried verbatim. Windowing removes
+      // rows and declares it; that leaves the survivors untouched. A *summary*
+      // does not — it keeps every record but stops carrying it row by row — so
+      // the claim has to be withdrawn the moment one is present, or the word
+      // is a lie in exactly the case a reader would rely on it.
+      'lossless': summaries.isEmpty,
+      'summarised': summaries,
+      'lossless_outside_declared_summaries': true,
       // Clinical evidence is isolated to the active profile. The supplement
       // catalog, inventory movements, and derived stock levels are deliberate
       // household-shared evidence so stock stays correct for shared use.
@@ -260,7 +267,28 @@ class HealthContextBuilder {
         // one way this package could actively mislead.
         'raw_ledger_is_complete': windows.isEmpty,
         'windowed_sections': windows,
+        // A summarised section is still complete coverage — no record is
+        // missing — but it is no longer verbatim, and the two are different
+        // promises.
+        'summarised_sections': summaries,
         'attention_index_is_not_a_summary_replacement': true,
+        // Absence has to be unambiguous. Every omission below is a rule about
+        // *encoding*, never about evidence, and stating them is what keeps
+        // "never infer that a record is absent" true after the trimming.
+        'row_encoding': {
+          'omitted_when_empty':
+              'A key whose value would be null, an empty string, or an empty '
+              'JSON list/object is omitted from the row. An absent key means '
+              '"nothing recorded", exactly as an explicit null did.',
+          'omitted_always': _omittedRowKeysDescription,
+          'profile_id':
+              'Omitted where it equals active_profile_id, which is every '
+              'clinical row. Present only where it differs, and there it is '
+              'provenance for household-shared data.',
+          'numbers_are_never_omitted':
+              'A zero dose, score or value is a recorded observation and is '
+              'always carried.',
+        },
         'evidence_scope': {
           'clinical_evidence': 'active_profile_only',
           'supplement_catalog_and_inventory': 'household_shared',
@@ -276,6 +304,12 @@ class HealthContextBuilder {
             'Sections listed in windowed_sections carry only a recent slice. '
                 'Read their stated replacement for anything older, and never '
                 'treat the start of a window as the start of a behaviour.',
+          if (summaries.isNotEmpty)
+            'Sections listed in summarised_sections account for every record '
+                'in their period, at the stated grain. Nothing is missing '
+                'there, so counts and totals from them are exact — but the '
+                'detail named under "loses" is genuinely gone, so do not '
+                'assert anything that would need it.',
           'Treat inventory_movements as household stock provenance only. '
               'Only active-profile supplement_intakes establish this person\'s '
               'supplement intake.',
@@ -374,7 +408,28 @@ class HealthContextBuilder {
     }
   }
 
-  Map<String, Object?> _canonicalData(Object? value) {
+  /// Columns a row carries for the database's benefit, not the reader's.
+  ///
+  /// `created_at` and `updated_at` record when a row was written or corrected,
+  /// which is never the clinical date — every section that has one carries
+  /// `taken_at`, `observed_at`, `document_date` or `start_date` instead.
+  /// `deleted` is 0 on every carried row, because the queries filter on it.
+  /// `color_value` is the colour a tag is drawn in. Together they were 23% of
+  /// the advisor's package on a real profile.
+  static const omittedRowKeys = {
+    'created_at',
+    'updated_at',
+    'deleted',
+    'color_value',
+  };
+
+  static const _omittedRowKeysDescription =
+      'created_at and updated_at (when the row was written or corrected, '
+      'never the clinical date — read taken_at, observed_at, document_date or '
+      'start_date), deleted (0 on every carried row; deleted rows are not '
+      'sent at all), and color_value (display only).';
+
+  Map<String, Object?> _canonicalData(Object? value, String profileId) {
     if (value is! Map) {
       throw StateError('Health data is not an object.');
     }
@@ -391,7 +446,9 @@ class HealthContextBuilder {
       final key = entry.key;
       final section = entry.value;
       if (section is List) {
-        final rows = section.map(_canonicalValue).toList();
+        final rows = section
+            .map((row) => _leanValue(_canonicalValue(row), profileId))
+            .toList();
         rows.sort(
           (a, b) => HealthRepository.stableJson(
             a,
@@ -399,10 +456,56 @@ class HealthContextBuilder {
         );
         result[key] = rows;
       } else {
-        result[key] = _canonicalValue(section);
+        result[key] = _leanValue(_canonicalValue(section), profileId);
       }
     }
     return result;
+  }
+
+  /// Drops what a row says twice, or does not say at all.
+  ///
+  /// Three rules, each lossless in what the reader can conclude:
+  ///  * a key whose value is null or an empty string/list/object states
+  ///    nothing — `"lab_ref_high":null` and an absent `lab_ref_high` mean the
+  ///    same thing, and the coverage contract says so explicitly;
+  ///  * [omittedRowKeys] are database bookkeeping;
+  ///  * `profile_id` repeats `active_profile_id` on every clinical row — 36
+  ///    characters times every record. It is kept where it *differs*, because
+  ///    on a household-shared row it is real provenance.
+  ///
+  /// Worth 31% of the advisor's package before anything is summarised, which
+  /// is more than any single section except the dose ledger.
+  Object? _leanValue(Object? value, String profileId) {
+    if (value is List) {
+      return value.map((item) => _leanValue(item, profileId)).toList();
+    }
+    if (value is! Map<String, Object?>) return value;
+    final result = <String, Object?>{};
+    for (final entry in value.entries) {
+      if (omittedRowKeys.contains(entry.key)) continue;
+      if (entry.key == 'profile_id' && entry.value == profileId) continue;
+      final lean = _leanValue(entry.value, profileId);
+      if (_statesNothing(lean)) continue;
+      result[entry.key] = lean;
+    }
+    return result;
+  }
+
+  /// Whether a value carries no information a missing key would not.
+  ///
+  /// Numbers are never empty — a `0` dose and an absent dose are different
+  /// facts, and a `score: 0` is a recorded observation. `[]` and `{}` as
+  /// *strings* count, because several columns hold JSON in a TEXT field
+  /// (`ingredients_json`, `flags_json`, `synonyms_json`) and an empty one there
+  /// is the same "nothing recorded" as an absent key.
+  static bool _statesNothing(Object? value) {
+    if (value == null) return true;
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty || trimmed == '[]' || trimmed == '{}';
+    }
+    return (value is Iterable && value.isEmpty) ||
+        (value is Map && value.isEmpty);
   }
 
   Object? _canonicalValue(Object? value) {
@@ -559,13 +662,35 @@ class HealthContextBuilder {
     return Map<String, Object?>.from(rawManifest['windows']! as Map);
   }
 
+  /// Sections that cover every record but no longer carry them one by one.
+  ///
+  /// Separate from [_sourceWindows] because they make different promises. A
+  /// window says "rows before this date are not here"; a summary says "every
+  /// row is accounted for, at a coarser grain, and here is what that grain
+  /// drops". Conflating them would let the package keep calling itself
+  /// lossless while shipping aggregates.
+  Map<String, Object?> _sourceSummaries(Object? rawManifest) {
+    if (rawManifest is! Map || rawManifest['summaries'] is! Map) {
+      return const {};
+    }
+    return Map<String, Object?>.from(rawManifest['summaries']! as Map);
+  }
+
+  /// Derived navigation over the ledger — never a replacement for it.
+  ///
+  /// There is no `chronology` here any more. It listed one entry per record —
+  /// `{at, section, record_ref, date_field}` — and every one of those four
+  /// values was already in the row it pointed at. On a real profile that was
+  /// 446 KB, a quarter of the whole package, to sort rows the model can sort
+  /// itself; the per-section date range it summarised is in `manifest.sections`
+  /// as `earliest`/`latest`. It was the `record_ids` mistake again, four times
+  /// the size.
   Map<String, Object?> _attentionIndex(Map<String, Object?> data) => {
     'latest_biomarkers': _latestBiomarkers(data),
     'supplement_exposure': _supplementExposure(data),
     'household_stock': _householdStock(data),
     'event_series': _eventSeries(data),
     'active_health_records': _activeHealthRecords(data),
-    'chronology': _chronology(data),
     'data_quality_flags': _dataQualityFlags(data),
   };
 
@@ -682,6 +807,14 @@ class HealthContextBuilder {
     return result;
   }
 
+  /// Per-supplement exposure, labelled by which part of the ledger it counts.
+  ///
+  /// The dose rows are windowed for both callers, so the counts derived from
+  /// them describe the window and nothing else. Naming them `carried_*` and
+  /// putting the whole-ledger figures beside them under `ledger_*` is the
+  /// difference between "started three weeks ago" and "the ledger only goes
+  /// back three weeks here" — which is exactly the confusion a window creates
+  /// and the one this index existed to prevent.
   List<Map<String, Object?>> _supplementExposure(Map<String, Object?> data) {
     final names = <String, String>{};
     for (final row in _mapRows(data['supplements'])) {
@@ -690,14 +823,25 @@ class HealthContextBuilder {
         names[id] = row['name']?.toString() ?? id;
       }
     }
+    final history = <String, Map<String, Object?>>{
+      for (final row in _mapRows(data['supplement_intake_history']))
+        '${row['supplement_id']}': row,
+    };
+    final weeklyBySupplement = <String, List<Map<String, Object?>>>{};
+    for (final row in _mapRows(data['supplement_intakes_weekly'])) {
+      weeklyBySupplement
+          .putIfAbsent('${row['supplement_id']}', () => [])
+          .add(row);
+    }
     final grouped = <String, List<Map<String, Object?>>>{};
     for (final row in _mapRows(data['supplement_intakes'])) {
       final id = row['supplement_id']?.toString() ?? 'unknown';
       grouped.putIfAbsent(id, () => []).add(row);
     }
+    final ids = <String>{...grouped.keys, ...history.keys}..remove('null');
     final result = <Map<String, Object?>>[];
-    for (final entry in grouped.entries) {
-      final rows = entry.value
+    for (final id in ids) {
+      final rows = (grouped[id] ?? <Map<String, Object?>>[])
         ..sort(
           (a, b) => _dateOf(a, 'taken_at').compareTo(_dateOf(b, 'taken_at')),
         );
@@ -712,17 +856,34 @@ class HealthContextBuilder {
         totals[unit] =
             (totals[unit] ?? 0) + ((row['dose'] as num?)?.toDouble() ?? 0);
       }
+      final ledger = history[id];
+      final weeks = weeklyBySupplement[id] ?? const <Map<String, Object?>>[];
       result.add({
-        'supplement_id': entry.key,
-        'name': names[entry.key] ?? entry.key,
-        'intake_record_count': rows.length,
-        'skipped_count': skipped,
-        'first_recorded_at': rows.first['taken_at'],
-        'latest_recorded_at': rows.last['taken_at'],
-        'dose_totals_by_reported_unit': totals,
+        'supplement_id': id,
+        'name': names[id] ?? id,
+        'carried_intake_record_count': rows.length,
+        'carried_skipped_count': skipped,
+        if (rows.isNotEmpty) 'carried_first_at': rows.first['taken_at'],
+        if (rows.isNotEmpty) 'carried_latest_at': rows.last['taken_at'],
+        'carried_dose_totals_by_reported_unit': totals,
+        if (weeks.isNotEmpty) 'summarised_week_count': weeks.length,
+        // From `supplement_intake_history`, which spans the entire ledger
+        // regardless of any window. These are the numbers to answer "how long
+        // has this been taken" with.
+        if (ledger != null) ...{
+          'ledger_first_dose_at': ledger['first_dose_at'],
+          'ledger_last_dose_at': ledger['last_dose_at'],
+          'ledger_dose_count': ledger['dose_count'],
+          'ledger_skipped_count': ledger['skipped_count'],
+        },
       });
     }
-    result.sort((a, b) => '${a['name']}'.compareTo('${b['name']}'));
+    result.sort((a, b) {
+      final byName = '${a['name']}'.compareTo('${b['name']}');
+      return byName != 0
+          ? byName
+          : '${a['supplement_id']}'.compareTo('${b['supplement_id']}');
+    });
     return result;
   }
 
@@ -781,29 +942,6 @@ class HealthContextBuilder {
       final kind = row['kind']?.toString() ?? 'other';
       result.putIfAbsent(kind, () => []).add(row);
     }
-    return result;
-  }
-
-  List<Map<String, Object?>> _chronology(Map<String, Object?> data) {
-    final result = <Map<String, Object?>>[];
-    for (final entry in data.entries) {
-      for (final row in _mapRows(entry.value)) {
-        for (final dateKey in _dateKeys) {
-          final value = row[dateKey];
-          if (value == null || DateTime.tryParse(value.toString()) == null) {
-            continue;
-          }
-          result.add({
-            'at': value,
-            'section': entry.key,
-            'record_ref': '${entry.key}:${row['id'] ?? 'no-id'}',
-            'date_field': dateKey,
-          });
-          break;
-        }
-      }
-    }
-    result.sort((a, b) => '${a['at']}'.compareTo('${b['at']}'));
     return result;
   }
 

@@ -2406,6 +2406,13 @@ class HealthRepository {
       // ever logged. See `supplement_intake_history` below — the window is
       // never allowed to make a long-standing supplement look newly started.
       'supplement_intakes': await _supplementIntakeRows(db, profileId, scope),
+      // Advisory only: everything older than its window, as product-weeks, so
+      // the whole history stays visible at a fraction of the rows.
+      'supplement_intakes_weekly': await _supplementIntakeWeeks(
+        db,
+        profileId,
+        scope,
+      ),
       'supplement_intake_history': await _supplementIntakeHistory(
         db,
         profileId,
@@ -2566,20 +2573,59 @@ class HealthRepository {
         // tells the model never to infer absence from a section it can see.
         // Declaring the window is what keeps that instruction true: without
         // this the model would read a four-month slice as the whole history.
-        'windows': scope == HealthContextScope.labPlanning
+        'windows': switch (scope) {
+          HealthContextScope.labPlanning => {
+            'supplement_intakes': {
+              'days': labPlanningIntakeWindow.inDays,
+              'from': labPlanningIntakeCutoff(DateTime.now()).toIso8601String(),
+              'reason':
+                  'Recent exposure is what a lab plan reasons about. '
+                  'Doses before this date are summarised per supplement '
+                  'in supplement_intake_history, which covers the entire '
+                  'ledger — use it for how long something has been taken, '
+                  'and never read a first dose inside this window as the '
+                  'start of a supplement.',
+            },
+          },
+          HealthContextScope.advisory => {
+            'supplement_intakes': {
+              'days': advisoryIntakeWindow.inDays,
+              'from': advisoryIntakeCutoff(DateTime.now()).toIso8601String(),
+              'reason':
+                  'Dose-by-dose rows for the recent weeks, where the day and '
+                  'the time still carry meaning. Nothing older is dropped: '
+                  'every earlier dose is counted in supplement_intakes_weekly, '
+                  'so the history is complete and only its resolution changes. '
+                  'Never read a first dose inside this window as the start of '
+                  'a supplement.',
+            },
+          },
+        },
+        // Distinct from `windows` on purpose. A window removes rows and says
+        // so; a summary keeps every dose but stops carrying it verbatim, and
+        // calling that "lossless" would be false. What is lost is named here
+        // rather than left for the reader to discover.
+        'summaries': scope == HealthContextScope.advisory
             ? {
-                'supplement_intakes': {
-                  'days': labPlanningIntakeWindow.inDays,
-                  'from': labPlanningIntakeCutoff(
-                    DateTime.now(),
-                  ).toIso8601String(),
+                'supplement_intakes_weekly': {
+                  'covers':
+                      'every dose taken before the supplement_intakes '
+                      'window, with none omitted',
+                  'grain': 'one row per supplement per ISO week per unit',
+                  'reference_a_row_by':
+                      'supplement_id plus week_starting; these rows have no '
+                      'id of their own because those two fields already '
+                      'identify one',
+                  'preserves':
+                      'doses, skipped, days_with_a_dose, total_dose, '
+                      'first_dose_on, last_dose_on',
+                  'loses':
+                      'the time of day, per-dose notes, and individual intake '
+                      'record ids',
                   'reason':
-                      'Recent exposure is what a lab plan reasons about. '
-                      'Doses before this date are summarised per supplement '
-                      'in supplement_intake_history, which covers the entire '
-                      'ledger — use it for how long something has been taken, '
-                      'and never read a first dose inside this window as the '
-                      'start of a supplement.',
+                      'Long-run exposure is what these older doses are '
+                      'evidence for, and a week is the coarsest bucket that '
+                      'still shows a dose change, a pause and a restart.',
                 },
               }
             : const <String, Object?>{},
@@ -2638,22 +2684,139 @@ class HealthRepository {
     ).subtract(labPlanningIntakeWindow);
   }
 
+  /// How much of the dose ledger the advisor receives dose by dose.
+  ///
+  /// Shorter than the planner's window because nothing is thrown away here:
+  /// everything older is carried as weekly totals, so the advisor still sees
+  /// the whole history. Eight weeks is what day-level questions actually reach
+  /// back to — "since when have I felt this way", "did I take it that morning"
+  /// — and beyond that the day of the week stops carrying meaning.
+  static const advisoryIntakeWindow = Duration(days: 56);
+
+  /// The advisor window's lower bound: a UTC Monday midnight.
+  ///
+  /// Snapped to a Monday, not merely to a day, for two reasons. The weekly
+  /// buckets on the other side of the boundary are whole weeks, so a mid-week
+  /// cutoff would produce one stub bucket that reads like a dosing change. And
+  /// the package then only changes shape once a week rather than every day,
+  /// which is what a provider-side prompt cache needs to keep matching.
+  static DateTime advisoryIntakeCutoff(DateTime now) {
+    final utc = now.toUtc();
+    final midnight = DateTime.utc(
+      utc.year,
+      utc.month,
+      utc.day,
+    ).subtract(advisoryIntakeWindow);
+    return midnight.subtract(Duration(days: midnight.weekday - 1));
+  }
+
   Future<List<Map<String, Object?>>> _supplementIntakeRows(
     Database db,
     String profileId,
     HealthContextScope scope,
   ) {
-    if (scope != HealthContextScope.labPlanning) {
-      return _profileRows(db, 'supplement_intakes', profileId);
-    }
+    final cutoff = switch (scope) {
+      HealthContextScope.labPlanning => labPlanningIntakeCutoff(DateTime.now()),
+      HealthContextScope.advisory => advisoryIntakeCutoff(DateTime.now()),
+    };
     return db.query(
       'supplement_intakes',
       where: 'profile_id = ? AND deleted = 0 AND taken_at >= ?',
+      whereArgs: [profileId, cutoff.toIso8601String()],
+    );
+  }
+
+  /// Everything older than the advisor's window, as one row per product-week.
+  ///
+  /// The point is coverage, not economy alone: the advisor is asked about
+  /// long-run exposure — "has this been going on since I started X" — and a
+  /// hard window would make the answer unavailable. A week is the coarsest
+  /// bucket that still shows a dosing change, a pause, and a restart, and on a
+  /// real profile it turned 1,171 rows into 284.
+  ///
+  /// What survives: product, week, unit, how many doses, how many were skipped,
+  /// how many distinct days, the dose total, and the first and last dose in the
+  /// week. What does not: the time of day, per-dose notes, and the individual
+  /// record ids. That is a genuine loss, which is why the package declares this
+  /// section as a summary rather than calling itself lossless.
+  Future<List<Map<String, Object?>>> _supplementIntakeWeeks(
+    Database db,
+    String profileId,
+    HealthContextScope scope,
+  ) async {
+    if (scope != HealthContextScope.advisory) {
+      return const <Map<String, Object?>>[];
+    }
+    final rows = await db.query(
+      'supplement_intakes',
+      where: 'profile_id = ? AND deleted = 0 AND taken_at < ?',
       whereArgs: [
         profileId,
-        labPlanningIntakeCutoff(DateTime.now()).toIso8601String(),
+        advisoryIntakeCutoff(DateTime.now()).toIso8601String(),
       ],
     );
+    final buckets = <String, Map<String, Object?>>{};
+    final days = <String, Set<String>>{};
+    for (final row in rows) {
+      final takenAt = DateTime.tryParse('${row['taken_at']}')?.toUtc();
+      if (takenAt == null) continue;
+      final day = DateTime.utc(takenAt.year, takenAt.month, takenAt.day);
+      final monday = day.subtract(Duration(days: day.weekday - 1));
+      final week = monday.toIso8601String().split('T').first;
+      final supplementId = '${row['supplement_id']}';
+      final unit = row['unit']?.toString() ?? '';
+      final key = '$supplementId|$week|$unit';
+      final bucket = buckets.putIfAbsent(key, () {
+        days[key] = <String>{};
+        return <String, Object?>{
+          // No `id`. Any id here could only spell out the supplement and the
+          // week again, and those two fields already identify the row — a
+          // 55-character key repeating its own contents is how `record_ids`
+          // cost 113 KB. Uniqueness is guaranteed by the grouping, not by a
+          // string. References are `supplement_id` + `week_starting`.
+          'supplement_id': supplementId,
+          'week_starting': week,
+          if (unit.isNotEmpty) 'unit': unit,
+          'doses': 0,
+          'skipped': 0,
+          'days_with_a_dose': 0,
+          'total_dose': 0.0,
+          // Dates, not timestamps: the declaration says this grain loses the
+          // time of day, and carrying it here anyway would make that false.
+          'first_dose_on': day.toIso8601String().split('T').first,
+          'last_dose_on': day.toIso8601String().split('T').first,
+        };
+      });
+      if (row['skipped'] == 1) {
+        bucket['skipped'] = (bucket['skipped']! as int) + 1;
+      } else {
+        bucket['doses'] = (bucket['doses']! as int) + 1;
+        bucket['total_dose'] =
+            (bucket['total_dose']! as double) +
+            ((row['dose'] as num?)?.toDouble() ?? 0);
+        days[key]!.add(day.toIso8601String().split('T').first);
+      }
+      final on = day.toIso8601String().split('T').first;
+      if (on.compareTo('${bucket['first_dose_on']}') < 0) {
+        bucket['first_dose_on'] = on;
+      }
+      if (on.compareTo('${bucket['last_dose_on']}') > 0) {
+        bucket['last_dose_on'] = on;
+      }
+    }
+    for (final entry in buckets.entries) {
+      entry.value['days_with_a_dose'] = days[entry.key]!.length;
+    }
+    return buckets.values.toList()..sort((a, b) {
+      final byWeek = '${a['week_starting']}'.compareTo('${b['week_starting']}');
+      if (byWeek != 0) return byWeek;
+      final bySupplement = '${a['supplement_id']}'.compareTo(
+        '${b['supplement_id']}',
+      );
+      return bySupplement != 0
+          ? bySupplement
+          : '${a['unit']}'.compareTo('${b['unit']}');
+    });
   }
 
   /// One row per supplement covering the *entire* ledger, windowed or not.
