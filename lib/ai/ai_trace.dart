@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-/// A diagnostic record of one lab-plan generation.
+/// A diagnostic record of one AI run — a lab plan, an advisor turn.
 ///
 /// Written as it happens rather than assembled at the end, because the runs
 /// worth auditing are exactly the ones that never reach the end. A trace held
@@ -12,8 +12,8 @@ import 'dart:convert';
 /// count, which is what a diagnosis actually needs. Model responses *are* kept
 /// in full (bounded), because an unparseable response is the thing being
 /// diagnosed.
-class LabPlanTrace {
-  LabPlanTrace({required this.write, this.clock = DateTime.now});
+class AiTrace {
+  AiTrace({required this.write, this.clock = DateTime.now});
 
   /// Appends one JSON line. Never called concurrently by this class.
   final Future<void> Function(String line) write;
@@ -131,22 +131,27 @@ String trimTraceToRuns(String jsonl, int keep) {
 }
 
 /// Renders a trace as something a person can read and paste into a bug report.
-String formatTraceReport(String jsonl, {required DateTime generatedAt}) {
+String formatTraceReport(
+  String jsonl, {
+  required DateTime generatedAt,
+  required String title,
+  required String emptyMessage,
+}) {
   final runs = parseTraceRuns(jsonl);
   final buffer = StringBuffer()
-    ..writeln('SuperHealth lab planner diagnostic log')
+    ..writeln(title)
     ..writeln('Exported: ${generatedAt.toUtc().toIso8601String()}')
     ..writeln('Runs recorded: ${runs.length}')
     ..writeln()
     ..writeln(
       'The health context itself is NOT included — only its size, hash and '
-      'record count. Model responses ARE included, and a lab plan names your '
-      'biomarkers, so treat this file as health data.',
+      'record count. Model responses ARE included, and they name your '
+      'biomarkers and supplements, so treat this file as health data.',
     )
     ..writeln();
 
   if (runs.isEmpty) {
-    buffer.writeln('No lab plan generation has been recorded yet.');
+    buffer.writeln(emptyMessage);
     return buffer.toString();
   }
 

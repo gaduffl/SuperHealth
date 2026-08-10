@@ -7,7 +7,7 @@ import 'ai/ai_settings.dart';
 import 'ai/api_key_store.dart';
 import 'ai/document_parsing_service.dart';
 import 'ai/health_context_builder.dart';
-import 'ai/lab_plan_trace_store.dart';
+import 'ai/ai_trace_store.dart';
 import 'ai/lab_planner_service.dart';
 import 'ai/lab_price_service.dart';
 import 'ai/provider_clients.dart';
@@ -59,8 +59,13 @@ void main() {
     database,
     documentsDirectory: getApplicationDocumentsDirectory,
   );
-  final labPlanTraceStore = LabPlanTraceStore(
+  final labPlanTraceStore = AiTraceStore(
     documentsDirectory: getApplicationDocumentsDirectory,
+    fileName: AiTraceStore.labPlannerFileName,
+  );
+  final advisorTraceStore = AiTraceStore(
+    documentsDirectory: getApplicationDocumentsDirectory,
+    fileName: AiTraceStore.advisorFileName,
   );
   final controller = AppController(
     database: database,
@@ -73,6 +78,7 @@ void main() {
       clientFactory: clientFactory,
       contextBuilder: advisorContextBuilder,
       workspaceService: workspaceService,
+      trace: advisorTraceStore.trace(),
     ),
     labPriceService: LabPriceService(keyStore, clientFactory),
     labPlannerService: LabPlannerService(
@@ -93,6 +99,7 @@ void main() {
     portableBackupService: portableBackupService,
     documentsDirectory: getApplicationDocumentsDirectory,
     labPlanTraceStore: labPlanTraceStore,
+    advisorTraceStore: advisorTraceStore,
   );
 
   runApp(

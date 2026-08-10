@@ -8,9 +8,42 @@ import '../domain/entities.dart';
 import '../workspace/safe_workspace_service.dart';
 import 'ai_models.dart';
 import 'ai_settings.dart';
+import 'ai_trace.dart';
 import 'api_key_store.dart';
 import 'health_context_builder.dart';
 import 'provider_clients.dart';
+
+/// The prior turns worth replaying: complete question-and-answer pairs.
+///
+/// A question that never got an answer is dropped. `ask` used to save the user
+/// message before the model call, so every failed turn — a rejected cache key,
+/// a dropped stream, a coverage failure — left one behind in the conversation.
+/// The screen never showed it (it restores the text into the box and reports
+/// the error), but every later turn re-sent it, so the model saw a question the
+/// user believed had been discarded, sometimes twice when they retyped it.
+///
+/// Filtering here rather than deleting rows: conversations that already carry
+/// these heal on the next turn, and nothing the user might still want to read
+/// is destroyed to achieve it.
+List<ProviderChatMessage> conversationHistory(List<AdvisorMessage> messages) {
+  final turns = <ProviderChatMessage>[];
+  for (var i = 0; i < messages.length; i++) {
+    final message = messages[i];
+    final isAssistant = message.role == 'assistant';
+    if (!isAssistant) {
+      final answered =
+          i + 1 < messages.length && messages[i + 1].role == 'assistant';
+      if (!answered) continue;
+    }
+    turns.add(
+      ProviderChatMessage(
+        role: isAssistant ? 'assistant' : 'user',
+        content: message.content,
+      ),
+    );
+  }
+  return turns;
+}
 
 /// Routes every turn of one conversation to the same provider-side cache.
 ///
@@ -61,12 +94,16 @@ class AdvisorService {
     required HealthContextBuilder contextBuilder,
     SafeWorkspaceService? workspaceService,
     ProviderCapabilityRegistry? capabilities,
+    AiTrace? trace,
   }) : _repository = repository,
        _keyStore = keyStore,
        _clientFactory = clientFactory,
        _contextBuilder = contextBuilder,
        _workspaceService = workspaceService,
-       _capabilities = capabilities ?? ProviderCapabilityRegistry();
+       _capabilities = capabilities ?? ProviderCapabilityRegistry(),
+       // A trace that writes nowhere, so every call site below can record
+       // unconditionally instead of guarding each one.
+       _trace = trace ?? AiTrace(write: (_) async {});
 
   final HealthRepository _repository;
   final ApiKeyStore _keyStore;
@@ -74,6 +111,7 @@ class AdvisorService {
   final HealthContextBuilder _contextBuilder;
   final SafeWorkspaceService? _workspaceService;
   final ProviderCapabilityRegistry _capabilities;
+  final AiTrace _trace;
 
   static const systemPrompt = '''
 You are SuperHealth Advisor, a careful personal health research and planning assistant for a user in Germany.
@@ -106,18 +144,56 @@ Be direct and useful. State what is known from the profile, what is inferred, an
   }) async {
     final trimmed = question.trim();
     if (trimmed.isEmpty) throw ArgumentError('Question cannot be empty.');
+    await _trace.begin(DateTime.now().toUtc().toIso8601String(), {
+      'provider': settings.provider.name,
+      'model': settings.model,
+      'reasoning_level': settings.reasoningLevel,
+      'web_search': settings.webSearch,
+      'code_execution': settings.codeExecution,
+      'conversation_id': conversationId,
+      'question_chars': trimmed.length,
+    });
+    try {
+      return await _ask(
+        profileId: profileId,
+        conversationId: conversationId,
+        question: trimmed,
+        settings: settings,
+      );
+    } on Object catch (error, stack) {
+      await _trace.failure('run_failed', error, stack);
+      await _trace.end(success: false);
+      rethrow;
+    }
+  }
+
+  Future<AdvisorTurn> _ask({
+    required String profileId,
+    required String conversationId,
+    required String question,
+    required AiTaskSettings settings,
+  }) async {
+    final trimmed = question;
     final key = await _requiredKey(settings.provider);
     final context = await _contextBuilder.build(profileId);
+    await _trace.event('context_built', {
+      'bytes': context.byteLength,
+      'estimated_tokens': context.estimatedTokens,
+      'record_count': context.recordCount,
+      'sha256': context.sha256,
+      'largest_sections': context.largestSectionsDescription(),
+    });
     final conversation = await _repository.messages(profileId, conversationId);
     // Prior turns travel as native chat messages so providers apply their
     // trained multi-turn handling and can cache the growing prefix.
-    final history = [
-      for (final message in conversation)
-        ProviderChatMessage(
-          role: message.role == 'assistant' ? 'assistant' : 'user',
-          content: message.content,
-        ),
-    ];
+    final history = conversationHistory(conversation);
+    await _trace.event('history_loaded', {
+      'stored_messages': conversation.length,
+      'history_turns': history.length,
+      // The gap is unanswered questions being skipped. A non-zero number here
+      // is the fingerprint of turns that failed before this fix landed.
+      'skipped_unanswered': conversation.length - history.length,
+    });
     final workspace = await _workspaceService?.contextSnapshot(profileId);
     final workspaceAppendix = workspace == null
         ? ''
@@ -150,8 +226,15 @@ Be direct and useful. State what is known from the profile, what is inferred, an
         contextJson: context.json,
       ),
     );
+    await _trace.event('delivery_chosen', {
+      'delivery': delivery.name,
+      'max_output_tokens': maxOutputTokens,
+      'user_prompt_chars': trimmed.length + promptAppendix.length,
+    });
 
     final now = DateTime.now();
+    // Built now, saved at the end. A question only joins the conversation once
+    // it has an answer — see `conversationHistory`.
     final userMessage = AdvisorMessage(
       id: _repository.newId(),
       profileId: profileId,
@@ -160,7 +243,6 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       content: trimmed,
       createdAt: now,
     );
-    await _repository.saveMessage(userMessage);
 
     final request = ProviderRequest(
       model: settings.model,
@@ -180,37 +262,41 @@ Be direct and useful. State what is known from the profile, what is inferred, an
           : null,
       promptCacheKey: advisorCacheKeyFor(context),
     );
-    var response = await client.respond(key, request);
+    var response = await _traced('answer', () => client.respond(key, request));
     String verifiedText;
     try {
       verifiedText = _validateAndStripCoverage(response.text, context);
     } on AdvisorCoverageException catch (error) {
-      response = await client.respond(
-        key,
-        ProviderRequest(
-          model: settings.model,
-          systemPrompt: systemPrompt,
-          userPrompt:
-              'Audit and repair the prior answer against every section in the '
-              'complete evidence package. Validation failed: ${error.message}\n\n'
-              'Prior answer:\n${response.text}\n\n'
-              '${context.coverageInstruction}',
-          contextJson: context.json,
-          history: history,
-          reasoningLevel: settings.reasoningLevel,
-          webSearch: false,
-          codeExecution:
-              settings.codeExecution ||
-              delivery == HealthContextDelivery.providerFile,
-          maxOutputTokens: maxOutputTokens,
-          contextFile: delivery == HealthContextDelivery.providerFile,
-          contextFileSha256: delivery == HealthContextDelivery.providerFile
-              ? context.fileSha256
-              : null,
-          // The same key the first attempt used. A repair re-sends the whole
-          // context seconds later; there is no call in the app with a better
-          // chance of a warm prefix.
-          promptCacheKey: advisorCacheKeyFor(context),
+      await _trace.event('coverage_rejected', {'reason': error.message});
+      response = await _traced(
+        'repair',
+        () => client.respond(
+          key,
+          ProviderRequest(
+            model: settings.model,
+            systemPrompt: systemPrompt,
+            userPrompt:
+                'Audit and repair the prior answer against every section in the '
+                'complete evidence package. Validation failed: ${error.message}\n\n'
+                'Prior answer:\n${response.text}\n\n'
+                '${context.coverageInstruction}',
+            contextJson: context.json,
+            history: history,
+            reasoningLevel: settings.reasoningLevel,
+            webSearch: false,
+            codeExecution:
+                settings.codeExecution ||
+                delivery == HealthContextDelivery.providerFile,
+            maxOutputTokens: maxOutputTokens,
+            contextFile: delivery == HealthContextDelivery.providerFile,
+            contextFileSha256: delivery == HealthContextDelivery.providerFile
+                ? context.fileSha256
+                : null,
+            // The same key the first attempt used. A repair re-sends the whole
+            // context seconds later; there is no call in the app with a better
+            // chance of a warm prefix.
+            promptCacheKey: advisorCacheKeyFor(context),
+          ),
         ),
       );
       verifiedText = _validateAndStripCoverage(response.text, context);
@@ -225,7 +311,16 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       citations: response.citations,
       createdAt: DateTime.now(),
     );
+    // Both together, and only now. Saving the question before the call left one
+    // behind on every failed turn, and every later turn re-sent it.
+    await _repository.saveMessage(userMessage);
     await _repository.saveMessage(assistantMessage);
+    await _trace.event('turn_saved', {
+      'answer_chars': extracted.text.length,
+      'file_proposals': extracted.proposals.length,
+      'citations': response.citations.length,
+    });
+    await _trace.end(success: true);
     return AdvisorTurn(
       userMessage: userMessage,
       assistantMessage: assistantMessage,
@@ -233,6 +328,33 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       fileProposals: extracted.proposals,
       usage: response.usage,
     );
+  }
+
+  /// Runs one model call, recording what came back — or what it threw.
+  ///
+  /// `usage` is the point of this for the advisor: `cached_tokens` is the only
+  /// way to tell whether the prompt cache key is actually earning anything, and
+  /// a chat re-sends the whole context every turn.
+  Future<ProviderResponse> _traced(
+    String pass,
+    Future<ProviderResponse> Function() send,
+  ) async {
+    await _trace.event('request_sent', {'pass': pass});
+    try {
+      final response = await send();
+      await _trace.event('response_received', {
+        'pass': pass,
+        'text_chars': response.text.length,
+        'stop_reason': providerStopReason(response.raw),
+        'response_id': response.responseId,
+        'usage': response.raw['usage']?.toString(),
+        'citations': response.citations.length,
+      });
+      return response;
+    } on Object catch (error, stack) {
+      await _trace.failure('request_failed', error, stack, {'pass': pass});
+      rethrow;
+    }
   }
 
   String _validateAndStripCoverage(

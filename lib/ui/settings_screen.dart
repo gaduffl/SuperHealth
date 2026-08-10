@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../ai/ai_models.dart';
 import '../ai/ai_settings.dart';
+import '../ai/ai_trace_store.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../app/appearance_settings.dart';
@@ -47,7 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Reads a file, so it cannot be done during build. The section shows
     // "nothing recorded yet" until this lands, which is also the truth on a
     // fresh install.
-    context.read<AppController>().refreshLabPlanLogSummary();
+    context.read<AppController>().refreshAiLogSummaries();
   }
 
   Future<void> _refreshOneDriveStatus() async {
@@ -611,69 +612,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          if (controller.labPlanLogAvailable) ...[
-            SectionHeader(
-              title: _settingsText(
-                context,
-                'Lab planner diagnostics',
-                'Laborplaner-Diagnose',
+          for (final kind in AiLogKind.values)
+            if (controller.aiLogAvailable(kind)) ...[
+              SectionHeader(
+                title: _settingsText(
+                  context,
+                  '${_logLabel(context, kind)} diagnostics',
+                  '${_logLabel(context, kind)}-Diagnose',
+                ),
+                subtitle: _settingsText(
+                  context,
+                  'A record of what each run actually did',
+                  'Ein Protokoll darüber, was jeder Lauf wirklich getan hat',
+                ),
               ),
-              subtitle: _settingsText(
-                context,
-                'A record of what each lab plan generation actually did',
-                'Ein Protokoll darüber, was jede Laborplan-Erstellung wirklich '
-                    'getan hat',
-              ),
-            ),
-            Card(
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.bug_report_outlined),
-                    title: Text(
-                      _settingsText(
-                        context,
-                        'Export the generation log',
-                        'Erstellungsprotokoll exportieren',
+              Card(
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.bug_report_outlined),
+                      title: Text(
+                        _settingsText(
+                          context,
+                          'Export the log',
+                          'Protokoll exportieren',
+                        ),
                       ),
-                    ),
-                    subtitle: Text(
-                      controller.labPlanLogSummary.isEmpty
-                          ? _settingsText(
-                              context,
-                              'Nothing recorded yet. Generate a lab plan and '
-                                  'the log fills itself.',
-                              'Noch nichts aufgezeichnet. Erstelle einen '
-                                  'Laborplan, dann füllt sich das Protokoll.',
-                            )
-                          : '${controller.labPlanLogSummary}\n'
-                                '${_settingsText(context, 'Includes model responses, so treat the file as health data. Your health record itself is not included.', 'Enthält Modellantworten — behandle die Datei als Gesundheitsdaten. Deine Gesundheitsakte selbst ist nicht enthalten.')}',
-                    ),
-                    isThreeLine: controller.labPlanLogSummary.isNotEmpty,
-                    trailing: const Icon(Icons.download_outlined),
-                    onTap: controller.labPlanLogSummary.isEmpty
-                        ? null
-                        : () => _exportLabPlanLog(context, controller),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.delete_outline),
-                    title: Text(
-                      _settingsText(
-                        context,
-                        'Delete the log',
-                        'Protokoll löschen',
+                      subtitle: Text(
+                        controller.aiLogSummary(kind).isEmpty
+                            ? _settingsText(
+                                context,
+                                'Nothing recorded yet. It fills itself the '
+                                    'next time this runs.',
+                                'Noch nichts aufgezeichnet. Es füllt sich beim '
+                                    'nächsten Lauf von selbst.',
+                              )
+                            : '${controller.aiLogSummary(kind)}\n'
+                                  '${_settingsText(context, 'Includes model responses, so treat the file as health data. Your health record itself is not included.', 'Enthält Modellantworten — behandle die Datei als Gesundheitsdaten. Deine Gesundheitsakte selbst ist nicht enthalten.')}',
                       ),
+                      isThreeLine: controller.aiLogSummary(kind).isNotEmpty,
+                      trailing: const Icon(Icons.download_outlined),
+                      onTap: controller.aiLogSummary(kind).isEmpty
+                          ? null
+                          : () => _exportAiLog(context, controller, kind),
                     ),
-                    onTap: controller.labPlanLogSummary.isEmpty
-                        ? null
-                        : () => _clearLabPlanLog(context, controller),
-                  ),
-                ],
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.delete_outline),
+                      title: Text(
+                        _settingsText(
+                          context,
+                          'Delete the log',
+                          'Protokoll löschen',
+                        ),
+                      ),
+                      onTap: controller.aiLogSummary(kind).isEmpty
+                          ? null
+                          : () => _clearAiLog(context, controller, kind),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-          ],
+              const SizedBox(height: 12),
+            ],
           SectionHeader(
             title: _settingsText(
               context,
@@ -786,12 +787,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _exportLabPlanLog(
+  /// The feature's name, for the section heading. Both languages read the same
+  /// word here, which is why one helper serves both.
+  String _logLabel(BuildContext context, AiLogKind kind) => switch (kind) {
+    AiLogKind.labPlanner => _settingsText(
+      context,
+      'Lab planner',
+      'Laborplaner',
+    ),
+    AiLogKind.advisor => _settingsText(context, 'Advisor', 'Berater'),
+  };
+
+  Future<void> _exportAiLog(
     BuildContext context,
     AppController controller,
+    AiLogKind kind,
   ) async {
     try {
-      final file = await controller.exportLabPlanLog();
+      final file = await controller.exportAiLog(kind);
       if (!context.mounted) return;
       // Same shape as the lab plan export: the user picks the destination
       // before anything is written, so health data never lands somewhere they
@@ -821,9 +834,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _clearLabPlanLog(
+  Future<void> _clearAiLog(
     BuildContext context,
     AppController controller,
+    AiLogKind kind,
   ) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -858,7 +872,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirmed != true) return;
     try {
-      await controller.clearLabPlanLog();
+      await controller.clearAiLog(kind);
     } on Object catch (error) {
       if (context.mounted) await showAppError(context, error);
     }

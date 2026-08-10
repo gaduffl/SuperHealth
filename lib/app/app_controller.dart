@@ -13,8 +13,8 @@ import '../ai/ai_models.dart';
 import '../ai/ai_settings.dart';
 import '../ai/api_key_store.dart';
 import '../ai/document_parsing_service.dart';
-import '../ai/lab_plan_trace.dart';
-import '../ai/lab_plan_trace_store.dart';
+import '../ai/ai_trace.dart';
+import '../ai/ai_trace_store.dart';
 import '../ai/lab_planner_service.dart';
 import '../ai/lab_price_service.dart';
 import '../ai/provider_clients.dart';
@@ -64,7 +64,8 @@ class AppController extends ChangeNotifier {
     InitialSetupProgressStore? initialSetupProgressStore,
     RestoreSyncGateStore? restoreSyncGateStore,
     LongTaskGuard? longTaskGuard,
-    LabPlanTraceStore? labPlanTraceStore,
+    AiTraceStore? labPlanTraceStore,
+    AiTraceStore? advisorTraceStore,
   }) : _database = database,
        repository = repository,
        keyStore = keyStore,
@@ -96,7 +97,8 @@ class AppController extends ChangeNotifier {
            initialSetupProgressStore ?? InitialSetupProgressStore(),
        _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore(),
        _longTaskGuard = longTaskGuard ?? LongTaskGuard(),
-       _labPlanTraceStore = labPlanTraceStore;
+       _labPlanTraceStore = labPlanTraceStore,
+       _advisorTraceStore = advisorTraceStore;
 
   final AppDatabase _database;
 
@@ -125,7 +127,8 @@ class AppController extends ChangeNotifier {
   /// Null in builds and tests that have no writable documents directory. The
   /// diagnostics section reports that rather than offering an export that
   /// cannot work.
-  final LabPlanTraceStore? _labPlanTraceStore;
+  final AiTraceStore? _labPlanTraceStore;
+  final AiTraceStore? _advisorTraceStore;
   final PortableBackupService? _portableBackupService;
   final DocumentsDirectory? _documentsDirectory;
   final AppearanceSettingsStore _appearanceSettingsStore;
@@ -1726,16 +1729,25 @@ class AppController extends ChangeNotifier {
       throw StateError('Configure the advisor model first.');
     }
     await _withBusy(() async {
-      final turn = await _advisorService.ask(
-        profileId: _profileId,
-        conversationId: 'primary',
-        question: question,
-        settings: settings,
-      );
-      lastContextBytes = turn.context.byteLength;
-      lastContextTokens = turn.context.estimatedTokens;
-      lastTokenUsage = turn.usage;
-      advisorMessages = await repository.messages(_profileId, 'primary');
+      // Before the turn, so the file stays bounded without ever trimming the
+      // run in progress.
+      await _advisorTraceStore?.trim();
+      try {
+        final turn = await _advisorService.ask(
+          profileId: _profileId,
+          conversationId: 'primary',
+          question: question,
+          settings: settings,
+        );
+        lastContextBytes = turn.context.byteLength;
+        lastContextTokens = turn.context.estimatedTokens;
+        lastTokenUsage = turn.usage;
+        advisorMessages = await repository.messages(_profileId, 'primary');
+      } finally {
+        // However the turn ended — and a failed one is the interesting case —
+        // the log now has something new to say about it.
+        await refreshAiLogSummaries();
+      }
     });
   }
 
@@ -1816,74 +1828,90 @@ class AppController extends ChangeNotifier {
         labPlanActivityAt = null;
         await _longTaskGuard.release();
         // However this ended, the log now has something new to say about it.
-        await refreshLabPlanLogSummary();
+        await refreshAiLogSummaries();
       }
     });
   }
 
   /// Whether a diagnostic log can be produced at all on this build.
-  bool get labPlanLogAvailable => _labPlanTraceStore != null;
+  bool aiLogAvailable(AiLogKind kind) => _traceStore(kind) != null;
 
-  /// A one-line account of the most recent recorded runs, for the settings
-  /// screen. Empty when nothing has been recorded yet.
-  String labPlanLogSummary = '';
+  /// A one-line account of the most recent recorded runs, per log, for the
+  /// settings screen. Absent when nothing has been recorded yet.
+  final Map<AiLogKind, String> aiLogSummaries = {};
 
-  Future<void> refreshLabPlanLogSummary() async {
-    final store = _labPlanTraceStore;
-    if (store == null) return;
-    try {
-      final runs = parseTraceRuns(await store.read());
-      if (runs.isEmpty) {
-        labPlanLogSummary = '';
-      } else {
-        final newest = runs.first;
-        final ended = newest
-            .where((entry) => entry['event'] == 'run_end')
-            .toList();
-        final outcome = ended.isEmpty
-            // No run_end means the run never returned — the app was killed, or
-            // it is still going. Worth naming, since it is the failure the log
-            // exists to catch.
-            ? 'did not finish'
-            : (ended.last['data'] as Map?)?['success'] == true
-            ? 'succeeded'
-            : 'failed';
-        labPlanLogSummary =
-            '${runs.length} run(s) recorded; most recent $outcome';
-      }
-    } on Object {
-      labPlanLogSummary = '';
+  String aiLogSummary(AiLogKind kind) => aiLogSummaries[kind] ?? '';
+
+  AiTraceStore? _traceStore(AiLogKind kind) => switch (kind) {
+    AiLogKind.labPlanner => _labPlanTraceStore,
+    AiLogKind.advisor => _advisorTraceStore,
+  };
+
+  Future<void> refreshAiLogSummaries() async {
+    for (final kind in AiLogKind.values) {
+      await _refreshAiLogSummary(kind);
     }
     notifyListeners();
   }
 
+  Future<void> _refreshAiLogSummary(AiLogKind kind) async {
+    final store = _traceStore(kind);
+    if (store == null) return;
+    try {
+      final runs = parseTraceRuns(await store.read());
+      if (runs.isEmpty) {
+        aiLogSummaries.remove(kind);
+        return;
+      }
+      final newest = runs.first;
+      final ended = newest
+          .where((entry) => entry['event'] == 'run_end')
+          .toList();
+      final outcome = ended.isEmpty
+          // No run_end means the run never returned — the app was killed, or
+          // it is still going. Worth naming, since it is the failure the log
+          // exists to catch.
+          ? 'did not finish'
+          : (ended.last['data'] as Map?)?['success'] == true
+          ? 'succeeded'
+          : 'failed';
+      aiLogSummaries[kind] =
+          '${runs.length} run(s) recorded; most recent '
+          '$outcome';
+    } on Object {
+      aiLogSummaries.remove(kind);
+    }
+  }
+
   /// The diagnostic log as a readable report, ready to write to a file.
   ///
-  /// Contains model responses — and a lab plan names biomarkers — so the caller
-  /// must present it as health data, not as an anonymous crash dump.
-  Future<ExportedFile> exportLabPlanLog() async {
-    final store = _labPlanTraceStore;
+  /// Contains model responses — which name biomarkers and supplements — so the
+  /// caller must present it as health data, not as an anonymous crash dump.
+  Future<ExportedFile> exportAiLog(AiLogKind kind) async {
+    final store = _traceStore(kind);
     if (store == null) {
       throw StateError('Diagnostics are not available in this build.');
     }
     final report = formatTraceReport(
       await store.read(),
       generatedAt: DateTime.now(),
+      title: 'SuperHealth ${kind.logTitle} diagnostic log',
+      emptyMessage: 'No ${kind.runNoun} has been recorded yet.',
     );
     final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
       RegExp(r'[^0-9]'),
       '',
     );
     return ExportedFile(
-      fileName: 'superhealth-lab-planner-log-$stamp.txt',
+      fileName: 'superhealth-${kind.fileSlug}-log-$stamp.txt',
       mimeType: 'text/plain',
       bytes: Uint8List.fromList(utf8.encode(report)),
     );
   }
 
-  Future<void> clearLabPlanLog() async {
-    await _labPlanTraceStore?.clear();
-    labPlanLogSummary = '';
+  Future<void> clearAiLog(AiLogKind kind) async {
+    await _traceStore(kind)?.clear();
+    aiLogSummaries.remove(kind);
     notifyListeners();
   }
 
