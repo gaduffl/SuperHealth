@@ -474,6 +474,23 @@ Unlabelled, "first recorded 3 weeks ago" reads as "started 3 weeks ago" when it
 means "the window starts 3 weeks ago" — the exact confusion the index exists to
 prevent.
 
+**A question joins the conversation only once it has an answer.** `ask` used to
+save the user message before the model call, so every failed turn — a rejected
+cache key, a dropped stream, a coverage failure — left one behind. The screen
+restores the text into the input box and reports the error, so the user believes
+the turn never happened, while every later turn silently re-sent it. Both
+messages are now saved together at the end, and `conversationHistory` replays
+only complete question-and-answer pairs, which heals conversations that already
+collected danglers without deleting anything the user might still want to read.
+
+**Every model call that costs money gets a trace.** `AiTrace` is not lab-planner
+specific: one `AiTraceStore` per feature, each with its own file, because a lab
+plan and an advisor turn are different questions and interleaving them makes
+"which run was this" the reader's first problem. The advisor had none, so
+`cached_tokens` — the only evidence that a prompt cache key earns anything — was
+unobservable on the app's most repetitive call. A claim about tokens that no
+trace can confirm is a guess.
+
 **The advisor is where prompt caching pays, not the lab planner.** A chat
 re-sends the entire context on every turn; the planner runs twice and stops. The
 advisor had no `promptCacheKey` at all. Both now key on the catalog fingerprint

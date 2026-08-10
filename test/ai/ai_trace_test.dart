@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:super_health/ai/lab_plan_trace.dart';
+import 'package:super_health/ai/ai_trace.dart';
 
 class _Sink {
   final StringBuffer buffer = StringBuffer();
@@ -28,7 +28,7 @@ void main() {
       () async {
         var now = DateTime(2026, 8, 8, 12);
         final sink = _Sink();
-        final trace = LabPlanTrace(write: sink.write, clock: () => now);
+        final trace = AiTrace(write: sink.write, clock: () => now);
 
         await trace.begin('run-1', {'model': 'test-model'});
         now = now.add(const Duration(seconds: 3));
@@ -47,7 +47,7 @@ void main() {
       // A format exception and a transport exception at the same point in the
       // run mean entirely different things, and the message alone hides which.
       final sink = _Sink();
-      final trace = LabPlanTrace(write: sink.write);
+      final trace = AiTrace(write: sink.write);
 
       await trace.begin('run-1', const {});
       await trace.failure(
@@ -66,7 +66,7 @@ void main() {
 
     test('a long field is truncated but says how long it really was', () async {
       final sink = _Sink();
-      final trace = LabPlanTrace(write: sink.write);
+      final trace = AiTrace(write: sink.write);
 
       await trace.begin('run-1', const {});
       await trace.event('response', {'text': 'x' * 60000});
@@ -79,7 +79,7 @@ void main() {
     test('a sink that throws does not break the generation', () async {
       // The trace exists to explain failures. Causing one would be perverse.
       final sink = _Sink()..throws = StateError('disk full');
-      final trace = LabPlanTrace(write: sink.write);
+      final trace = AiTrace(write: sink.write);
 
       await expectLater(trace.begin('run-1', const {}), completes);
       await expectLater(trace.event('stage'), completes);
@@ -90,7 +90,7 @@ void main() {
   group('parsing', () {
     Future<String> buildLog() async {
       final sink = _Sink();
-      final trace = LabPlanTrace(write: sink.write);
+      final trace = AiTrace(write: sink.write);
       for (var run = 1; run <= 3; run++) {
         await trace.begin('run-$run', {'n': run});
         await trace.event('stage', {'stage': 'drafting'});
@@ -137,13 +137,15 @@ void main() {
       // The whole point: a generation that produced no plan and no error left
       // no run_end, and the report must say so rather than leave an absence.
       final sink = _Sink();
-      final trace = LabPlanTrace(write: sink.write);
+      final trace = AiTrace(write: sink.write);
       await trace.begin('run-1', {'model': 'test-model'});
       await trace.event('stage', {'stage': 'verifying'});
 
       final report = formatTraceReport(
         sink.text,
         generatedAt: DateTime(2026, 8, 8),
+        title: 'SuperHealth lab planner diagnostic log',
+        emptyMessage: 'No lab plan generation has been recorded yet.',
       );
 
       expect(report, contains('NEVER FINISHED'));
@@ -153,13 +155,15 @@ void main() {
 
     test('distinguishes a failure from a success', () async {
       final sink = _Sink();
-      final trace = LabPlanTrace(write: sink.write);
+      final trace = AiTrace(write: sink.write);
       await trace.begin('run-1', const {});
       await trace.end(success: false, data: {'approved': false});
 
       final report = formatTraceReport(
         sink.text,
         generatedAt: DateTime(2026, 8, 8),
+        title: 'SuperHealth lab planner diagnostic log',
+        emptyMessage: 'No lab plan generation has been recorded yet.',
       );
 
       expect(report, contains('failed'));
@@ -167,12 +171,20 @@ void main() {
     });
 
     test('warns that the file is health data', () async {
-      // Model responses are included and a lab plan names biomarkers. Someone
-      // about to attach this to a bug report needs to know that.
-      final report = formatTraceReport('', generatedAt: DateTime(2026, 8, 8));
+      // Model responses are included and they name biomarkers and supplements.
+      // Someone about to attach this to a bug report needs to know that.
+      final report = formatTraceReport(
+        '',
+        generatedAt: DateTime(2026, 8, 8),
+        title: 'SuperHealth health advisor diagnostic log',
+        emptyMessage: 'No advisor turn has been recorded yet.',
+      );
 
       expect(report, contains('health data'));
-      expect(report, contains('No lab plan generation has been recorded yet'));
+      // The heading names which feature's log this is: two logs land in the
+      // same bug report otherwise indistinguishable.
+      expect(report, contains('health advisor'));
+      expect(report, contains('No advisor turn has been recorded yet'));
     });
   });
 }

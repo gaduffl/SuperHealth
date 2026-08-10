@@ -9,7 +9,7 @@ import 'ai_models.dart';
 import 'ai_settings.dart';
 import 'api_key_store.dart';
 import 'health_context_builder.dart';
-import 'lab_plan_trace.dart';
+import 'ai_trace.dart';
 import 'provider_clients.dart';
 
 class LabPlanGeneration {
@@ -178,7 +178,7 @@ class LabPlannerService {
     required AiProviderClientFactory clientFactory,
     required HealthContextBuilder contextBuilder,
     ProviderCapabilityRegistry? capabilities,
-    LabPlanTrace? trace,
+    AiTrace? trace,
   }) : _repository = repository,
        _keyStore = keyStore,
        _clientFactory = clientFactory,
@@ -186,14 +186,14 @@ class LabPlannerService {
        _capabilities = capabilities ?? ProviderCapabilityRegistry(),
        // A trace that writes nowhere, so every call site below can record
        // unconditionally instead of guarding each one.
-       _trace = trace ?? LabPlanTrace(write: (_) async {});
+       _trace = trace ?? AiTrace(write: (_) async {});
 
   final HealthRepository _repository;
   final ApiKeyStore _keyStore;
   final AiProviderClientFactory _clientFactory;
   final HealthContextBuilder _contextBuilder;
   final ProviderCapabilityRegistry _capabilities;
-  final LabPlanTrace _trace;
+  final AiTrace _trace;
 
   static const _schemaInstructions = '''
 Return exactly one JSON object and no markdown. Use this shape:
