@@ -101,6 +101,63 @@ void main() {
     },
   );
 
+  test('every advisor turn routes to one prompt cache', () async {
+    // The advisor re-sends the whole health context on every turn, so this is
+    // where a warm prefix is worth the most in the app — more than the lab
+    // planner, which runs twice and stops. It had no key at all.
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    final client = _Client(
+      (request) => ProviderResponse(
+        text: '${_coverage(request)}\nAnswer.',
+        raw: const {},
+      ),
+    );
+    final service = AdvisorService(
+      repository: fixture.repository,
+      keyStore: _KeyStore(),
+      clientFactory: _Factory(client),
+      contextBuilder: HealthContextBuilder(
+        fixture.repository,
+        scope: HealthContextScope.advisory,
+      ),
+    );
+
+    for (final question in ['First.', 'Second.']) {
+      await service.ask(
+        profileId: fixture.profile.id,
+        conversationId: 'primary',
+        question: question,
+        settings: _settings,
+      );
+    }
+
+    final keys = client.requests
+        .map((request) => request.promptCacheKey)
+        .toSet();
+    expect(keys, hasLength(1));
+    final key = keys.single!;
+    expect(key, startsWith('superhealth-advisor-'));
+    // A key the provider rejects fails the whole call before a token — that is
+    // how a 84-character one killed lab planning outright.
+    expect(
+      key.length,
+      lessThanOrEqualTo(ProviderRequest.promptCacheKeyMaxLength),
+    );
+  });
+
+  test('a cache key is bounded by construction, not by hope', () {
+    final key = ProviderRequest.cacheKey('superhealth-advisor-', 'f' * 64);
+
+    expect(key.length, ProviderRequest.promptCacheKeyMaxLength);
+    // Whatever survives still has to distinguish two contexts.
+    expect(key.replaceFirst('superhealth-advisor-', '').length, 44);
+    expect(
+      () => ProviderRequest.cacheKey('x' * 60, 'abc'),
+      throwsArgumentError,
+    );
+  });
+
   test('lab planner accepts a valid exact catalog plan', () async {
     final fixture = await _Fixture.create(withBiomarker: true);
     addTearDown(fixture.dispose);

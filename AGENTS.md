@@ -434,6 +434,52 @@ read them. Before adding a field to the manifest, ask what it proves that
 `records` + `sha256` does not. The `ids` list is still built, purely to reject
 duplicates.
 
+**A row carries evidence, not columns.** `created_at`/`updated_at` say when a
+row was written or corrected, never when the thing happened — every section has
+its own clinical date. `deleted` is 0 on every carried row because the queries
+filter on it. `color_value` is what a tag is drawn in. `profile_id` repeats
+`active_profile_id` 36 characters at a time on every clinical row. Together
+with dropping keys whose value would be null, `""`, `[]` or `{}`, that was 31%
+of the advisor's package. Numbers are never dropped: a `0` dose and an absent
+dose are different facts.
+
+**An omission the model cannot see is a lie by construction.** The reading
+protocol says never to infer that a record is absent, so every reason a *key*
+can be missing is spelled out in `coverage_contract.row_encoding` — empty means
+"nothing recorded", bookkeeping is listed by name, `profile_id` is present only
+where it differs. Trim nothing from a row without adding its rule there.
+
+**An index that transcribes the ledger is not an index.** `chronology` emitted
+one entry per record — `{at, section, record_ref, date_field}` — and all four
+values were already in the row it pointed at. 446 KB on a real profile, a
+quarter of the package, to sort rows the model can sort; the per-section range
+it summarised was already in `manifest.sections` as `earliest`/`latest`. Before
+adding to `attention_index`, ask what it computes that the ledger does not
+already state.
+
+**A summary is not a window, and `lossless` has to be withdrawn for one.** A
+window removes rows and declares it; what survives is still verbatim. A summary
+keeps every record but stops carrying it row by row — so `manifest.lossless`
+becomes false the moment one is present, `summarised` names the section, and
+the declaration states its grain, what it preserves and what it **loses**.
+`supplement_intakes_weekly` covers every dose older than the advisor's eight
+weeks at one row per supplement-week: 1,171 rows became 284, and the time of
+day, per-dose notes and individual ids are gone. Saying so is the price of
+being allowed to do it.
+
+**A count derived from a windowed section must say what it counted.**
+`_supplementExposure` reports `carried_*` for the rows in the package and
+`ledger_*` from `supplement_intake_history`, which spans the whole ledger.
+Unlabelled, "first recorded 3 weeks ago" reads as "started 3 weeks ago" when it
+means "the window starts 3 weeks ago" — the exact confusion the index exists to
+prevent.
+
+**The advisor is where prompt caching pays, not the lab planner.** A chat
+re-sends the entire context on every turn; the planner runs twice and stops. The
+advisor had no `promptCacheKey` at all. Both now key on the catalog fingerprint
+through `ProviderRequest.cacheKey`, which is bounded by construction — a key one
+character over the limit fails the whole call before a token.
+
 **Never discard a provider error payload you do not recognise.** The OpenAI
 handler read only `event['message']`, so a nested shape produced the literal
 string "OpenAI stream error." with the real reason thrown away — and

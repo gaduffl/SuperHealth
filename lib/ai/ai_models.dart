@@ -108,6 +108,26 @@ class ProviderRequest {
   /// and the whole generation failed before the first token.
   static const promptCacheKeyMaxLength = 64;
 
+  /// Builds a routing key that fits [promptCacheKeyMaxLength] by construction.
+  ///
+  /// By construction rather than by hope: the first version was a 20-character
+  /// prefix plus a 64-character SHA, and OpenAI rejected all 84 of it with HTTP
+  /// 400 — killing the generation before a single token. What is left of the
+  /// digest is still at least 40 hex characters, which is 160 bits, so two
+  /// distinct contexts colliding is not something that happens by accident.
+  static String cacheKey(String prefix, String fingerprint) {
+    final room = promptCacheKeyMaxLength - prefix.length;
+    if (room < 16) {
+      throw ArgumentError.value(
+        prefix,
+        'prefix',
+        'leaves too little room for a distinguishing digest',
+      );
+    }
+    return '$prefix'
+        '${fingerprint.length > room ? fingerprint.substring(0, room) : fingerprint}';
+  }
+
   /// Routes calls that share a prompt prefix to the same provider-side cache.
   ///
   /// Automatic prefix caching is best effort and misses when consecutive calls
