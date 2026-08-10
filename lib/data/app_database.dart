@@ -14,7 +14,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 11;
+  static const schemaVersion = 12;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -395,7 +395,8 @@ class AppDatabase {
           verification_warnings_json TEXT NOT NULL DEFAULT '[]',
           verification_citations_json TEXT NOT NULL DEFAULT '[]',
           verified_at TEXT,
-          deleted INTEGER NOT NULL DEFAULT 0
+          deleted INTEGER NOT NULL DEFAULT 0,
+          tier_tradeoffs_json TEXT NOT NULL DEFAULT '{}'
         )
       ''');
 
@@ -681,6 +682,15 @@ class AppDatabase {
         'ALTER TABLE profiles ADD COLUMN easy_mode INTEGER NOT NULL DEFAULT 1',
       );
       await db.execute('UPDATE profiles SET easy_mode = 0');
+    }
+    if (oldVersion < 12) {
+      // Plans made before this column have no tradeoff prose and never will —
+      // it comes from the model at generation time, and re-running is the
+      // user's call, not a migration's. An empty object reads as "not
+      // recorded", which the UI states rather than papering over.
+      await db.execute(
+        "ALTER TABLE lab_plans ADD COLUMN tier_tradeoffs_json TEXT NOT NULL DEFAULT '{}'",
+      );
     }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;

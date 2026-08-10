@@ -260,6 +260,104 @@ void main() {
     },
   );
 
+  test('each cheaper tier carries why it left the next tier out', () async {
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    final client = _Client(
+      (request) => ProviderResponse(
+        text: jsonEncode(
+          request.userPrompt.contains('Independently verify')
+              ? _verificationBody(request)
+              : _labBody(
+                  request,
+                  tradeoffs: const {
+                    'core': 'Lp(a) is lifelong and was measured last year.',
+                    'advanced': 'HbA1c adds nothing while glucose is normal.',
+                  },
+                ),
+        ),
+        raw: const {},
+      ),
+    );
+
+    final result = await _planner(
+      fixture,
+      client,
+    ).generate(profileId: fixture.profile.id, settings: _settings);
+
+    expect(result.plan.tradeoffFor(LabTier.core), contains('Lp(a)'));
+    expect(result.plan.tradeoffFor(LabTier.advanced), contains('HbA1c'));
+    // The largest tier gives up nothing, so anything the model wrote there is
+    // dropped rather than shown against a gap that does not exist.
+    expect(result.plan.tradeoffFor(LabTier.comprehensive), isEmpty);
+    // The reviewer sees the deferral claims: they are clinical assertions
+    // about this profile and unreviewed ones are what the second pass is for.
+    expect(client.requests[1].userPrompt, contains('Lp(a) is lifelong'));
+    // Verification must not drop them on the way to a saved plan.
+    expect(result.plan.status, 'verified');
+    expect(result.plan.tierTradeoffs, hasLength(2));
+  });
+
+  test('a plan whose tiers carry no reasoning still generates', () async {
+    // Explanatory prose is not a correctness gate. The tests it would have
+    // described are derived from the plan and shown either way.
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    final client = _Client(
+      (request) => ProviderResponse(
+        text: jsonEncode(
+          request.userPrompt.contains('Independently verify')
+              ? _verificationBody(request)
+              : _labBody(
+                  request,
+                  tradeoffs: const {'core': '  ', 'advanced': ''},
+                ),
+        ),
+        raw: const {},
+      ),
+    );
+
+    final result = await _planner(
+      fixture,
+      client,
+    ).generate(profileId: fixture.profile.id, settings: _settings);
+
+    expect(result.plan.tierTradeoffs, isEmpty);
+    expect(result.canSave, isTrue);
+    expect(result.plan.itemsOmittedVersusNext(LabTier.core), isNotEmpty);
+  });
+
+  test('a saved plan keeps its tier tradeoffs across a reload', () async {
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    final generated = await _planner(
+      fixture,
+      _Client(
+        (request) => ProviderResponse(
+          text: jsonEncode(
+            request.userPrompt.contains('Independently verify')
+                ? _verificationBody(request)
+                : _labBody(
+                    request,
+                    tradeoffs: const {'core': 'Measured recently enough.'},
+                  ),
+          ),
+          raw: const {},
+        ),
+      ),
+    ).generate(profileId: fixture.profile.id, settings: _settings);
+    final controller = _controller(fixture);
+    addTearDown(controller.dispose);
+    controller.draftLabPlan = generated;
+    await controller.saveDraftLabPlan();
+
+    final reloaded = (await fixture.repository.labPlans(
+      fixture.profile.id,
+    )).single;
+
+    expect(reloaded.tradeoffFor(LabTier.core), 'Measured recently enough.');
+  });
+
   test('a verification receipt without section hashes is accepted', () async {
     final fixture = await _Fixture.create(withBiomarker: true);
     addTearDown(fixture.dispose);
@@ -479,6 +577,7 @@ Map<String, Object?> _labBody(
   Map<String, Object?>? itemPatch,
   List<String> warnings = const [],
   Map<String, Object?> receiptPatch = const {},
+  Map<String, String> tradeoffs = const {},
 }) => {
   'title': 'Plan',
   'planned_for': null,
@@ -490,14 +589,20 @@ Map<String, Object?> _labBody(
   'tiers':
       tiers ??
       [
-        _tier('core', itemPatch: itemPatch),
-        _tier('advanced', itemPatch: itemPatch),
-        _tier('comprehensive', itemPatch: itemPatch),
+        for (final name in ['core', 'advanced', 'comprehensive'])
+          _tier(name, itemPatch: itemPatch, tradeoff: tradeoffs[name]),
       ],
 };
 
-Map<String, Object?> _tier(String name, {Map<String, Object?>? itemPatch}) => {
+Map<String, Object?> _tier(
+  String name, {
+  Map<String, Object?>? itemPatch,
+  String? tradeoff,
+}) => {
   'tier': name,
+  'tradeoff_versus_next':
+      tradeoff ??
+      (name == 'comprehensive' ? '' : 'The $name tier can wait on the rest.'),
   'items': [
     {
       'biomarker_id': _tierBiomarker(name).$1,

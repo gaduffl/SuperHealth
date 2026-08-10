@@ -5,6 +5,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
+import 'legacy_schema.dart';
 
 void main() {
   setUpAll(sqfliteFfiInit);
@@ -99,6 +100,9 @@ void main() {
         version: 6,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, _) async {
+          // Present in a real database at this version; the v12 upgrade
+          // adds a column to it.
+          await db.execute(legacyLabPlansTable);
           await db.execute('''
             CREATE TABLE profiles (
               id TEXT PRIMARY KEY,

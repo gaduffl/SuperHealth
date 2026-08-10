@@ -42,6 +42,26 @@ List<String> _strings(Object? value) {
   return decoded is List ? decoded.map((item) => '$item').toList() : const [];
 }
 
+/// Reads a `{tier name: text}` map, skipping anything that is not a tier.
+///
+/// An unknown key is dropped rather than thrown on: this is explanatory prose
+/// attached to a plan, and a plan is worth far more than one stray key.
+Map<LabTier, String> _tierTexts(Object? value) {
+  final decoded = value is String && value.isNotEmpty
+      ? jsonDecode(value)
+      : value;
+  if (decoded is! Map) return const {};
+  final result = <LabTier, String>{};
+  for (final entry in decoded.entries) {
+    final tier = LabTier.values
+        .where((item) => item.name == '${entry.key}')
+        .firstOrNull;
+    final text = '${entry.value}'.trim();
+    if (tier != null && text.isNotEmpty) result[tier] = text;
+  }
+  return result;
+}
+
 const _canonicalWeekdays = <String>[
   'monday',
   'tuesday',
@@ -1514,6 +1534,7 @@ class LabPlan {
     this.verificationCitations = const [],
     this.verifiedAt,
     this.deleted = false,
+    this.tierTradeoffs = const {},
   });
 
   final String id;
@@ -1534,9 +1555,49 @@ class LabPlan {
   final bool deleted;
   final List<LabPlanItem> items;
 
+  /// Why the tests the *next* tier adds were judged less urgent than the ones
+  /// this tier already carries.
+  ///
+  /// Keyed by the cheaper tier: `tierTradeoffs[LabTier.core]` explains what
+  /// Core gives up against Advanced. [LabTier.comprehensive] adds nothing
+  /// beyond itself and never carries an entry. A cheaper plan without this is
+  /// just a shorter list — the reader cannot tell whether the omissions were
+  /// reasoned about or fell off the end.
+  final Map<LabTier, String> tierTradeoffs;
+
   List<LabPlanItem> itemsThrough(LabTier tier) => items
       .where((item) => item.tier.index <= tier.index)
       .toList(growable: false);
+
+  /// The tier one step more expensive than [tier], or null for the largest.
+  static LabTier? nextTierAfter(LabTier tier) =>
+      tier.index + 1 < LabTier.values.length
+      ? LabTier.values[tier.index + 1]
+      : null;
+
+  /// The tests [tier] gives up against the next tier up.
+  ///
+  /// Derived, never stored. Each item names the tier that *adds* it, and tiers
+  /// are cumulative, so the gap is exactly the next tier's own additions — a
+  /// stored copy could disagree with the plan it claims to describe.
+  List<LabPlanItem> itemsOmittedVersusNext(LabTier tier) {
+    final next = nextTierAfter(tier);
+    if (next == null) return const [];
+    return items
+        .where((item) => item.tier == next && !item.deleted)
+        .toList(growable: false);
+  }
+
+  /// What the next tier up costs on top of this one, counting only known
+  /// prices. Companion to [itemsOmittedVersusNext]: the tests given up and the
+  /// money saved are the two halves of the same decision.
+  double addedCostOfNext(LabTier tier) {
+    final next = nextTierAfter(tier);
+    if (next == null) return 0;
+    return knownTotal(next) - knownTotal(tier);
+  }
+
+  String tradeoffFor(LabTier tier) => tierTradeoffs[tier] ?? '';
 
   double knownTotal(LabTier tier) => itemsThrough(tier).fold(
     0,
@@ -1563,7 +1624,47 @@ class LabPlan {
     'verification_citations_json': jsonEncode(verificationCitations),
     'verified_at': verifiedAt == null ? null : _iso(verifiedAt!),
     'deleted': deleted ? 1 : 0,
+    'tier_tradeoffs_json': jsonEncode({
+      for (final entry in tierTradeoffs.entries) entry.key.name: entry.value,
+    }),
   };
+
+  /// Rebuild with selected fields replaced.
+  ///
+  /// Exists because two call sites used to re-list every field by hand to
+  /// change one of them, which silently drops whatever field was added last.
+  LabPlan copyWith({
+    String? title,
+    DateTime? updatedAt,
+    DateTime? plannedFor,
+    String? status,
+    String? verificationSummary,
+    List<String>? verificationWarnings,
+    List<String>? verificationCitations,
+    DateTime? verifiedAt,
+    bool? deleted,
+    List<LabPlanItem>? items,
+    Map<LabTier, String>? tierTradeoffs,
+  }) => LabPlan(
+    id: id,
+    profileId: profileId,
+    title: title ?? this.title,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    plannedFor: plannedFor ?? this.plannedFor,
+    currency: currency,
+    contextHash: contextHash,
+    provider: provider,
+    model: model,
+    status: status ?? this.status,
+    verificationSummary: verificationSummary ?? this.verificationSummary,
+    verificationWarnings: verificationWarnings ?? this.verificationWarnings,
+    verificationCitations: verificationCitations ?? this.verificationCitations,
+    verifiedAt: verifiedAt ?? this.verifiedAt,
+    deleted: deleted ?? this.deleted,
+    items: items ?? this.items,
+    tierTradeoffs: tierTradeoffs ?? this.tierTradeoffs,
+  );
 
   factory LabPlan.fromMap(Map<String, Object?> map, List<LabPlanItem> items) =>
       LabPlan(
@@ -1588,6 +1689,7 @@ class LabPlan {
             : _date(map['verified_at']),
         deleted: _boolFromDb(map['deleted']),
         items: items,
+        tierTradeoffs: _tierTexts(map['tier_tradeoffs_json']),
       );
 }
 
