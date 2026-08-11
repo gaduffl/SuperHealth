@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -123,6 +124,10 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
               ),
             ),
           ),
+          _ConversationBar(
+            controller: controller,
+            onBrowse: _browseConversations,
+          ),
           if (controller.workspaceProposals.isNotEmpty)
             Material(
               color: Theme.of(context).colorScheme.tertiaryContainer,
@@ -232,6 +237,125 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
         await showAppError(context, error);
       }
     }
+  }
+
+  /// Lists every conversation and lets one be opened or deleted.
+  Future<void> _browseConversations() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.75,
+        // Reads the controller rather than closing over the list, so a delete
+        // inside the sheet updates the sheet.
+        child: Consumer<AppController>(
+          builder: (context, controller, _) {
+            final strings = AppLocalizations.of(context);
+            final conversations = controller.advisorConversations;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Text(
+                    strings.advisorConversations,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+                Expanded(
+                  child: conversations.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: EmptyState(
+                            icon: Icons.forum_outlined,
+                            title: strings.advisorNoConversations,
+                            message: strings.advisorNoConversationsDescription,
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.only(bottom: 24),
+                          itemCount: conversations.length,
+                          itemBuilder: (context, index) {
+                            final conversation = conversations[index];
+                            final active =
+                                conversation.id ==
+                                controller.activeConversationId;
+                            return ListTile(
+                              selected: active,
+                              leading: Icon(
+                                active
+                                    ? Icons.forum
+                                    : Icons.chat_bubble_outline,
+                              ),
+                              title: Text(
+                                conversation.title.isEmpty
+                                    ? strings.advisorUntitledConversation
+                                    : conversation.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                strings.advisorConversationSummary(
+                                  conversation.messageCount,
+                                  DateFormat.yMMMd().add_Hm().format(
+                                    conversation.lastMessageAt,
+                                  ),
+                                ),
+                              ),
+                              trailing: IconButton(
+                                tooltip: strings.delete,
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () => _deleteConversation(
+                                  context,
+                                  controller,
+                                  conversation,
+                                ),
+                              ),
+                              onTap: () async {
+                                final navigator = Navigator.of(context);
+                                await controller.openAdvisorConversation(
+                                  conversation.id,
+                                );
+                                navigator.pop();
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteConversation(
+    BuildContext context,
+    AppController controller,
+    AdvisorConversation conversation,
+  ) async {
+    final strings = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(strings.advisorDeleteConversation),
+        content: Text(strings.advisorDeleteConversationDescription),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(strings.delete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await controller.deleteAdvisorConversation(conversation.id);
   }
 
   Future<void> _reviewFileProposals() async {
@@ -429,6 +553,68 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
         if (mounted) await showAppError(context, error);
       }
     }
+  }
+}
+
+/// Names the conversation being read, and offers the two ways out of it.
+///
+/// Above the messages rather than in an app bar, because this screen has none
+/// — it is a section of the shell. Which conversation you are in is the kind of
+/// thing that has to be visible without tapping anything, or a question lands
+/// in the wrong one.
+class _ConversationBar extends StatelessWidget {
+  const _ConversationBar({required this.controller, required this.onBrowse});
+
+  final AppController controller;
+  final VoidCallback onBrowse;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final current = controller.advisorConversations
+        .where((item) => item.id == controller.activeConversationId)
+        .firstOrNull;
+    // No entry in the list means nothing has been said in it yet.
+    final title = current == null
+        ? strings.advisorNewConversation
+        : (current.title.isEmpty
+              ? strings.advisorUntitledConversation
+              : current.title);
+    return Material(
+      color: scheme.surfaceContainerLowest,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextButton.icon(
+                onPressed: onBrowse,
+                icon: const Icon(Icons.forum_outlined, size: 20),
+                label: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: strings.advisorNewConversation,
+              // Disabled mid-turn: the answer would be saved into the
+              // conversation the question was asked in, not the new one, and
+              // the screen would show neither.
+              onPressed: controller.busy
+                  ? null
+                  : controller.startNewAdvisorConversation,
+              icon: const Icon(Icons.add_comment_outlined),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
