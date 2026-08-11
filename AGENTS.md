@@ -483,6 +483,22 @@ messages are now saved together at the end, and `conversationHistory` replays
 only complete question-and-answer pairs, which heals conversations that already
 collected danglers without deleting anything the user might still want to read.
 
+**Conversations are derived from their messages, not stored beside them.** A
+conversations table would need a title column duplicating the first question, a
+row created before anything had been said, and a migration — while
+`advisor_messages` already carries every fact `AdvisorConversation` holds. The
+consequence is that a conversation nobody has spoken in does not exist, which is
+the right answer: starting one and backing out leaves nothing to tidy up.
+Existing installs keep `primary` as an ordinary conversation.
+
+**"Unresolved" is a different state from "the default".** The active
+conversation is null until a refresh picks the most recent one, and any explicit
+choice — opening one, deleting into a fallback, starting a new one — sets it.
+Inferring the difference from an empty message list instead sent every restart
+to `primary`, which for anyone with history is the *oldest* thread rather than
+where they left off. When a field means both "nobody has chosen yet" and a real
+value, make the first one null.
+
 **Every model call that costs money gets a trace.** `AiTrace` is not lab-planner
 specific: one `AiTraceStore` per feature, each with its own file, because a lab
 plan and an advisor turn are different questions and interleaving them makes

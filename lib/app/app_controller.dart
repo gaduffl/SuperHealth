@@ -165,6 +165,33 @@ class AppController extends ChangeNotifier {
   List<DueBiomarker> dueBiomarkers = const [];
   List<LabPlan> labPlans = const [];
   List<AdvisorMessage> advisorMessages = const [];
+
+  /// Every conversation this profile has, most recently used first.
+  List<AdvisorConversation> advisorConversations = const [];
+
+  /// Null until a refresh resolves it; never null to a caller.
+  ///
+  /// The distinction matters. "Unresolved" means land on the most recent
+  /// conversation, which is where the user left off. Once anything has chosen
+  /// one — the user opening it, a delete falling back, a new one starting — the
+  /// choice is deliberate and a later refresh must not overrule it. Inferring
+  /// that from an empty message list instead got it wrong for every install
+  /// whose oldest thread is the pre-feature `primary`: a restart would land
+  /// there rather than on the newest.
+  String? _activeConversationId;
+
+  /// The conversation the advisor screen is showing and will ask into.
+  ///
+  /// Not persisted. The most recent conversation *is* where the user left off,
+  /// so a stored id would say the same thing and then have to be kept honest
+  /// across profile switches, deletions and restores. A brand-new conversation
+  /// exists only in this field until it has been spoken in, so abandoning one
+  /// leaves nothing behind.
+  String get activeConversationId =>
+      _activeConversationId ?? defaultConversationId;
+
+  /// The conversation every install had before there was more than one.
+  static const defaultConversationId = 'primary';
   List<CorrelationResult> correlations = const [];
   List<TrendDoseLink> trendDoseLinks = const [];
   LabPlanGeneration? draftLabPlan;
@@ -564,6 +591,10 @@ class AppController extends ChangeNotifier {
     if (selected == null) return;
     activeProfile = selected;
     draftLabPlan = null;
+    // Another person's conversation id must not survive the switch. Back to
+    // unresolved, so the refresh below lands on this profile's most recent.
+    _activeConversationId = null;
+    advisorMessages = const [];
     correlations = const [];
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString('active_profile_id', profileId);
@@ -592,7 +623,7 @@ class AppController extends ChangeNotifier {
       repository.biomarkerLists(profile.id),
       repository.dueBiomarkers(profile.id),
       repository.labPlans(profile.id),
-      repository.messages(profile.id, 'primary'),
+      repository.advisorConversations(profile.id),
       repository.householdSchedules(),
       repository.trendDoseLinks(profile.id),
       repository.biomarkerPackages(),
@@ -614,11 +645,20 @@ class AppController extends ChangeNotifier {
     biomarkerLists = values[13] as List<BiomarkerList>;
     dueBiomarkers = values[14] as List<DueBiomarker>;
     labPlans = values[15] as List<LabPlan>;
-    advisorMessages = values[16] as List<AdvisorMessage>;
+    advisorConversations = values[16] as List<AdvisorConversation>;
     householdSchedules = values[17] as List<SupplementSchedule>;
     trendDoseLinks = values[18] as List<TrendDoseLink>;
     biomarkerPackages = values[19] as List<BiomarkerPackage>;
     biomarkerPackageMembers = values[20] as Map<String, Set<String>>;
+    // Resolved before the messages are read, because which conversation to
+    // read *is* the question — which is why this one query is sequential
+    // rather than part of the batch above.
+    _activeConversationId ??=
+        advisorConversations.firstOrNull?.id ?? defaultConversationId;
+    advisorMessages = await repository.messages(
+      profile.id,
+      activeConversationId,
+    );
     notifyListeners();
   }
 
@@ -643,6 +683,10 @@ class AppController extends ChangeNotifier {
     dueBiomarkers = const [];
     labPlans = const [];
     advisorMessages = const [];
+    advisorConversations = const [];
+    // Unresolved, so nothing points at a conversation belonging to a profile
+    // that is no longer active.
+    _activeConversationId = null;
     correlations = const [];
     trendDoseLinks = const [];
     draftLabPlan = null;
@@ -1732,23 +1776,76 @@ class AppController extends ChangeNotifier {
       // Before the turn, so the file stays bounded without ever trimming the
       // run in progress.
       await _advisorTraceStore?.trim();
+      final conversationId = activeConversationId;
       try {
         final turn = await _advisorService.ask(
           profileId: _profileId,
-          conversationId: 'primary',
+          conversationId: conversationId,
           question: question,
           settings: settings,
         );
         lastContextBytes = turn.context.byteLength;
         lastContextTokens = turn.context.estimatedTokens;
         lastTokenUsage = turn.usage;
-        advisorMessages = await repository.messages(_profileId, 'primary');
+        advisorMessages = await repository.messages(_profileId, conversationId);
+        // The first answer in a new conversation is what makes it exist.
+        advisorConversations = await repository.advisorConversations(
+          _profileId,
+        );
       } finally {
         // However the turn ended — and a failed one is the interesting case —
         // the log now has something new to say about it.
         await refreshAiLogSummaries();
       }
     });
+  }
+
+  /// Opens an empty conversation without storing anything.
+  ///
+  /// Nothing is written until the first question is answered, so backing out
+  /// of a fresh conversation leaves no trace — and the list never fills with
+  /// empty entries someone has to tidy up.
+  void startNewAdvisorConversation() {
+    if (advisorMessages.isEmpty &&
+        !advisorConversations.any((item) => item.id == activeConversationId)) {
+      // Already sitting in an unused one. Handing out a second id would look
+      // identical and throw away nothing, so do not pretend anything happened.
+      return;
+    }
+    _activeConversationId = repository.newId();
+    advisorMessages = const [];
+    notifyListeners();
+  }
+
+  /// Puts the active conversation back to unresolved, as a restart would.
+  ///
+  /// Only a test has any reason to do this — the field is in memory, so the
+  /// real path is the process ending.
+  @visibleForTesting
+  void forgetActiveConversationForTest() => _activeConversationId = null;
+
+  Future<void> openAdvisorConversation(String conversationId) async {
+    _activeConversationId = conversationId;
+    advisorMessages = await repository.messages(_profileId, conversationId);
+    notifyListeners();
+  }
+
+  /// Deletes a conversation and lands somewhere sensible.
+  ///
+  /// Deleting the one being read has to leave the screen on something real, so
+  /// it falls back to the most recent survivor and otherwise to an empty new
+  /// conversation.
+  Future<void> deleteAdvisorConversation(String conversationId) async {
+    await repository.deleteAdvisorConversation(_profileId, conversationId);
+    advisorConversations = await repository.advisorConversations(_profileId);
+    if (activeConversationId == conversationId) {
+      final newest = advisorConversations.firstOrNull;
+      _activeConversationId = newest?.id ?? repository.newId();
+      advisorMessages = newest == null
+          ? const []
+          : await repository.messages(_profileId, newest.id);
+    }
+    notifyListeners();
   }
 
   Future<void> approveWorkspaceProposal(String proposalId) async {

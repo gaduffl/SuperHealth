@@ -598,6 +598,24 @@ class AppLocalizations {
     plural: _AppText.pendingFileProposalPlural,
   );
 
+  String get advisorConversations => _text(_AppText.advisorConversations);
+  String get advisorNewConversation => _text(_AppText.advisorNewConversation);
+  String get advisorUntitledConversation =>
+      _text(_AppText.advisorUntitledConversation);
+  String get advisorNoConversations => _text(_AppText.advisorNoConversations);
+  String get advisorNoConversationsDescription =>
+      _text(_AppText.advisorNoConversationsDescription);
+  String get advisorDeleteConversation =>
+      _text(_AppText.advisorDeleteConversation);
+  String get advisorDeleteConversationDescription =>
+      _text(_AppText.advisorDeleteConversationDescription);
+
+  String advisorConversationSummary(int messages, String lastAt) => _text(
+    messages == 1
+        ? _AppText.advisorConversationSummarySingular
+        : _AppText.advisorConversationSummaryPlural,
+  ).replaceFirst('{count}', '$messages').replaceFirst('{at}', lastAt);
+
   String lastContext(int bytes, int? tokens) => _text(_AppText.lastContext)
       .replaceFirst('{size}', formatNumber(bytes / 1024))
       .replaceFirst(
@@ -946,6 +964,15 @@ enum _AppText {
   providerReasoning,
   pendingFileProposalSingular,
   pendingFileProposalPlural,
+  advisorConversations,
+  advisorNewConversation,
+  advisorUntitledConversation,
+  advisorNoConversations,
+  advisorNoConversationsDescription,
+  advisorConversationSummarySingular,
+  advisorConversationSummaryPlural,
+  advisorDeleteConversation,
+  advisorDeleteConversationDescription,
   lastContext,
   confirmFileOperation,
   confirmOperation,
@@ -1311,6 +1338,17 @@ const _english = <_AppText, String>{
   _AppText.providerReasoning: '{provider} · {model} · {reasoning} reasoning',
   _AppText.pendingFileProposalSingular: 'file change awaiting approval',
   _AppText.pendingFileProposalPlural: 'file changes awaiting approval',
+  _AppText.advisorConversations: 'Conversations',
+  _AppText.advisorNewConversation: 'New conversation',
+  _AppText.advisorUntitledConversation: 'Untitled conversation',
+  _AppText.advisorNoConversations: 'No conversations yet',
+  _AppText.advisorNoConversationsDescription:
+      'Ask the advisor something and this conversation appears here.',
+  _AppText.advisorConversationSummarySingular: '{count} message · {at}',
+  _AppText.advisorConversationSummaryPlural: '{count} messages · {at}',
+  _AppText.advisorDeleteConversation: 'Delete this conversation?',
+  _AppText.advisorDeleteConversationDescription:
+      'Its messages are removed. Your health record is not affected.',
   _AppText.lastContext: 'Last context: {size} KB (~{tokens} tokens)',
   _AppText.confirmFileOperation: '{operation} file?',
   _AppText.confirmOperation: 'Confirm {operation}',
@@ -1690,6 +1728,18 @@ const _german = <_AppText, String>{
   _AppText.providerReasoning: '{provider} · {model} · {reasoning}-Reasoning',
   _AppText.pendingFileProposalSingular: 'Dateiänderung wartet auf Bestätigung',
   _AppText.pendingFileProposalPlural: 'Dateiänderungen warten auf Bestätigung',
+  _AppText.advisorConversations: 'Unterhaltungen',
+  _AppText.advisorNewConversation: 'Neue Unterhaltung',
+  _AppText.advisorUntitledConversation: 'Unterhaltung ohne Titel',
+  _AppText.advisorNoConversations: 'Noch keine Unterhaltungen',
+  _AppText.advisorNoConversationsDescription:
+      'Stelle dem Berater eine Frage, dann erscheint die Unterhaltung hier.',
+  _AppText.advisorConversationSummarySingular: '{count} Nachricht · {at}',
+  _AppText.advisorConversationSummaryPlural: '{count} Nachrichten · {at}',
+  _AppText.advisorDeleteConversation: 'Diese Unterhaltung löschen?',
+  _AppText.advisorDeleteConversationDescription:
+      'Ihre Nachrichten werden entfernt. Deine Gesundheitsakte bleibt '
+      'unberührt.',
   _AppText.lastContext: 'Letzter Kontext: {size} KB (~{tokens} Token)',
   _AppText.confirmFileOperation: '{operation}-Datei?',
   _AppText.confirmOperation: '{operation} bestätigen',

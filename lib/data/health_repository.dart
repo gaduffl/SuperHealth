@@ -1748,6 +1748,76 @@ class HealthRepository {
     return rows.map(AdvisorMessage.fromMap).toList();
   }
 
+  /// Every conversation this profile has, most recently used first.
+  ///
+  /// Two queries rather than one clever one: an aggregate for the counts and
+  /// bounds, and the user messages in order so the first question in each
+  /// conversation can title it. SQLite would answer both at once through its
+  /// bare-column-with-MIN behaviour, which is a dialect quirk rather than
+  /// something a reader should have to know.
+  Future<List<AdvisorConversation>> advisorConversations(
+    String profileId,
+  ) async {
+    final db = await _database.database;
+    final totals = await db.rawQuery(
+      '''
+      SELECT conversation_id,
+             COUNT(*) AS message_count,
+             MIN(created_at) AS started_at,
+             MAX(created_at) AS last_message_at
+      FROM advisor_messages
+      WHERE profile_id = ? AND deleted = 0
+      GROUP BY conversation_id
+      ''',
+      [profileId],
+    );
+    final firstQuestions = <String, String>{};
+    for (final row in await db.query(
+      'advisor_messages',
+      columns: ['conversation_id', 'content'],
+      where: 'profile_id = ? AND deleted = 0 AND role = ?',
+      whereArgs: [profileId, 'user'],
+      orderBy: 'created_at',
+    )) {
+      firstQuestions.putIfAbsent(
+        '${row['conversation_id']}',
+        () => '${row['content']}',
+      );
+    }
+    final conversations = [
+      for (final row in totals)
+        AdvisorConversation(
+          id: '${row['conversation_id']}',
+          title: firstQuestions['${row['conversation_id']}'] ?? '',
+          messageCount: (row['message_count'] as num).toInt(),
+          startedAt: _dateOf(row['started_at']),
+          lastMessageAt: _dateOf(row['last_message_at']),
+        ),
+    ]..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+    return conversations;
+  }
+
+  /// Removes one conversation, message by message.
+  ///
+  /// Soft deletes, like every other removal here, so the change syncs rather
+  /// than reappearing from another device's snapshot.
+  Future<void> deleteAdvisorConversation(
+    String profileId,
+    String conversationId,
+  ) async {
+    final db = await _database.database;
+    await db.update(
+      'advisor_messages',
+      {'deleted': 1, 'updated_at': DateTime.now().toUtc().toIso8601String()},
+      where: 'profile_id = ? AND conversation_id = ? AND deleted = 0',
+      whereArgs: [profileId, conversationId],
+    );
+  }
+
+  static DateTime _dateOf(Object? value) =>
+      DateTime.tryParse('$value')?.toLocal() ??
+      DateTime.fromMillisecondsSinceEpoch(0);
+
   Future<void> saveMessage(AdvisorMessage message) async {
     final db = await _database.database;
     await db.insert(

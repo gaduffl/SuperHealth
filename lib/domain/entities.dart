@@ -1693,6 +1693,32 @@ class LabPlan {
       );
 }
 
+/// One advisor conversation, summarised from its own messages.
+///
+/// Derived rather than stored. A conversations table would need a title column
+/// that duplicates the first question, a row to be created before anything has
+/// been said, and a migration — while the messages already carry every fact
+/// this holds. The cost is that a conversation nobody has spoken in does not
+/// exist, which is the right answer anyway.
+class AdvisorConversation {
+  const AdvisorConversation({
+    required this.id,
+    required this.title,
+    required this.messageCount,
+    required this.startedAt,
+    required this.lastMessageAt,
+  });
+
+  final String id;
+
+  /// The first question asked in it, shortened. Empty when the conversation
+  /// somehow opens with an assistant message.
+  final String title;
+  final int messageCount;
+  final DateTime startedAt;
+  final DateTime lastMessageAt;
+}
+
 class AdvisorMessage {
   const AdvisorMessage({
     required this.id,
