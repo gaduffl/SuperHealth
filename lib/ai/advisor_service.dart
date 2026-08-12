@@ -283,7 +283,14 @@ Be direct and useful. State what is known from the profile, what is inferred, an
             contextJson: context.json,
             history: history,
             reasoningLevel: settings.reasoningLevel,
-            webSearch: false,
+            // The same tools as the call being repaired, not fewer. Tool
+            // definitions are part of the cached prefix and sit ahead of the
+            // input, so dropping web search moved the prefix at position zero:
+            // a real run wrote 313k tokens and then read back *nothing* on a
+            // repair issued seconds later with the same key and the same
+            // context. Suppressing one search cost a second full prefill of
+            // the entire package.
+            webSearch: settings.webSearch,
             codeExecution:
                 settings.codeExecution ||
                 delivery == HealthContextDelivery.providerFile,

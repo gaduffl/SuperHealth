@@ -487,4 +487,79 @@ void main() {
       expect(body?.containsKey('text'), isFalse);
     },
   );
+
+  test('OpenAI asks for a cache that outlives reading the answer', () async {
+    // The default prompt cache lives in memory for a few minutes — shorter
+    // than a person takes to read a long answer and type a follow-up, so a
+    // chat's second turn was re-prefilling a context that had not changed by a
+    // single byte.
+    final dio = Dio();
+    Map<String, Object?>? body;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          body = Map<String, Object?>.from(options.data as Map);
+          handler.reject(
+            DioException(
+              requestOptions: options,
+              type: DioExceptionType.cancel,
+            ),
+          );
+        },
+      ),
+    );
+    final client = OpenAiClient(dio, ProviderCapabilityRegistry());
+    await expectLater(
+      client.respond(
+        'test-key',
+        const ProviderRequest(
+          model: 'gpt-5.6',
+          systemPrompt: 'system',
+          userPrompt: 'question',
+          contextJson: '{}',
+          promptCacheKey: 'superhealth-advisor-abc',
+        ),
+      ),
+      throwsA(isA<AiProviderException>()),
+    );
+
+    expect(body?['prompt_cache_key'], 'superhealth-advisor-abc');
+    expect(body?['prompt_cache_retention'], '24h');
+  });
+
+  test('OpenAI sends no retention without a key to retain', () async {
+    // Retention is part of the caching hint, and a hint the provider might
+    // reject must never travel on its own.
+    final dio = Dio();
+    Map<String, Object?>? body;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          body = Map<String, Object?>.from(options.data as Map);
+          handler.reject(
+            DioException(
+              requestOptions: options,
+              type: DioExceptionType.cancel,
+            ),
+          );
+        },
+      ),
+    );
+    final client = OpenAiClient(dio, ProviderCapabilityRegistry());
+    await expectLater(
+      client.respond(
+        'test-key',
+        const ProviderRequest(
+          model: 'gpt-5.6',
+          systemPrompt: 'system',
+          userPrompt: 'question',
+          contextJson: '{}',
+        ),
+      ),
+      throwsA(isA<AiProviderException>()),
+    );
+
+    expect(body?.containsKey('prompt_cache_key'), isFalse);
+    expect(body?.containsKey('prompt_cache_retention'), isFalse);
+  });
 }

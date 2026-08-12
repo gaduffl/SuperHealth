@@ -169,6 +169,15 @@ class AppController extends ChangeNotifier {
   /// Every conversation this profile has, most recently used first.
   List<AdvisorConversation> advisorConversations = const [];
 
+  /// The question currently being answered, or null when nothing is in flight.
+  ///
+  /// Nothing is written to the database until the answer arrives, which is what
+  /// keeps a failed turn out of the history — but it also meant the question
+  /// vanished the moment it was sent: cleared from the input box, absent from
+  /// the thread, and in a new conversation the welcome screen still showing. A
+  /// chat has to show what you just said while it is being answered.
+  String? pendingAdvisorQuestion;
+
   /// Null until a refresh resolves it; never null to a caller.
   ///
   /// The distinction matters. "Unresolved" means land on the most recent
@@ -1777,6 +1786,10 @@ class AppController extends ChangeNotifier {
       // run in progress.
       await _advisorTraceStore?.trim();
       final conversationId = activeConversationId;
+      // Visible before the first byte leaves, so the thread shows the question
+      // rather than an empty screen with a progress bar over it.
+      pendingAdvisorQuestion = question.trim();
+      notifyListeners();
       try {
         final turn = await _advisorService.ask(
           profileId: _profileId,
@@ -1793,6 +1806,9 @@ class AppController extends ChangeNotifier {
           _profileId,
         );
       } finally {
+        // Cleared either way: on success the stored message replaces it, and on
+        // failure the screen puts the question back in the input box.
+        pendingAdvisorQuestion = null;
         // However the turn ended — and a failed one is the interesting case —
         // the log now has something new to say about it.
         await refreshAiLogSummaries();

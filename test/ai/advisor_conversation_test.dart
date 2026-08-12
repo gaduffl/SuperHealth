@@ -124,6 +124,34 @@ void main() {
     ]);
   });
 
+  test('a repair keeps the tools the first call had', () async {
+    // Tool definitions are part of the cached prefix and sit ahead of the
+    // input. Dropping web search on the repair moved the prefix at position
+    // zero: a real run wrote 313k tokens, then read back nothing on a repair
+    // issued seconds later with the same key and the same context.
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    fixture.client.dropReceiptOnce = true;
+
+    await fixture.ask(
+      'A question that gets a malformed answer first.',
+      settings: const AiTaskSettings(
+        provider: AiProvider.openai,
+        model: 'gpt-5.6',
+        webSearch: true,
+      ),
+    );
+
+    expect(fixture.client.requests, hasLength(2));
+    final first = fixture.client.requests.first;
+    final repair = fixture.client.requests.last;
+    expect(repair.webSearch, first.webSearch);
+    expect(repair.codeExecution, first.codeExecution);
+    // And it still routes to the same cache entry.
+    expect(repair.promptCacheKey, first.promptCacheKey);
+    expect(repair.contextJson, first.contextJson);
+  });
+
   test('the trace records what a turn cost and whether it cached', () async {
     // `cached_tokens` is the only way to tell whether the prompt cache key is
     // earning anything, and a chat re-sends the whole context every turn.
@@ -224,12 +252,13 @@ class _Fixture {
     );
   }
 
-  Future<AdvisorTurn> ask(String question) => service.ask(
-    profileId: profile.id,
-    conversationId: 'primary',
-    question: question,
-    settings: _settings,
-  );
+  Future<AdvisorTurn> ask(String question, {AiTaskSettings? settings}) =>
+      service.ask(
+        profileId: profile.id,
+        conversationId: 'primary',
+        question: question,
+        settings: settings ?? _settings,
+      );
 
   Future<List<AdvisorMessage>> storedMessages() =>
       repository.messages(profile.id, 'primary');
@@ -255,6 +284,9 @@ class _Client implements AiProviderClient {
   final List<ProviderRequest> requests = [];
   bool failNext = false;
 
+  /// Answers the first call without a coverage receipt, forcing one repair.
+  bool dropReceiptOnce = false;
+
   @override
   AiProvider get provider => AiProvider.openai;
 
@@ -276,6 +308,10 @@ class _Client implements AiProviderClient {
   }) async {
     requests.add(request);
     if (failNext) throw StateError('provider unavailable');
+    if (dropReceiptOnce) {
+      dropReceiptOnce = false;
+      return const ProviderResponse(text: 'No receipt here.', raw: {});
+    }
     final package = jsonDecode(request.contextJson) as Map<String, Object?>;
     final manifest = package['manifest']! as Map<String, Object?>;
     final sections = manifest['sections']! as Map<String, Object?>;

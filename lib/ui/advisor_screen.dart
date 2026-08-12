@@ -145,18 +145,12 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
               ),
             ),
           Expanded(
-            child: controller.advisorMessages.isEmpty
-                ? _AdvisorWelcome(onPrompt: _usePrompt)
-                : ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(12, 16, 12, 20),
-                    itemCount: controller.advisorMessages.length,
-                    itemBuilder: (context, index) => _MessageBubble(
-                      message: controller.advisorMessages[index],
-                    ),
-                  ),
+            child: _ThreadView(
+              controller: controller,
+              scroll: _scroll,
+              onPrompt: _usePrompt,
+            ),
           ),
-          if (controller.busy) const LinearProgressIndicator(minHeight: 2),
           Material(
             elevation: 8,
             color: Theme.of(context).colorScheme.surface,
@@ -553,6 +547,64 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
         if (mounted) await showAppError(context, error);
       }
     }
+  }
+}
+
+/// The message thread, including the question still being answered.
+///
+/// The welcome panel only stands in for an *idle* empty conversation. Once a
+/// question is in flight the thread has something in it, and showing the
+/// welcome text plus a progress bar instead made a sent question look lost —
+/// it is gone from the input box and not yet in the database, so there was
+/// nowhere it appeared.
+class _ThreadView extends StatelessWidget {
+  const _ThreadView({
+    required this.controller,
+    required this.scroll,
+    required this.onPrompt,
+  });
+
+  final AppController controller;
+  final ScrollController scroll;
+  final void Function(String) onPrompt;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = controller.pendingAdvisorQuestion;
+    final messages = controller.advisorMessages;
+    if (messages.isEmpty && pending == null) {
+      return _AdvisorWelcome(onPrompt: onPrompt);
+    }
+    return ListView.builder(
+      controller: scroll,
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 20),
+      // One extra row for the question in flight and the indicator under it.
+      itemCount: messages.length + (pending == null ? 0 : 1),
+      itemBuilder: (context, index) {
+        if (index < messages.length) {
+          return _MessageBubble(message: messages[index]);
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _MessageBubble(
+              message: AdvisorMessage(
+                id: 'pending',
+                profileId: controller.activeProfile?.id ?? '',
+                conversationId: controller.activeConversationId,
+                role: 'user',
+                content: pending!,
+                createdAt: DateTime.now(),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 

@@ -137,7 +137,10 @@ void main() {
       // The whole point: a generation that produced no plan and no error left
       // no run_end, and the report must say so rather than leave an absence.
       final sink = _Sink();
-      final trace = AiTrace(write: sink.write);
+      final trace = AiTrace(
+        write: sink.write,
+        clock: () => DateTime.utc(2026, 8, 8, 9, 30),
+      );
       await trace.begin('run-1', {'model': 'test-model'});
       await trace.event('stage', {'stage': 'verifying'});
 
@@ -151,6 +154,11 @@ void main() {
       expect(report, contains('NEVER FINISHED'));
       expect(report, contains('verifying'));
       expect(report, contains('test-model'));
+      // The absolute start time, not only the relative stamps. Whether a
+      // second call missed the prompt cache because the prefix diverged or
+      // because the entry expired is answerable from the gap between two runs
+      // and from nothing else in the file.
+      expect(report, contains('started 2026-08-08T09:30:00.000Z'));
     });
 
     test('distinguishes a failure from a success', () async {
