@@ -507,6 +507,20 @@ plan and an advisor turn are different questions and interleaving them makes
 unobservable on the app's most repetitive call. A claim about tokens that no
 trace can confirm is a guess.
 
+**The release build downloads Gradle, so it can fail for reasons this repo
+does not control.** A dropped connection to `services.gradle.org` lost the
+v0.30.0+50 release outright — `verify` had passed on the same commit and the
+diff touched no Android config. `~/.gradle/caches` and `~/.gradle/wrapper` are
+cached so the download stops happening, and the APK build retries three times.
+Retrying a *build* is only defensible because `flutter analyze` and
+`flutter test` run first: a Dart error cannot reach that step, so three
+failures mean a real Android or signing problem rather than a flake.
+
+**A release that never published can reuse its version; one that did, cannot.**
+The publish step refuses to overwrite an existing tag from a different commit,
+because a new build under an old versionCode is one Android will not install as
+an update. When the tag does not exist, the version is still free.
+
 **A retry must send the same tools as the call it retries.** Tool definitions
 are part of the cached prefix and sit ahead of the input, so turning web search
 off for the advisor's repair pass moved the prefix at position zero: a measured
