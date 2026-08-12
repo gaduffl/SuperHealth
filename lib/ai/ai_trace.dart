@@ -166,9 +166,17 @@ String formatTraceReport(
         : (ended['data'] as Map?)?['success'] == true
         ? 'succeeded'
         : 'failed';
+    // The absolute start time, not just the relative stamps below. Whether a
+    // second call missed the prompt cache because the prefix diverged or
+    // because the entry had simply expired is answerable from the gap between
+    // two runs and from nothing else in this file.
+    final startedAt = run.first['at'];
     buffer
       ..writeln('=' * 72)
-      ..writeln('Run ${runs.length - i} of ${runs.length} — $outcome')
+      ..writeln(
+        'Run ${runs.length - i} of ${runs.length} — $outcome'
+        '${startedAt == null ? '' : ' — started $startedAt'}',
+      )
       ..writeln('=' * 72);
     for (final entry in run) {
       final ms = entry['ms'];

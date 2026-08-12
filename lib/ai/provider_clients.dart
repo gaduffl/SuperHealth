@@ -534,8 +534,16 @@ class OpenAiClient extends _BaseClient {
         // sent. An over-long key was rejected with HTTP 400, and a request
         // that dies before the first token because of a caching *hint* is a
         // far worse outcome than a cold prefill.
-        if (usablePromptCacheKey(request.promptCacheKey) != null)
+        if (usablePromptCacheKey(request.promptCacheKey) != null) ...{
           'prompt_cache_key': usablePromptCacheKey(request.promptCacheKey),
+          // The default cache lives in memory for a few minutes. That is
+          // shorter than a person takes to read a 6,000-character answer and
+          // type a follow-up, so a chat's second turn was paying a full
+          // prefill of ~310k tokens on a context that had not changed by a
+          // single byte. A day is what the API offers, and this context is
+          // rebuilt daily anyway.
+          'prompt_cache_retention': '24h',
+        },
         'instructions': request.systemPrompt,
         // The stable context leads and the varying task prompt comes last so
         // OpenAI's automatic prefix caching serves repeated calls over the

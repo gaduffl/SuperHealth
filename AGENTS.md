@@ -507,6 +507,28 @@ plan and an advisor turn are different questions and interleaving them makes
 unobservable on the app's most repetitive call. A claim about tokens that no
 trace can confirm is a guess.
 
+**A retry must send the same tools as the call it retries.** Tool definitions
+are part of the cached prefix and sit ahead of the input, so turning web search
+off for the advisor's repair pass moved the prefix at position zero: a measured
+run wrote 313k tokens and then read back **nothing** on a repair issued seconds
+later with the same key and the same context. Suppressing one search bought a
+second full prefill of the whole package. Change the trailing prompt on a
+retry; never the tools, the system prompt, or the schema.
+
+**A cache that expires before the user replies is not a cache.** The default
+prompt cache lives in memory for a few minutes — shorter than reading a
+6,000-character answer and typing a follow-up — so a chat's second turn was
+re-prefilling a context that had not changed by a byte. `prompt_cache_retention:
+'24h'` travels with the key, and only with the key: a hint the provider might
+reject must never go on its own.
+
+**Work in flight has to be visible somewhere.** Nothing is written until the
+answer arrives, which is what keeps a failed turn out of the history — and it
+also meant the question vanished on send: cleared from the input box, absent
+from the thread, welcome screen still showing. `pendingAdvisorQuestion` carries
+it for exactly the duration of the call. Whenever a write is deferred until
+success, ask where the user sees the thing they just did.
+
 **The advisor is where prompt caching pays, not the lab planner.** A chat
 re-sends the entire context on every turn; the planner runs twice and stops. The
 advisor had no `promptCacheKey` at all. Both now key on the catalog fingerprint

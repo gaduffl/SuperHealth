@@ -50,6 +50,43 @@ void main() {
     expect(fixture.controller.advisorConversations, hasLength(2));
   });
 
+  test('the question in flight is visible while it is answered', () async {
+    // Nothing is stored until the answer arrives, which is what keeps a failed
+    // turn out of the history — but it also meant the question vanished the
+    // moment it was sent: gone from the input box, absent from the thread, and
+    // in a new conversation the welcome screen still showing.
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    final seen = <String?>[];
+    fixture.controller.addListener(
+      () => seen.add(fixture.controller.pendingAdvisorQuestion),
+    );
+
+    await fixture.controller.askAdvisor('  What about my ferritin?  ');
+
+    // Trimmed, so the bubble matches the message that replaces it.
+    expect(seen, contains('What about my ferritin?'));
+    // And gone once the stored message takes over, or the bubble would double.
+    expect(fixture.controller.pendingAdvisorQuestion, isNull);
+    expect(fixture.controller.advisorMessages, hasLength(2));
+  });
+
+  test('a failed question is not left hanging in the thread', () async {
+    // The screen puts the text back in the input box on failure, so a bubble
+    // left behind would be a question the user is looking at in two places.
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    fixture.client.failNext = true;
+
+    await expectLater(
+      fixture.controller.askAdvisor('Doomed.'),
+      throwsA(isA<Object>()),
+    );
+
+    expect(fixture.controller.pendingAdvisorQuestion, isNull);
+    expect(fixture.controller.advisorMessages, isEmpty);
+  });
+
   test('a fresh conversation does not carry the previous one', () async {
     // The whole point of starting one: the model must not answer the new
     // question in the light of the old thread.
@@ -304,6 +341,7 @@ class _Factory extends AiProviderClientFactory {
 
 class _Client implements AiProviderClient {
   final List<ProviderRequest> requests = [];
+  bool failNext = false;
 
   @override
   AiProvider get provider => AiProvider.openai;
@@ -325,6 +363,7 @@ class _Client implements AiProviderClient {
     ProviderActivityCallback? onActivity,
   }) async {
     requests.add(request);
+    if (failNext) throw StateError('provider unavailable');
     final package = jsonDecode(request.contextJson) as Map<String, Object?>;
     final manifest = package['manifest']! as Map<String, Object?>;
     final sections = manifest['sections']! as Map<String, Object?>;
