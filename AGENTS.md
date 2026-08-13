@@ -507,6 +507,24 @@ plan and an advisor turn are different questions and interleaving them makes
 unobservable on the app's most repetitive call. A claim about tokens that no
 trace can confirm is a guess.
 
+**Ask the model for the reference; do not show it to the reader.** The prompts
+demand `section:id` because it forces the model to point at a row that exists
+rather than assert from memory — that pressure is worth keeping. The reference
+itself is a primary key in a private database and helps nobody read a
+paragraph, so `withoutRecordReferences` removes it where model prose becomes
+stored content, in both the advisor and the planner. Removing the token is not
+enough: they arrive in parenthesised lists, and deleting the contents leaves
+`( ; )` mid-sentence. The id shape — `legacy-<hex>` or a full UUID — is the
+whole safety argument for running a regex over prose; `Hinweis: 12 mg` and a
+markdown link must survive it.
+
+**Model answers are markdown, so render them as markdown.** Headings, bold
+labels and bullet lists arrived as a wall of asterisks. Only the assistant's
+half: interpreting the user's own text would mangle a question containing `*`
+or `#`, and they did not write markdown. Links go through the same
+`https`-only guard the citation chips use, so a model writing `javascript:`
+never gets a tap target.
+
 **The release build downloads Gradle, so it can fail for reasons this repo
 does not control.** A dropped connection to `services.gradle.org` lost the
 v0.30.0+50 release outright — `verify` had passed on the same commit and the

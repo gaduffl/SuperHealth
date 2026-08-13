@@ -8,6 +8,7 @@ import '../domain/entities.dart';
 import '../workspace/safe_workspace_service.dart';
 import 'ai_models.dart';
 import 'ai_settings.dart';
+import 'answer_text.dart';
 import 'ai_trace.dart';
 import 'api_key_store.dart';
 import 'health_context_builder.dart';
@@ -314,7 +315,9 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       profileId: profileId,
       conversationId: conversationId,
       role: 'assistant',
-      content: extracted.text,
+      // Cleaned before it is stored, so the reference is gone from the screen,
+      // from an export, and from the history replayed on every later turn.
+      content: withoutRecordReferences(extracted.text),
       citations: response.citations,
       createdAt: DateTime.now(),
     );

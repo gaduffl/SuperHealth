@@ -7,6 +7,7 @@ import '../domain/entities.dart';
 import 'advisor_service.dart';
 import 'ai_models.dart';
 import 'ai_settings.dart';
+import 'answer_text.dart';
 import 'api_key_store.dart';
 import 'health_context_builder.dart';
 import 'ai_trace.dart';
@@ -857,7 +858,11 @@ $_verificationSchemaInstructions
     }
     return LabPlanVerification(
       approved: approved,
-      summary: summary,
+      // The `section:id` references have done their work by the time the text
+      // is parsed: they made the model point at a row rather than assert from
+      // memory. They are a primary key in a private database, so nobody reads
+      // them afterwards.
+      summary: withoutRecordReferences(summary),
       blockingIssues: blockingIssues,
       warnings: warnings,
     );
@@ -875,7 +880,10 @@ $_verificationSchemaInstructions
         'The independent verification $field field cannot contain empty text.',
       );
     }
-    return _dedupeStrings(values);
+    // Emptiness is checked before the references come out, so a line that was
+    // nothing *but* a reference still fails the schema rather than becoming a
+    // silent blank.
+    return _dedupeStrings(values.map(withoutRecordReferences));
   }
 
   List<String> _dedupeStrings(Iterable<String> values) {
@@ -939,7 +947,9 @@ $_verificationSchemaInstructions
       // plan away — the screen says the tradeoff was not recorded and still
       // lists the tests and the price the next tier adds, both of which are
       // derived here rather than taken from the model.
-      final tradeoff = rawTier['tradeoff_versus_next']?.toString().trim() ?? '';
+      final tradeoff = withoutRecordReferences(
+        rawTier['tradeoff_versus_next']?.toString().trim() ?? '',
+      );
       if (tradeoff.isNotEmpty && LabPlan.nextTierAfter(tier.first) != null) {
         tradeoffs[tier.first] = tradeoff;
       }
@@ -1006,10 +1016,12 @@ $_verificationSchemaInstructions
             biomarkerName: biomarker.displayName,
             tier: tier.first,
             priority: priority,
-            rationale: rationale,
+            rationale: withoutRecordReferences(rationale),
             evidenceClass: evidence.first,
             priceEur: biomarker.priceEur,
-            preparation: raw['preparation']?.toString().trim() ?? '',
+            preparation: withoutRecordReferences(
+              raw['preparation']?.toString().trim() ?? '',
+            ),
           ),
         );
       }
@@ -1050,7 +1062,9 @@ $_verificationSchemaInstructions
     );
     final rawWarnings = decoded['warnings'];
     final warnings = rawWarnings is List
-        ? rawWarnings.map((item) => item.toString()).toList(growable: false)
+        ? rawWarnings
+              .map((item) => withoutRecordReferences(item.toString()))
+              .toList(growable: false)
         : const <String>[];
     return LabPlanGeneration(
       plan: plan,
