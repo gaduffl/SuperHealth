@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -582,12 +583,12 @@ class _ThreadView extends StatelessWidget {
       itemCount: messages.length + (pending == null ? 0 : 1),
       itemBuilder: (context, index) {
         if (index < messages.length) {
-          return _MessageBubble(message: messages[index]);
+          return AdvisorMessageBubble(message: messages[index]);
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _MessageBubble(
+            AdvisorMessageBubble(
               message: AdvisorMessage(
                 id: 'pending',
                 profileId: controller.activeProfile?.id ?? '',
@@ -719,8 +720,13 @@ class _AdvisorWelcome extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
+/// One chat bubble.
+///
+/// Public so a widget test can pump it alone: the screen around it needs a
+/// database-backed controller, and `sqflite` cannot be awaited under the fake
+/// clock a `testWidgets` body runs on.
+class AdvisorMessageBubble extends StatelessWidget {
+  const AdvisorMessageBubble({required this.message, super.key});
 
   final AdvisorMessage message;
 
@@ -746,7 +752,15 @@ class _MessageBubble extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SelectableText(message.content),
+            // The model writes markdown — headings, bold labels, bullet lists,
+            // the odd table — and showing the source made a structured answer
+            // read as a wall of asterisks. Only its half of the conversation:
+            // the user's own text is rendered as typed, because interpreting
+            // it would mangle anything containing a `*` or a `#`.
+            if (user)
+              SelectableText(message.content)
+            else
+              _AnswerMarkdown(text: message.content),
             if (message.citations.isNotEmpty) ...[
               const SizedBox(height: 10),
               Wrap(
@@ -767,6 +781,68 @@ class _MessageBubble extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Renders one answer's markdown inside a chat bubble.
+///
+/// Selectable, because a lab value or a supplement name is exactly the kind of
+/// thing that gets copied out. Links open through the same `https`-only guard
+/// the citation chips use — a model writing a `file:` or `javascript:` link
+/// must not get a tap target for it.
+class _AnswerMarkdown extends StatelessWidget {
+  const _AnswerMarkdown({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final body = theme.textTheme.bodyMedium;
+    return MarkdownBody(
+      data: text,
+      selectable: true,
+      onTapLink: (_, href, _) {
+        if (href == null) return;
+        final uri = _safeWebUri(href);
+        if (uri != null) launchUrl(uri, mode: LaunchMode.externalApplication);
+      },
+      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+        p: body,
+        listBullet: body,
+        // The bubble is already a visual block, so a heading inside one needs
+        // to separate sections without shouting at the size the page styles
+        // would use.
+        h1: theme.textTheme.titleLarge,
+        h2: theme.textTheme.titleMedium,
+        h3: theme.textTheme.titleSmall,
+        h4: theme.textTheme.titleSmall,
+        h5: theme.textTheme.titleSmall,
+        h6: theme.textTheme.titleSmall,
+        code: theme.textTheme.bodySmall?.copyWith(
+          fontFamily: 'monospace',
+          backgroundColor: scheme.surfaceContainerHighest,
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        blockquoteDecoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        a: body?.copyWith(
+          color: scheme.primary,
+          decoration: TextDecoration.underline,
+        ),
+        tableBorder: TableBorder.all(color: scheme.outlineVariant, width: 1),
+        tableCellsPadding: const EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: 4,
         ),
       ),
     );

@@ -101,6 +101,51 @@ void main() {
     },
   );
 
+  test('a plan stores prose without the record keys it cited', () async {
+    // The prompts ask for `section:id` so the model points at a row instead of
+    // asserting from memory. The reference has done its work by the time the
+    // plan is stored — it is a primary key in a private database.
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    const cited = 'measurements:legacy-627e46b9df34d96f7d50442002d94674';
+    final client = _Client(
+      (request) => ProviderResponse(
+        text: jsonEncode(
+          request.userPrompt.contains('Independently verify')
+              ? _verificationBody(
+                  request,
+                  warnings: const ['Biotin kann stören ($cited).'],
+                )
+              : _labBody(
+                  request,
+                  itemPatch: const {
+                    'rationale': 'Zuletzt erhöht ($cited).',
+                    'preparation': 'Nüchtern ($cited)',
+                  },
+                  warnings: const ['Preise unbekannt ($cited).'],
+                  tradeoffs: const {'core': 'Kann warten ($cited).'},
+                ),
+        ),
+        raw: const {},
+      ),
+    );
+
+    final result = await _planner(
+      fixture,
+      client,
+    ).generate(profileId: fixture.profile.id, settings: _settings);
+
+    for (final item in result.plan.items) {
+      expect(item.rationale, isNot(contains('legacy-')));
+      expect(item.preparation, isNot(contains('legacy-')));
+    }
+    expect(result.plan.tradeoffFor(LabTier.core), 'Kann warten.');
+    expect(result.warnings.join(' '), isNot(contains('legacy-')));
+    expect(result.verification.warnings.join(' '), isNot(contains('legacy-')));
+    // What remains is the sentence, not a stump of one.
+    expect(result.plan.items.first.rationale, 'Zuletzt erhöht.');
+  });
+
   test('every advisor turn routes to one prompt cache', () async {
     // The advisor re-sends the whole health context on every turn, so this is
     // where a warm prefix is worth the most in the app — more than the lab
