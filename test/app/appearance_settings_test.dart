@@ -195,13 +195,49 @@ void main() {
     expect(calm.colorScheme.primary, isNot(standard.colorScheme.primary));
     expect(
       calm.filledButtonTheme.style?.minimumSize?.resolve({}),
-      const Size.fromHeight(60),
+      const Size(0, 60),
     );
     expect(standard.filledButtonTheme.style?.minimumSize, isNull);
     expect(
       calm.visualDensity.vertical,
       greaterThan(standard.visualDensity.vertical),
     );
+  });
+
+  testWidgets('a calm button in a list row leaves the title its width', (
+    tester,
+  ) async {
+    // Size.fromHeight(60) is Size(double.infinity, 60) — an infinite *width*
+    // minimum. Inside a column the width is already tight so it looks right;
+    // in a ListTile's trailing slot, laid out loose, the button took the whole
+    // row and the title wrapped to one character per line. Settings looked
+    // broken in easy mode for exactly this reason.
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(
+          brightness: Brightness.light,
+          settings: AppearanceSettings.defaults,
+          calm: true,
+        ),
+        home: Scaffold(
+          body: ListTile(
+            leading: const Icon(Icons.notifications_active_outlined),
+            title: const Text('Send a test notification'),
+            subtitle: const Text('Posts one now.'),
+            trailing: FilledButton.tonal(
+              onPressed: () {},
+              child: const Text('Send'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final title = tester.getSize(find.text('Send a test notification'));
+    final button = tester.getSize(find.byType(FilledButton));
+    expect(button.height, greaterThanOrEqualTo(60));
+    expect(button.width, lessThan(200));
+    expect(title.width, greaterThan(300));
   });
 
   test('easy mode raises the text-size floor and never lowers a ceiling', () {

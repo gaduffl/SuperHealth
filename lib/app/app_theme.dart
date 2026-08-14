@@ -124,7 +124,14 @@ ThemeData _softened(ThemeData theme) {
   );
   final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(18));
   ButtonStyle large(ButtonStyle style) => style.copyWith(
-    minimumSize: const WidgetStatePropertyAll(Size.fromHeight(60)),
+    // Size(0, 60), never Size.fromHeight(60) — that constructor means
+    // Size(double.infinity, 60), an *infinite width* minimum. In a column it
+    // looks identical, because the column already tightens the width. In a
+    // slot laid out with loose constraints — a ListTile's trailing — the
+    // button claimed the whole row and squeezed the tile's title down to one
+    // character per line. A width floor is not what "bigger buttons" means;
+    // callers that want full width wrap the button themselves.
+    minimumSize: const WidgetStatePropertyAll(Size(0, 60)),
     padding: const WidgetStatePropertyAll(
       EdgeInsets.symmetric(horizontal: 22, vertical: 14),
     ),
