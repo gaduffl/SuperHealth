@@ -211,17 +211,27 @@ Return exactly one JSON object and no markdown. Use this shape:
 }
 ITEM is {"biomarker_id":"exact catalog id","biomarker_name":"exact catalog display name","priority":1,"rationale":"profile-specific concise rationale","evidence_class":"guideline|longevity|experimental|unclassified","preparation":"concise preparation/timing note"}.
 
-Each biomarker must appear exactly once, in the first tier where it is added. The app makes tiers cumulative: Advanced includes Core, and Comprehensive includes both. Use only biomarkers present in biomarker_catalog. Never invent prices or identifiers; the app resolves prices from the catalog. Put the highest-value, most actionable checks in Core. Include meaningful additions in all three tiers. Account for existing results, result age, conditions, medicines, supplements, goals, symptoms, and duplicate/redundant tests. This is a draft checklist, not a diagnosis.
+Each biomarker must appear exactly once, in the first tier where it is added. The app makes tiers cumulative: Advanced includes Core, and Comprehensive includes both. Use only biomarkers present in biomarker_catalog. Never invent prices or identifiers; the app resolves prices from the catalog. Put the highest-value, most actionable checks in Core. Include meaningful additions in all three tiers. Account for existing results, result age, conditions, medicines, supplements, goals, symptoms, and duplicate/redundant tests. Treat the result as a draft checklist rather than a diagnosis, and do not write that anywhere in the output — the app says it once, on the screen, under every plan.
 
-tradeoff_versus_next explains, for the two cheaper tiers, why the tests the next
-tier up adds were judged less urgent than the ones already included — 2 to 4
-German sentences, naming the notable omitted tests and giving the reason each
-can wait for this profile (recent enough result, no symptom pointing at it,
-nothing would change management, weaker evidence class). Do not simply re-list
-the omitted tests: the app already shows the reader exactly which tests are
-missing and what the extra tier costs. Say what the reader loses by stopping
-here. Comprehensive adds nothing beyond itself, so its value is the empty
-string.
+Every field is read on a phone, one test at a time. Write for that.
+rationale is one short German sentence naming why this test, for this profile,
+now — 12 words is plenty, and it must be specific enough that it could not be
+copied to another person's plan.
+preparation is filled in only when preparation actually changes the result
+(fasting, time of day, pausing a supplement, cycle day). Otherwise it is the
+empty string; "no special preparation" is noise on every row.
+warnings holds only risks that are specific to this profile and that the reader
+can act on. Never a general disclaimer, never a reminder to consult a doctor,
+never a note that lab values need interpretation. An empty array is the normal
+case, and a plan whose warnings would fit any person alive has none.
+
+tradeoff_versus_next explains, for the two cheaper tiers, what the reader gives
+up by stopping here — at most two short German sentences. Name the one or two
+tests that matter most among those the next tier adds, and why each can wait for
+this profile (recent enough result, no symptom pointing at it, nothing would
+change management, weaker evidence class). Do not re-list the omitted tests: the
+app already shows exactly which are missing and what the extra tier costs.
+Comprehensive adds nothing beyond itself, so its value is the empty string.
 ''';
 
   static const _verificationSchemaInstructions = '''
@@ -231,14 +241,21 @@ Approve only if the candidate is safe, coherent, appropriately prioritised for
 this profile, and supported by the complete supplied health context.
 {
   "approved": true,
-  "summary": "concise German review summary",
+  "summary": "German review summary, at most two short sentences",
   "blocking_issues": ["specific issue requiring a new plan"],
-  "warnings": ["non-blocking caveat"],
+  "warnings": ["non-blocking caveat, specific to this profile"],
   "context_receipt": {"sha256":"exact package hash","file_sha256":"exact supplied file hash","record_count":123,"reviewed_sections":["every manifest section name"]}
 }
 approved must be a JSON boolean. summary must be non-empty. blocking_issues and
 warnings must be JSON string arrays. If approved is true, blocking_issues must
 be empty. A rejected plan remains a draft and cannot be saved.
+
+Every string here is shown to the person who ordered the plan, so keep each one
+to a single specific sentence. A warning that would be equally true for any
+person alive — that lab values need interpretation, that a doctor should be
+consulted, that this is not a diagnosis — is not a warning; leave it out. The
+app carries that line permanently, and repeating it here hides the warnings that
+are about this profile.
 
 Each tier carries a "tradeoff_versus_next" explaining why the tests the next
 tier up adds can wait. Review those claims as clinical assertions about this

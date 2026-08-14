@@ -25,6 +25,8 @@ class FeatureVisibility {
     required this.deviceBackup,
     required this.pastDayEditing,
     required this.remindersOnByDefault,
+    required this.calmShell,
+    required this.briefAnswers,
   });
 
   /// The full app: every screen, every setting.
@@ -42,7 +44,9 @@ class FeatureVisibility {
       maintenanceTools = true,
       deviceBackup = true,
       pastDayEditing = true,
-      remindersOnByDefault = false;
+      remindersOnByDefault = false,
+      calmShell = false,
+      briefAnswers = false;
 
   /// The simplified app.
   const FeatureVisibility.easy()
@@ -67,7 +71,9 @@ class FeatureVisibility {
       // The one thing easy mode turns *on*. A reminder that defaults to off is
       // why a schedule produces nothing, and hiding the switch instead of
       // setting it would remove the feature's whole point.
-      remindersOnByDefault = true;
+      remindersOnByDefault = true,
+      calmShell = true,
+      briefAnswers = true;
 
   factory FeatureVisibility.forProfile({required bool easyMode}) => easyMode
       ? const FeatureVisibility.easy()
@@ -93,6 +99,23 @@ class FeatureVisibility {
   final bool pastDayEditing;
 
   final bool remindersOnByDefault;
+
+  /// Whether the shell is reduced to the few things this profile actually does.
+  ///
+  /// Hiding sub-tabs made the screens smaller but left the app the same shape:
+  /// five dense destinations, a wall of tiles on the one that opens first. This
+  /// is the other half — a calm home with a handful of large targets, a shorter
+  /// bottom bar, and a soft surface — for someone who wants to take today's
+  /// doses and ask a question, not to run a health project.
+  final bool calmShell;
+
+  /// Whether the AI is asked for the shortest answer that is still true.
+  ///
+  /// Length is not thoroughness. The model still reads the complete evidence
+  /// package and still names a real risk; it just stops narrating its process
+  /// and stops reprinting the disclaimer the app already carries under every
+  /// answer. For this profile it also drops the jargon.
+  final bool briefAnswers;
 
   /// Whether the Today screen leads with the lab-report shortcut.
   ///

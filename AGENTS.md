@@ -567,6 +567,24 @@ advisor had no `promptCacheKey` at all. Both now key on the catalog fingerprint
 through `ProviderRequest.cacheKey`, which is bounded by construction — a key one
 character over the limit fails the whole call before a token.
 
+**Forbidding boilerplate in a prompt obliges the app to say it.** The advisor
+and planner prompts now ban the "consult your doctor", "not a diagnosis",
+"values need interpretation" family outright, because five caveats that are true
+for everyone alive are how a real one — this interaction, this value, this
+profile — gets skimmed past. That is only defensible because
+`StandingSafetyNotice` renders permanently under the composer and under every
+plan. Never remove a statement from the model's output without giving it a fixed
+home in the UI first, and never remove the notice while the prompts still ban
+the sentence.
+
+**"Be brief" and "be less careful" are different instructions.** The brevity
+paragraphs govern preamble, restating the question, closing offers of help, and
+repeated disclaimers — never the safety rules, which sit above them unchanged
+and are asserted in `test/ai/answer_brevity_test.dart`. `briefAnswers` adds the
+easy-mode plain-language rule on top; it does not subtract from anything. The
+coverage receipt is exempted explicitly, or the model trades it away for length
+and every answer fails validation instead of being short.
+
 **Never discard a provider error payload you do not recognise.** The OpenAI
 handler read only `event['message']`, so a nested shape produced the literal
 string "OpenAI stream error." with the real reason thrown away — and
@@ -665,6 +683,31 @@ scattered checks drift until the mode means something different in each corner.
 It is not only subtraction: easy mode turns reminders *on* by default and leads
 Today with the lab-report shortcut, since hiding screens makes an app smaller
 rather than easier.
+
+**Hiding a sub-tab makes a screen smaller; it does not make the app simpler.**
+Easy mode spent a long release cycle switching individual features off while the
+shell kept its five dense destinations and Today kept its tile wall — so the app
+still *looked* like a health project, which is exactly what the person it is for
+did not want. `calmShell` is the flag for the other half: `CalmHomeScreen`
+instead of `DashboardScreen`, `shellTabsFor` dropping the supplements tab,
+`buildAppTheme(calm: true)` for the blossom palette and 60-point buttons. When a
+mode is meant to feel different, something structural has to change, not one
+more boolean on a shared screen.
+
+**The reduced bottom bar keeps canonical indices.** `shellTabsFor` returns
+*which* of the five canonical tabs a mode shows, in order — never a second
+numbering. `tabIndexForSection` and every deep link that drives it therefore
+mean exactly one thing in both modes, and the shell translates once, at the bar.
+Renumbering per mode is how a shortcut ends up opening Settings when it meant
+the advisor.
+
+**Material 3 leaves `fontSize` unset on its text roles.** `TextTheme.apply
+(fontSizeFactor:)` asserts that every style carries an explicit size, and the
+default theme's do not — it throws while building the theme. Even reached
+role-by-role there is nothing to scale, because the sizes resolve inside each
+widget. Text size is a media-query concern: `calmTextScaler` raises the floor
+with `TextScaler.clamp(minScaleFactor:)`, which also leaves a phone already set
+to large text alone instead of shrinking it back to a designer's number.
 
 **A flag that removes features defaults to off.** `Profile.easyMode` defaults to
 `false` even though new profiles start simple, because a `Profile` is rebuilt

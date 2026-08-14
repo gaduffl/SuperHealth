@@ -3,6 +3,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../ui/advisor_screen.dart';
+import '../ui/blossom_background.dart';
+import '../ui/calm_home_screen.dart';
 import '../ui/common.dart';
 import '../ui/dashboard_screen.dart';
 import '../ui/dialogs.dart';
@@ -21,7 +23,12 @@ class SuperHealthApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final appearance = context.watch<AppController>().appearanceSettings;
+    final controller = context.watch<AppController>();
+    final appearance = controller.appearanceSettings;
+    // Read from the profile rather than a device setting: two people share one
+    // device, and the calm look belongs to whoever is signed in, not to the
+    // phone. Switching profiles therefore rebuilds both themes.
+    final calm = controller.visibility.calmShell;
     return MaterialApp(
       onGenerateTitle: (context) => AppLocalizations.of(context).appName,
       debugShowCheckedModeBanner: false,
@@ -34,11 +41,27 @@ class SuperHealthApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       themeMode: appearance.themeMode.materialThemeMode,
-      theme: buildAppTheme(brightness: Brightness.light, settings: appearance),
+      theme: buildAppTheme(
+        brightness: Brightness.light,
+        settings: appearance,
+        calm: calm,
+      ),
       darkTheme: buildAppTheme(
         brightness: Brightness.dark,
         settings: appearance,
+        calm: calm,
       ),
+      builder: calm
+          ? (context, child) {
+              final media = MediaQuery.of(context);
+              return MediaQuery(
+                data: media.copyWith(
+                  textScaler: calmTextScaler(media.textScaler),
+                ),
+                child: child!,
+              );
+            }
+          : null,
       home: const _AppGate(),
     );
   }
@@ -208,7 +231,7 @@ class _HomeShellBody extends StatelessWidget {
   static List<Widget> _screensFor(bool easyMode) {
     final key = ValueKey(easyMode);
     return [
-      const DashboardScreen(),
+      easyMode ? const CalmHomeScreen() : const DashboardScreen(),
       TrackingScreen(key: key),
       HealthScreen(key: key),
       const AdvisorScreen(),
@@ -221,7 +244,13 @@ class _HomeShellBody extends StatelessWidget {
     final controller = context.watch<AppController>();
     final navigation = context.watch<ShellNavigation>();
     final strings = AppLocalizations.of(context);
+    final visibility = controller.visibility;
     final index = navigation.tabIndex;
+    final tabs = shellTabsFor(easyMode: visibility.calmShell);
+    // A destination that is not in the bar can only be reached by a deep link,
+    // and none of easy mode's shortcuts issue one. Falling back to Today keeps
+    // the highlight honest rather than leaving the bar pointing at nothing.
+    final barIndex = tabs.contains(index) ? tabs.indexOf(index) : 0;
     final titles = [
       strings.today,
       strings.supplements,
@@ -229,8 +258,35 @@ class _HomeShellBody extends StatelessWidget {
       strings.advisor,
       strings.settings,
     ];
+    final items = [
+      BottomNavigationBarItem(icon: Icon(Icons.today), label: strings.today),
+      BottomNavigationBarItem(
+        icon: Icon(Icons.medication),
+        label: strings.supplements,
+      ),
+      BottomNavigationBarItem(
+        icon: Icon(Icons.monitor_heart),
+        label: strings.health,
+      ),
+      BottomNavigationBarItem(
+        icon: Icon(Icons.psychology),
+        label: strings.advisor,
+      ),
+      BottomNavigationBarItem(
+        icon: Icon(Icons.settings),
+        label: strings.settings,
+      ),
+    ];
+    final body = IndexedStack(
+      index: index,
+      children: _screensFor(controller.activeProfile?.easyMode ?? true),
+    );
     return Scaffold(
-      endDrawer: const Drawer(child: SafeArea(child: StockOverviewPanel())),
+      // The stock drawer counts what is left in a tub. Easy mode does not
+      // track stock at all, so the button opened a permanently empty panel.
+      endDrawer: visibility.stockManagement
+          ? const Drawer(child: SafeArea(child: StockOverviewPanel()))
+          : null,
       appBar: AppBar(
         titleSpacing: 20,
         title: Column(
@@ -247,13 +303,14 @@ class _HomeShellBody extends StatelessWidget {
           ],
         ),
         actions: [
-          Builder(
-            builder: (scaffoldContext) => IconButton(
-              tooltip: strings.pick('Stock overview', 'Bestandsübersicht'),
-              onPressed: () => Scaffold.of(scaffoldContext).openEndDrawer(),
-              icon: const Icon(Icons.inventory_2_outlined),
+          if (visibility.stockManagement)
+            Builder(
+              builder: (scaffoldContext) => IconButton(
+                tooltip: strings.pick('Stock overview', 'Bestandsübersicht'),
+                onPressed: () => Scaffold.of(scaffoldContext).openEndDrawer(),
+                icon: const Icon(Icons.inventory_2_outlined),
+              ),
             ),
-          ),
           PopupMenuButton<String>(
             tooltip: strings.switchProfile,
             icon: CircleAvatar(
@@ -312,36 +369,12 @@ class _HomeShellBody extends StatelessWidget {
               )
             : null,
       ),
-      body: IndexedStack(
-        index: index,
-        children: _screensFor(controller.activeProfile?.easyMode ?? true),
-      ),
+      body: visibility.calmShell ? BlossomBackground(child: body) : body,
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: index,
-        onTap: navigation.selectTab,
+        currentIndex: barIndex,
+        onTap: (position) => navigation.selectTab(tabs[position]),
         type: BottomNavigationBarType.fixed,
-        items: [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.today),
-            label: strings.today,
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.medication),
-            label: strings.supplements,
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.monitor_heart),
-            label: strings.health,
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.psychology),
-            label: strings.advisor,
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings),
-            label: strings.settings,
-          ),
-        ],
+        items: [for (final tab in tabs) items[tab]],
       ),
     );
   }

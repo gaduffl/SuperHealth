@@ -53,6 +53,19 @@ int tabIndexForSection(AppSection section) => switch (section) {
   AppSection.settings => 4,
 };
 
+/// The destinations a mode puts in the bottom bar, as canonical tab indices.
+///
+/// Easy mode drops the supplements tab. Setting products up is something a
+/// person does a few times a year, so it does not need a permanent seat beside
+/// the daily loop; its entry point moves to a button on the calm home.
+///
+/// The indices stay canonical in both modes, which is the point of returning
+/// them rather than a second numbering: [tabIndexForSection] and every deep
+/// link that drives it keep meaning exactly one thing, and only the bar is
+/// shorter.
+List<int> shellTabsFor({required bool easyMode}) =>
+    easyMode ? const [0, 2, 3, 4] : const [0, 1, 2, 3, 4];
+
 /// Which tab inside the supplements screen owns a section.
 int? supplementsTabForSection(AppSection section) => switch (section) {
   AppSection.catalog => 0,

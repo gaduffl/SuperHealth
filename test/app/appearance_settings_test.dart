@@ -131,46 +131,89 @@ void main() {
       for (final colorMode in AppColorMode.values) {
         for (final highContrast in [false, true]) {
           for (final brightness in Brightness.values) {
-            final theme = buildAppTheme(
-              brightness: brightness,
-              settings: AppearanceSettings(
-                palette: palette,
-                colorMode: colorMode,
-                highContrast: highContrast,
-              ),
-            );
-            final scheme = theme.colorScheme;
-            final label =
-                '${palette.name}/${colorMode.name}/'
-                '${brightness.name}/highContrast=$highContrast';
+            for (final calm in [false, true]) {
+              final theme = buildAppTheme(
+                brightness: brightness,
+                settings: AppearanceSettings(
+                  palette: palette,
+                  colorMode: colorMode,
+                  highContrast: highContrast,
+                ),
+                calm: calm,
+              );
+              final scheme = theme.colorScheme;
+              final label =
+                  '${palette.name}/${colorMode.name}/${brightness.name}/'
+                  'highContrast=$highContrast/calm=$calm';
 
-            expect(
-              colorContrastRatio(scheme.primary, scheme.onPrimary),
-              greaterThanOrEqualTo(4.5),
-              reason: '$label primary/onPrimary',
-            );
-            expect(
-              colorContrastRatio(scheme.error, scheme.onError),
-              greaterThanOrEqualTo(4.5),
-              reason: '$label error/onError',
-            );
-            expect(
-              colorContrastRatio(scheme.surface, scheme.onSurface),
-              greaterThanOrEqualTo(4.5),
-              reason: '$label surface/onSurface',
-            );
-            expect(
-              colorContrastRatio(
-                scheme.primaryContainer,
-                scheme.onPrimaryContainer,
-              ),
-              greaterThanOrEqualTo(4.5),
-              reason: '$label primaryContainer/onPrimaryContainer',
-            );
+              expect(
+                colorContrastRatio(scheme.primary, scheme.onPrimary),
+                greaterThanOrEqualTo(4.5),
+                reason: '$label primary/onPrimary',
+              );
+              expect(
+                colorContrastRatio(scheme.error, scheme.onError),
+                greaterThanOrEqualTo(4.5),
+                reason: '$label error/onError',
+              );
+              expect(
+                colorContrastRatio(scheme.surface, scheme.onSurface),
+                greaterThanOrEqualTo(4.5),
+                reason: '$label surface/onSurface',
+              );
+              expect(
+                colorContrastRatio(
+                  scheme.primaryContainer,
+                  scheme.onPrimaryContainer,
+                ),
+                greaterThanOrEqualTo(4.5),
+                reason: '$label primaryContainer/onPrimaryContainer',
+              );
+            }
           }
         }
       }
     }
+  });
+
+  test('the calm theme grows the targets without losing the settings', () {
+    // Easy mode is a per-profile look layered on top of device-wide choices,
+    // so a calm profile on a high-contrast device must still get the stronger
+    // outlines — the two decisions answer different questions.
+    const settings = AppearanceSettings(highContrast: true);
+    final standard = buildAppTheme(
+      brightness: Brightness.light,
+      settings: settings,
+    );
+    final calm = buildAppTheme(
+      brightness: Brightness.light,
+      settings: settings,
+      calm: true,
+    );
+
+    expect(calm.colorScheme.outline, calm.colorScheme.onSurface);
+    expect(calm.colorScheme.primary, isNot(standard.colorScheme.primary));
+    expect(
+      calm.filledButtonTheme.style?.minimumSize?.resolve({}),
+      const Size.fromHeight(60),
+    );
+    expect(standard.filledButtonTheme.style?.minimumSize, isNull);
+    expect(
+      calm.visualDensity.vertical,
+      greaterThan(standard.visualDensity.vertical),
+    );
+  });
+
+  test('easy mode raises the text-size floor and never lowers a ceiling', () {
+    // A phone already set to large text has been told something about its
+    // owner's eyes. Replacing that with a designer's factor would make the
+    // simple mode the hardest one to read.
+    expect(
+      calmTextScaler(TextScaler.noScaling).scale(16),
+      closeTo(16 * calmTextScaleFloor, 0.001),
+    );
+    expect(calmTextScaler(const TextScaler.linear(2)).scale(16), 32);
+    expect(calmTextScaleFloor, greaterThan(1));
   });
 
   test('uses the old Biomarkers blue theme and elevated card treatment', () {
