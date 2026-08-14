@@ -711,6 +711,16 @@ mean exactly one thing in both modes, and the shell translates once, at the bar.
 Renumbering per mode is how a shortcut ends up opening Settings when it meant
 the advisor.
 
+**`Size.fromHeight(h)` is `Size(double.infinity, h)`.** As a `ButtonStyle
+.minimumSize` it demands the full available width, not a height floor. In a
+column it looks correct, because the column has already tightened the width —
+so easy mode's 60-point buttons looked fine on the calm home and broke Settings,
+where a `ListTile`'s trailing slot is laid out loose: the button took the whole
+row and the title wrapped one character per line. Use `Size(0, h)` for a height
+floor and let a caller that wants full width wrap the button itself. Any
+theme-level sizing needs a widget test in a *loose* slot, not only the tight one
+it was designed against.
+
 **Material 3 leaves `fontSize` unset on its text roles.** `TextTheme.apply
 (fontSizeFactor:)` asserts that every style carries an explicit size, and the
 default theme's do not — it throws while building the theme. Even reached
