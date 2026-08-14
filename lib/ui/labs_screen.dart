@@ -2734,6 +2734,13 @@ class _PlanTiers extends StatelessWidget {
               );
             },
           ),
+        // Said here, once, so the planner does not have to say it in every
+        // rationale and every warning. Rendered for the draft card and the
+        // saved plan alike, because both are read as advice.
+        const Padding(
+          padding: EdgeInsets.only(top: 4, bottom: 4),
+          child: StandingSafetyNotice(),
+        ),
       ],
     );
   }

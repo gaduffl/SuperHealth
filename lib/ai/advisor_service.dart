@@ -130,7 +130,27 @@ Provider-hosted code execution may be used for calculations and analysis. Files 
 You may read text files supplied inside <advisor_workspace>. To propose a persistent file change, append one fenced block per file using the language superhealth-file-proposal. The block must contain only JSON: {"operation":"create|replace|delete","path":"relative/path.ext","summary":"what and why","content":"complete new UTF-8 content"}. Omit content only for delete. Do not claim the proposal was applied; the user must review and approve it in the app. Never use this mechanism for database files, health-record mutations, keys, or tokens.
 
 Be direct and useful. State what is known from the profile, what is inferred, and what remains unknown.
+
+Answer style: short. Open with the answer itself in one or two sentences, then at most a handful of brief bullets. No preamble, no restating the question, no announcing what you are about to do, no closing offer of further help, no summary of a summary.
+
+Do not pad an answer with boilerplate. No general disclaimers, no "consult your doctor" sign-off, no reminder that you are not a doctor, no caveat that would be equally true for every person alive. The app states that once, permanently, under every answer, and repeating it each time buries the one warning that is specific and real. The safety rules above are unchanged: name a genuine red flag, a real interaction, or a contraindication for this profile plainly, once, where it belongs — and then stop.
+
+The context coverage receipt is bookkeeping, not part of the answer, and does not count towards its length.
 ''';
+
+  /// The extra style rule for a profile in easy mode.
+  ///
+  /// Kept apart from [systemPrompt] rather than folded into it because the two
+  /// say different things: the paragraph above is about not wasting the
+  /// reader's time, this one is about a reader who did not want to be reading
+  /// about their health in the first place. Neither relaxes a safety rule.
+  static const simpleModeStyle = '''
+This profile uses SuperHealth in simple mode. Answer in the language of the question, in under 120 words: one short paragraph, then at most three short bullets. Everyday words, no clinical jargon, no tables, no source lists, no numbers unless the number is the point. If something genuinely needs a doctor, say so in one plain sentence.
+''';
+
+  /// The system prompt for a turn, including the easy-mode style rule.
+  static String systemPromptFor({required bool brief}) =>
+      brief ? '$systemPrompt\n$simpleModeStyle' : systemPrompt;
 
   Future<List<AiModelInfo>> models(AiProvider provider) async {
     final key = await _requiredKey(provider);
@@ -142,6 +162,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
     required String conversationId,
     required String question,
     required AiTaskSettings settings,
+    bool brief = false,
   }) async {
     final trimmed = question.trim();
     if (trimmed.isEmpty) throw ArgumentError('Question cannot be empty.');
@@ -153,6 +174,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       'code_execution': settings.codeExecution,
       'conversation_id': conversationId,
       'question_chars': trimmed.length,
+      'brief': brief,
     });
     try {
       return await _ask(
@@ -160,6 +182,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
         conversationId: conversationId,
         question: trimmed,
         settings: settings,
+        brief: brief,
       );
     } on Object catch (error, stack) {
       await _trace.failure('run_failed', error, stack);
@@ -173,8 +196,10 @@ Be direct and useful. State what is known from the profile, what is inferred, an
     required String conversationId,
     required String question,
     required AiTaskSettings settings,
+    required bool brief,
   }) async {
     final trimmed = question;
+    final prompt = systemPromptFor(brief: brief);
     final key = await _requiredKey(settings.provider);
     final context = await _contextBuilder.build(profileId);
     await _trace.event('context_built', {
@@ -218,7 +243,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
       capabilities: capabilities,
       maxOutputTokens: maxOutputTokens,
       additionalInputTokens: _estimatedTokens(
-        '$systemPrompt\n$trimmed$promptAppendix\n'
+        '$prompt\n$trimmed$promptAppendix\n'
         '${[for (final turn in history) turn.content].join('\n')}',
       ),
       measuredContextTokens: await client.countContextTokens(
@@ -247,7 +272,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
 
     final request = ProviderRequest(
       model: settings.model,
-      systemPrompt: systemPrompt,
+      systemPrompt: prompt,
       userPrompt: '$trimmed$promptAppendix',
       contextJson: context.json,
       history: history,
@@ -275,7 +300,7 @@ Be direct and useful. State what is known from the profile, what is inferred, an
           key,
           ProviderRequest(
             model: settings.model,
-            systemPrompt: systemPrompt,
+            systemPrompt: prompt,
             userPrompt:
                 'Audit and repair the prior answer against every section in the '
                 'complete evidence package. Validation failed: ${error.message}\n\n'

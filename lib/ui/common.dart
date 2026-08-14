@@ -185,6 +185,49 @@ class EmptyState extends StatelessWidget {
   );
 }
 
+/// The one place SuperHealth says it is not a doctor.
+///
+/// It used to be said by the model instead, which meant it was said in every
+/// answer, in slightly different words each time, alongside three or four other
+/// caveats that were equally true for everyone. That is how a real warning —
+/// this interaction, this value, this profile — gets skimmed past. The prompts
+/// now forbid the boilerplate outright, which is only defensible because the
+/// statement lives here permanently, under every answer and every plan.
+class StandingSafetyNotice extends StatelessWidget {
+  const StandingSafetyNotice({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          Icons.info_outline,
+          size: 14,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            strings.pick(
+              'SuperHealth is not a doctor. Get medical care for anything '
+                  'severe, sudden, or worrying.',
+              'SuperHealth ist kein Arzt. Bei starken, plötzlichen oder '
+                  'beunruhigenden Beschwerden ärztliche Hilfe holen.',
+            ),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class MetricCard extends StatelessWidget {
   const MetricCard({
     required this.label,

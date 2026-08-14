@@ -5,11 +5,18 @@ import 'package:flutter/material.dart';
 import 'appearance_settings.dart';
 
 /// Builds SuperHealth's deterministic Material 3 themes from device settings.
+///
+/// [calm] is easy mode's presentation: a blossom palette and larger targets.
+/// It is a per-profile decision rather than a device one, so switching to an
+/// easy-mode profile changes the whole app's look — which is the point. Every
+/// device-wide choice still applies on top: high contrast still strengthens
+/// text, and the colour-blind-safe mode still swaps red for amber.
 ThemeData buildAppTheme({
   required Brightness brightness,
   required AppearanceSettings settings,
+  bool calm = false,
 }) {
-  final scheme = _colorScheme(brightness, settings);
+  final scheme = _colorScheme(brightness, settings, calm: calm);
   final outline = settings.highContrast ? scheme.onSurface : scheme.outline;
   final outlineVariant = settings.highContrast
       ? scheme.onSurfaceVariant
@@ -20,7 +27,7 @@ ThemeData buildAppTheme({
   );
 
   final base = ThemeData(useMaterial3: true, colorScheme: scheme);
-  return base.copyWith(
+  final theme = base.copyWith(
     scaffoldBackgroundColor: scheme.surface,
     focusColor: scheme.primary.withValues(
       alpha: settings.highContrast ? 0.30 : 0.18,
@@ -103,12 +110,82 @@ ThemeData buildAppTheme({
       ),
     ),
   );
+  return calm ? _softened(theme) : theme;
 }
 
-ColorScheme _colorScheme(Brightness brightness, AppearanceSettings settings) {
+/// The size half of easy mode.
+///
+/// Nothing here hides anything — it makes what is left bigger. A 60-point
+/// button is reachable without aiming, and a control that is easy to hit is
+/// one fewer reason to put the phone down and ask someone else to do it.
+ThemeData _softened(ThemeData theme) {
+  final label = theme.textTheme.titleMedium?.copyWith(
+    fontWeight: FontWeight.w700,
+  );
+  final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(18));
+  ButtonStyle large(ButtonStyle style) => style.copyWith(
+    minimumSize: const WidgetStatePropertyAll(Size.fromHeight(60)),
+    padding: const WidgetStatePropertyAll(
+      EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+    ),
+    textStyle: WidgetStatePropertyAll(label),
+    shape: WidgetStatePropertyAll(shape),
+  );
+  return theme.copyWith(
+    // Every Material control that honours density grows with it, so rows,
+    // list tiles, and checkboxes stay in proportion with the buttons.
+    visualDensity: const VisualDensity(horizontal: 1, vertical: 1),
+    iconTheme: theme.iconTheme.copyWith(size: 26),
+    filledButtonTheme: FilledButtonThemeData(
+      style: large(FilledButton.styleFrom()),
+    ),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: large(ElevatedButton.styleFrom()),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: large(OutlinedButton.styleFrom()),
+    ),
+    textButtonTheme: TextButtonThemeData(style: large(TextButton.styleFrom())),
+    listTileTheme: theme.listTileTheme.copyWith(minVerticalPadding: 16),
+    cardTheme: theme.cardTheme.copyWith(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    bottomNavigationBarTheme: theme.bottomNavigationBarTheme.copyWith(
+      selectedIconTheme: const IconThemeData(size: 30),
+      unselectedIconTheme: const IconThemeData(size: 28),
+    ),
+  );
+}
+
+/// The smallest text scale easy mode will render at.
+const calmTextScaleFloor = 1.12;
+
+/// Raises the text-size floor for easy mode without capping anyone.
+///
+/// A floor rather than a fixed factor, and a clamp rather than a replacement:
+/// someone who has already asked their phone for larger text has said something
+/// about their eyes, and shrinking that back to a designer's number would make
+/// the *simple* mode the one that is hardest to read.
+///
+/// Applied through the media query rather than the theme's text sizes. Material
+/// 3 leaves `fontSize` unset on its text roles and resolves it inside each
+/// widget, so scaling the [TextTheme] would multiply a pile of nulls and change
+/// nothing at all.
+TextScaler calmTextScaler(TextScaler device) =>
+    device.clamp(minScaleFactor: calmTextScaleFloor);
+
+/// Easy mode's seed. A soft rose says "this is the gentle one" before a single
+/// word is read, and Material derives a full accessible scheme from it.
+const _blossomSeed = Color(0xFFD1688E);
+
+ColorScheme _colorScheme(
+  Brightness brightness,
+  AppearanceSettings settings, {
+  bool calm = false,
+}) {
   final dark = brightness == Brightness.dark;
   var scheme = ColorScheme.fromSeed(
-    seedColor: Colors.blue,
+    seedColor: calm ? _blossomSeed : Colors.blue,
     brightness: brightness,
   );
   final accessibilityColors = _schemeColors(

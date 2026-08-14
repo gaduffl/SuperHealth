@@ -1796,6 +1796,7 @@ class AppController extends ChangeNotifier {
           conversationId: conversationId,
           question: question,
           settings: settings,
+          brief: visibility.briefAnswers,
         );
         lastContextBytes = turn.context.byteLength;
         lastContextTokens = turn.context.estimatedTokens;

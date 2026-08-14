@@ -86,45 +86,50 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
       }
     });
 
+    final visibility = controller.visibility;
     return PageBody(
       child: Column(
         children: [
-          Material(
-            color: Theme.of(context).colorScheme.surfaceContainerLow,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-              child: Row(
-                children: [
-                  const Icon(Icons.shield_outlined, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      strings.providerReasoning(
-                        settings.provider.name,
-                        settings.model,
-                        settings.reasoningLevel,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                  ),
-                  if (settings.webSearch)
-                    Tooltip(
-                      message: strings.webSearchEnabled,
-                      child: Icon(Icons.public, size: 18),
-                    ),
-                  if (settings.codeExecution) ...[
+          // Which model answered, and with what tools. A profile that cannot
+          // choose the model has no use for the answer, and the strip is the
+          // first row of the screen — the most expensive place to put it.
+          if (visibility.multipleAiRoles)
+            Material(
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.shield_outlined, size: 20),
                     const SizedBox(width: 8),
-                    Tooltip(
-                      message: strings.codeExecutionEnabled,
-                      child: Icon(Icons.terminal, size: 18),
+                    Expanded(
+                      child: Text(
+                        strings.providerReasoning(
+                          settings.provider.name,
+                          settings.model,
+                          settings.reasoningLevel,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
                     ),
+                    if (settings.webSearch)
+                      Tooltip(
+                        message: strings.webSearchEnabled,
+                        child: Icon(Icons.public, size: 18),
+                      ),
+                    if (settings.codeExecution) ...[
+                      const SizedBox(width: 8),
+                      Tooltip(
+                        message: strings.codeExecutionEnabled,
+                        child: Icon(Icons.terminal, size: 18),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
           _ConversationBar(
             controller: controller,
             onBrowse: _browseConversations,
@@ -159,28 +164,37 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
               top: false,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                child: Column(
                   children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _message,
-                        minLines: 1,
-                        maxLines: 5,
-                        textCapitalization: TextCapitalization.sentences,
-                        decoration: InputDecoration(
-                          hintText: strings.askHealthData,
-                          helperText: _contextHelper(context, controller),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _message,
+                            minLines: 1,
+                            maxLines: 5,
+                            textCapitalization: TextCapitalization.sentences,
+                            decoration: InputDecoration(
+                              hintText: strings.askHealthData,
+                              // Token counts are for whoever pays the bill.
+                              helperText: visibility.multipleAiRoles
+                                  ? _contextHelper(context, controller)
+                                  : null,
+                            ),
+                            onSubmitted: (_) => _send(),
+                          ),
                         ),
-                        onSubmitted: (_) => _send(),
-                      ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          tooltip: strings.send,
+                          onPressed: controller.busy ? null : _send,
+                          icon: const Icon(Icons.arrow_upward),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    IconButton.filled(
-                      tooltip: strings.send,
-                      onPressed: controller.busy ? null : _send,
-                      icon: const Icon(Icons.arrow_upward),
-                    ),
+                    const SizedBox(height: 6),
+                    const StandingSafetyNotice(),
                   ],
                 ),
               ),
