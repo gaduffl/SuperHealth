@@ -11,24 +11,24 @@ import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
 import 'common.dart';
 import 'design.dart';
-import 'dialogs.dart';
 import 'initial_setup_widgets.dart';
 import 'settings_screen.dart';
-import 'tracking_screen.dart';
 
 /// Easy mode's Today screen.
 ///
 /// The full Today screen answers "how am I doing" with a tile grid, a day
 /// strip, an attention list, and a privacy card. This one answers a shorter
 /// question — what do I take now, and who do I ask — with targets big enough
-/// to hit without aiming. Nothing it leaves out is removed from the app; it is
-/// simply not on the screen someone opens twenty times a week.
+/// to hit without aiming.
 ///
-/// Skipping a dose is the one action that did not survive the cut. Recording
+/// Two things deliberately have no button here. Skipping a dose: recording
 /// "I deliberately did not take this" is a distinction that matters to someone
-/// analysing adherence later, and the person this screen is for is not that
-/// someone: for them it is a second button that has to be understood before
-/// the first one can be pressed.
+/// analysing adherence later, and for this reader it is a second button that
+/// has to be understood before the first one can be pressed. Managing
+/// supplements: this profile does not choose its own products, so a shortcut to
+/// the catalogue is a dead end dressed as an instruction. Whoever does the
+/// setting up turns Easy mode off in Settings, works in the full app, and turns
+/// it back on — one switch, in the one place a profile's mode is decided.
 class CalmHomeScreen extends StatefulWidget {
   const CalmHomeScreen({super.key, this.clock = DateTime.now});
 
@@ -148,7 +148,7 @@ class _CalmHomeScreenState extends State<CalmHomeScreen>
             ],
             const SizedBox(height: 24),
             if (doses.isEmpty)
-              _NothingPlannedCard(controller: controller)
+              const _NothingPlannedCard()
             else ...[
               _ProgressCard(taken: takenCount, total: doses.length),
               const SizedBox(height: 8),
@@ -179,23 +179,6 @@ class _CalmHomeScreenState extends State<CalmHomeScreen>
                 'Laborbericht hinzufügen',
               ),
               onPressed: () => navigation.go(AppSection.labs),
-            ),
-            const SizedBox(height: 12),
-            // A pushed route rather than a permanent seat in the bottom bar:
-            // setting products up is something a person does a few times a
-            // year, and it does not need to compete with the daily loop.
-            _BigAction(
-              icon: Icons.medication_outlined,
-              label: strings.pick('My supplements', 'Meine Präparate'),
-              filled: false,
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => Scaffold(
-                    appBar: AppBar(title: Text(strings.supplements)),
-                    body: const TrackingScreen(),
-                  ),
-                ),
-              ),
             ),
           ],
         ),
@@ -441,12 +424,16 @@ class CalmDoseRow extends StatelessWidget {
   }
 }
 
-/// Shown when the day has no doses at all — including the very first day,
-/// when nothing has been set up yet.
+/// Shown when the day has no doses at all — a schedule-free day, or a profile
+/// nobody has set up yet.
+///
+/// It offers nothing to press. This screen is for someone who does not manage
+/// their own supplements, so "Add a supplement" would be a dead end dressed as
+/// an instruction: it opens a product form that assumes a decision they did not
+/// make. Whoever does the setting up turns Easy mode off in Settings, works in
+/// the full app, and turns it back on.
 class _NothingPlannedCard extends StatelessWidget {
-  const _NothingPlannedCard({required this.controller});
-
-  final AppController controller;
+  const _NothingPlannedCard();
 
   @override
   Widget build(BuildContext context) {
@@ -469,19 +456,11 @@ class _NothingPlannedCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             strings.pick(
-              'Add a supplement and it will appear here on the days you take it.',
-              'Füge ein Präparat hinzu — es erscheint hier an den Tagen, an denen du es nimmst.',
+              'Anything scheduled for you shows up here on the day.',
+              'Was für dich geplant ist, erscheint hier am jeweiligen Tag.',
             ),
             style: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: () => showAddSupplementDialog(context, controller),
-            icon: const Icon(Icons.add),
-            label: Text(
-              strings.pick('Add a supplement', 'Präparat hinzufügen'),
             ),
           ),
         ],
@@ -496,32 +475,28 @@ class _BigAction extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
-    this.filled = true,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
-  final bool filled;
 
   @override
-  Widget build(BuildContext context) {
-    final child = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 28),
-          const SizedBox(width: 14),
-          Flexible(child: Text(label, textAlign: TextAlign.center)),
-        ],
+  Widget build(BuildContext context) => SizedBox(
+    width: double.infinity,
+    child: FilledButton(
+      onPressed: onPressed,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 28),
+            const SizedBox(width: 14),
+            Flexible(child: Text(label, textAlign: TextAlign.center)),
+          ],
+        ),
       ),
-    );
-    return SizedBox(
-      width: double.infinity,
-      child: filled
-          ? FilledButton(onPressed: onPressed, child: child)
-          : OutlinedButton(onPressed: onPressed, child: child),
-    );
-  }
+    ),
+  );
 }

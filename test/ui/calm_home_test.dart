@@ -75,9 +75,7 @@ void main() {
     expect(find.byTooltip('Skip this dose'), findsNothing);
   });
 
-  testWidgets('three actions, and every one of them is full width', (
-    tester,
-  ) async {
+  testWidgets('two actions, both of them full width', (tester) async {
     final controller = _seeded();
     final navigation = ShellNavigation();
     addTearDown(() {
@@ -87,11 +85,7 @@ void main() {
 
     await _pump(tester, controller, navigation);
 
-    for (final label in [
-      'Ask a question',
-      'Add a lab report',
-      'My supplements',
-    ]) {
+    for (final label in ['Ask a question', 'Add a lab report']) {
       expect(find.text(label), findsOneWidget);
       expect(
         tester
@@ -107,6 +101,22 @@ void main() {
         greaterThan(600),
       );
     }
+  });
+
+  testWidgets('nothing here leads to managing supplements', (tester) async {
+    // This profile does not choose its own products. A route to the catalogue
+    // opens a form that assumes a decision the reader did not make.
+    final controller = _seeded();
+    final navigation = ShellNavigation();
+    addTearDown(() {
+      controller.dispose();
+      navigation.dispose();
+    });
+
+    await _pump(tester, controller, navigation);
+
+    expect(find.text('My supplements'), findsNothing);
+    expect(find.text('Add a supplement'), findsNothing);
   });
 
   testWidgets('a recorded dose offers the way back, not a second check', (
@@ -126,9 +136,7 @@ void main() {
     expect(find.text('1 of 1 taken'), findsOneWidget);
   });
 
-  testWidgets('an empty day says so and offers the one thing to do', (
-    tester,
-  ) async {
+  testWidgets('an empty day says so and asks for nothing', (tester) async {
     final controller = _seeded(scheduled: false);
     final navigation = ShellNavigation();
     addTearDown(() {
@@ -139,8 +147,9 @@ void main() {
     await _pump(tester, controller, navigation);
 
     expect(find.text('Nothing to take today'), findsOneWidget);
-    expect(find.text('Add a supplement'), findsOneWidget);
     expect(find.byTooltip('Mark as taken'), findsNothing);
+    // No call to action: an empty day is not a task for this reader.
+    expect(find.text('Add a supplement'), findsNothing);
   });
 }
 

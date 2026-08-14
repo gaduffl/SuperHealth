@@ -55,9 +55,10 @@ int tabIndexForSection(AppSection section) => switch (section) {
 
 /// The destinations a mode puts in the bottom bar, as canonical tab indices.
 ///
-/// Easy mode drops the supplements tab. Setting products up is something a
-/// person does a few times a year, so it does not need a permanent seat beside
-/// the daily loop; its entry point moves to a button on the calm home.
+/// Easy mode drops the supplements tab outright. A profile in easy mode does
+/// not choose its own products — someone else sets them up — so the catalogue
+/// is not a screen it needs a route to, from the bar or anywhere else. The
+/// Easy-mode switch in Settings is the way in when setup is needed.
 ///
 /// The indices stay canonical in both modes, which is the point of returning
 /// them rather than a second numbering: [tabIndexForSection] and every deep
