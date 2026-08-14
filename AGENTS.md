@@ -694,6 +694,16 @@ instead of `DashboardScreen`, `shellTabsFor` dropping the supplements tab,
 mode is meant to feel different, something structural has to change, not one
 more boolean on a shared screen.
 
+**A shortcut to a screen the person will never use is worse than no shortcut.**
+Supplement management left easy mode entirely — not to a button on the calm
+home, not to a pushed route — because this profile does not choose its own
+products. An "Add a supplement" button opens a product form that assumes a
+decision the reader did not make, which is a dead end dressed as an
+instruction. The Easy-mode switch in Settings is the whole escape hatch:
+whoever sets the profile up turns it off, works in the full app, and turns it
+back on. Before adding an entry point to easy mode, ask who presses it — if the
+answer is "the other person", it belongs in the full app.
+
 **The reduced bottom bar keeps canonical indices.** `shellTabsFor` returns
 *which* of the five canonical tabs a mode shows, in order — never a second
 numbering. `tabIndexForSection` and every deep link that drives it therefore

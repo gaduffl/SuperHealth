@@ -228,11 +228,16 @@ class _HomeShellBody extends StatelessWidget {
   /// Keyed by the mode, because TrackingScreen and HealthScreen size their
   /// TabControllers once and a controller cannot change length. Switching
   /// profiles therefore has to rebuild them rather than mutate them.
+  ///
+  /// The list always has five entries at their canonical indices, even in easy
+  /// mode where nothing can navigate to the supplements one. An IndexedStack
+  /// builds every child, so that slot holds a placeholder rather than a
+  /// two-thousand-line screen this profile can never open.
   static List<Widget> _screensFor(bool easyMode) {
     final key = ValueKey(easyMode);
     return [
       easyMode ? const CalmHomeScreen() : const DashboardScreen(),
-      TrackingScreen(key: key),
+      easyMode ? const SizedBox.shrink() : TrackingScreen(key: key),
       HealthScreen(key: key),
       const AdvisorScreen(),
       const SettingsScreen(),
