@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
@@ -212,8 +214,35 @@ class _ProfileOnboarding extends StatelessWidget {
   }
 }
 
-class _HomeShell extends StatelessWidget {
+class _HomeShell extends StatefulWidget {
   const _HomeShell();
+
+  @override
+  State<_HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<_HomeShell> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // A cold start is a resume as far as the record is concerned: the phone may
+    // have been closed for a week with the last dose still only on this device.
+    // The controller decides whether a sync is actually due.
+    unawaited(context.read<AppController>().maybeAutoSynchronize());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted) return;
+    unawaited(context.read<AppController>().maybeAutoSynchronize());
+  }
 
   @override
   Widget build(BuildContext context) => ChangeNotifierProvider(

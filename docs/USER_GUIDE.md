@@ -18,6 +18,12 @@ SQLite on each device is the working record. API keys and OneDrive tokens are ne
 
 **Shared family folder** requests delegated `Files.ReadWrite`. Create a OneDrive folder, share it with edit permission, and select that same folder on both phones. SuperHealth creates a `SuperHealth` subfolder and constrains its file operations to that location. The Microsoft token is technically broader than the AppFolder token, which is why this mode is always an explicit choice.
 
+## When syncing happens
+
+SuperHealth syncs automatically when you open or return to the app, and at most once every 15 minutes. Changes you make in between stay on that phone until the next sync. **Sync now** in Settings always runs immediately.
+
+The OneDrive section shows when this device last uploaded a complete copy, and says so plainly when the last automatic attempt failed. Two things stop an automatic sync on purpose: unresolved sync conflicts, and a portable restore that is still waiting for your decision. In both cases nothing is uploaded until you resolve them, so a device that reports a stale copy is telling you the truth rather than quietly falling behind.
+
 AppFolder isolation prevents silent reads from the former apps’ private folders. Migration therefore uses Android’s file picker and leaves every original file untouched.
 
 For Supplement Manager, select `supplement_sync.json`. For Biomarkers, select `profiles.json`, `biomarkers.json`, `ranges.json`, `biomarker_lists.json`, `biomarker_list_entries.json`, `user_overrides.json`, `documents.json`, and `measurements.json` together from `OneDrive/Apps/Biomarkers/data`. Do not select `manifest.json`. Approved former-profile overrides are imported as profile-specific personal targets.

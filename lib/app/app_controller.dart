@@ -35,6 +35,7 @@ import '../reminders/reminder_planner.dart';
 import '../sync/one_drive_service.dart';
 import '../sync/restore_sync_gate.dart';
 import '../sync/snapshot_service.dart';
+import '../sync/sync_status.dart';
 import '../workspace/safe_workspace_service.dart';
 import 'appearance_settings.dart';
 import 'initial_setup_progress.dart';
@@ -63,6 +64,7 @@ class AppController extends ChangeNotifier {
     AppearanceSettingsStore? appearanceSettingsStore,
     InitialSetupProgressStore? initialSetupProgressStore,
     RestoreSyncGateStore? restoreSyncGateStore,
+    SyncStatusStore? syncStatusStore,
     LongTaskGuard? longTaskGuard,
     AiTraceStore? labPlanTraceStore,
     AiTraceStore? advisorTraceStore,
@@ -96,6 +98,7 @@ class AppController extends ChangeNotifier {
        _initialSetupProgressStore =
            initialSetupProgressStore ?? InitialSetupProgressStore(),
        _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore(),
+       _syncStatusStore = syncStatusStore ?? SyncStatusStore(),
        _longTaskGuard = longTaskGuard ?? LongTaskGuard(),
        _labPlanTraceStore = labPlanTraceStore,
        _advisorTraceStore = advisorTraceStore;
@@ -134,6 +137,7 @@ class AppController extends ChangeNotifier {
   final AppearanceSettingsStore _appearanceSettingsStore;
   final InitialSetupProgressStore _initialSetupProgressStore;
   final RestoreSyncGateStore _restoreSyncGateStore;
+  final SyncStatusStore _syncStatusStore;
 
   bool initialized = false;
   bool busy = false;
@@ -142,6 +146,24 @@ class AppController extends ChangeNotifier {
   InitialSetupProgress initialSetupProgress =
       const InitialSetupProgress.empty();
   bool restoreSyncDecisionPending = false;
+
+  /// When this device last uploaded a complete snapshot, or null for never.
+  ///
+  /// A run that stopped at unresolved conflicts uploads nothing, so it never
+  /// advances this. That is the point: the value answers "is the cloud copy
+  /// current", not "did a sync run".
+  DateTime? lastSuccessfulSyncAt;
+
+  /// Why the most recent automatic sync failed, or null when none has.
+  ///
+  /// A background attempt has no dialog to fail into. Without somewhere to
+  /// surface the reason, a phone that has been unable to reach OneDrive for a
+  /// week looks exactly like one that simply has nothing to upload.
+  String? lastAutoSyncError;
+
+  bool _autoSyncInFlight = false;
+  DateTime? _lastAutoSyncAttempt;
+
   String? initializationError;
   Profile? activeProfile;
   List<Profile> profiles = const [];
@@ -291,6 +313,7 @@ class AppController extends ChangeNotifier {
           await _aiSettingsStore.load(AiTask.labPlanner) ?? advisorSettings;
       await refreshKeyStatus();
       restoreSyncDecisionPending = await _restoreSyncGateStore.isPending();
+      lastSuccessfulSyncAt = await _syncStatusStore.lastSuccessfulSync();
       await refreshProfiles();
       await _reconcileReminders();
     } on Object catch (error) {
@@ -2237,6 +2260,61 @@ class AppController extends ChangeNotifier {
     });
   }
 
+  /// The shortest gap between two automatic syncs.
+  ///
+  /// Resuming the app is a frequent event — glancing at a dose and switching
+  /// away again can happen a dozen times in an hour — and each sync is a full
+  /// snapshot upload. This bounds that cost while still keeping the cloud copy
+  /// within an hour of the record in ordinary use.
+  static const autoSyncInterval = Duration(minutes: 15);
+
+  /// Synchronizes in the background when the app comes to the foreground.
+  ///
+  /// Returns whether a sync actually ran. Every guard below is a reason not to
+  /// start one: an automatic run must never pre-empt work already in flight,
+  /// bypass the post-restore decision, or turn a transient network failure into
+  /// a modal error the user did not ask for. Anything it declines is still one
+  /// tap away under "Sync now".
+  Future<bool> maybeAutoSynchronize() async {
+    if (!initialized || busy || _autoSyncInFlight) return false;
+    if (initializationError != null || restoreSyncDecisionPending) return false;
+
+    final now = DateTime.now();
+    final lastSuccess = lastSuccessfulSyncAt;
+    if (lastSuccess != null && now.difference(lastSuccess) < autoSyncInterval) {
+      return false;
+    }
+    // Failures are throttled on their own attempt marker. Without it a phone
+    // that cannot reach OneDrive would retry on every single resume, because a
+    // failed attempt never advances the success timestamp.
+    final lastAttempt = _lastAutoSyncAttempt;
+    if (lastAttempt != null && now.difference(lastAttempt) < autoSyncInterval) {
+      return false;
+    }
+
+    _autoSyncInFlight = true;
+    _lastAutoSyncAttempt = now;
+    try {
+      // Re-read the durable gate rather than trusting the cached flag. A
+      // restore performed in this session must stop an automatic sync even if
+      // nothing has refreshed the field since.
+      if (await _restoreSyncGateStore.isPending()) {
+        restoreSyncDecisionPending = true;
+        notifyListeners();
+        return false;
+      }
+      if (!await oneDriveService.isStorageConfigured()) return false;
+      await _withBusy(_synchronizeOneDriveNormally);
+      return true;
+    } on Object catch (error) {
+      lastAutoSyncError = error.toString();
+      notifyListeners();
+      return false;
+    } finally {
+      _autoSyncInFlight = false;
+    }
+  }
+
   Future<OneDriveSyncResult> _synchronizeOneDriveNormally() async {
     final result = await oneDriveService.synchronize();
     await _afterSuccessfulOneDriveSync(result);
@@ -2246,6 +2324,12 @@ class AppController extends ChangeNotifier {
   Future<void> _afterSuccessfulOneDriveSync(OneDriveSyncResult result) async {
     if (result.conflicts == 0) {
       await _initialSetupProgressStore.recordFirstSuccessfulSync();
+      // Conflicts mean the run returned before uploading anything, so only a
+      // clean run may claim the cloud copy is current.
+      final syncedAt = DateTime.now().toUtc();
+      await _syncStatusStore.recordSuccessfulSync(syncedAt);
+      lastSuccessfulSyncAt = syncedAt;
+      lastAutoSyncError = null;
     }
     await refreshProfiles();
     if (result.conflicts == 0 &&
