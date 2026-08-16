@@ -659,16 +659,16 @@ class SupplementInsights {
     required List<Supplement> supplements,
     required List<SupplementSchedule> householdSchedules,
     required Map<String, double> stockLevels,
+    DateTime? now,
   }) {
+    final today = now ?? DateTime.now();
     final result = <StockProjection>[];
     for (final supplement in supplements.where((item) => !item.deleted)) {
-      var weekly = 0.0;
-      for (final schedule in householdSchedules.where(
-        (item) => item.supplementId == supplement.id && item.active,
-      )) {
-        if (!_sameStockUnit(schedule.unit, supplement.stockUnit)) continue;
-        weekly += schedule.dose * schedule.weekdays.length;
-      }
+      final weekly = _weeklyScheduledUnits(
+        supplement: supplement,
+        householdSchedules: householdSchedules,
+        day: today,
+      );
       final stock = stockLevels[supplement.id] ?? 0;
       result.add(
         StockProjection(
@@ -1195,18 +1195,18 @@ class SupplementInsights {
     required List<SupplementSchedule> householdSchedules,
     required Map<String, double> stockLevels,
     required int months,
+    DateTime? now,
   }) {
+    final today = now ?? DateTime.now();
     final result = <PurchaseSuggestion>[];
     for (final supplement in supplements.where(
       (item) => !item.deleted && item.active,
     )) {
-      var weeklyUnits = 0.0;
-      for (final schedule in householdSchedules.where(
-        (item) => item.supplementId == supplement.id && item.active,
-      )) {
-        if (!_sameStockUnit(schedule.unit, supplement.stockUnit)) continue;
-        weeklyUnits += schedule.dose * schedule.weekdays.length;
-      }
+      final weeklyUnits = _weeklyScheduledUnits(
+        supplement: supplement,
+        householdSchedules: householdSchedules,
+        day: today,
+      );
       if (weeklyUnits <= 0) continue;
       // 52 weeks over 12 months, so a month is not silently treated as four
       // weeks and the plan does not come up short over a year.
@@ -1286,31 +1286,34 @@ class SupplementInsights {
   double monthlyCostEstimate({
     required List<Supplement> supplements,
     required List<SupplementSchedule> householdSchedules,
+    DateTime? now,
   }) => monthlyCostByProduct(
     supplements: supplements,
     householdSchedules: householdSchedules,
+    now: now,
   ).fold(0, (total, item) => total + item.eur);
 
   /// The planned monthly cost broken down per product, largest first.
   ///
-  /// Products with no price, no package size, or no compatible schedule are
-  /// omitted rather than counted as free.
+  /// Products with no price, no package size, or no schedule in force today are
+  /// omitted rather than counted as free. A finished course costs nothing next
+  /// month, so it must not appear here at all.
   List<({Supplement supplement, double eur})> monthlyCostByProduct({
     required List<Supplement> supplements,
     required List<SupplementSchedule> householdSchedules,
+    DateTime? now,
   }) {
+    final today = now ?? DateTime.now();
     final result = <({Supplement supplement, double eur})>[];
     for (final supplement in supplements.where((item) => !item.deleted)) {
       final price = supplement.priceEur;
       final packageUnits = supplement.unitsPerContainer;
       if (price == null || packageUnits == null || packageUnits <= 0) continue;
-      var weeklyUnits = 0.0;
-      for (final schedule in householdSchedules.where(
-        (item) => item.supplementId == supplement.id && item.active,
-      )) {
-        if (!_sameStockUnit(schedule.unit, supplement.stockUnit)) continue;
-        weeklyUnits += schedule.dose * schedule.weekdays.length;
-      }
+      final weeklyUnits = _weeklyScheduledUnits(
+        supplement: supplement,
+        householdSchedules: householdSchedules,
+        day: today,
+      );
       if (weeklyUnits <= 0) continue;
       result.add((
         supplement: supplement,
@@ -1368,7 +1371,14 @@ class SupplementInsights {
     return result;
   }
 
-  bool _scheduledOn(SupplementSchedule schedule, DateTime day) {
+  /// Whether a schedule is in force on [day], ignoring which weekdays it runs.
+  ///
+  /// A schedule that has ended, or has not started yet, is still stored as
+  /// `active` — the flag distinguishes an archived plan from a live one, not a
+  /// past one from a current one. Anything projecting forward has to ask this
+  /// question too, or a course someone finished in March still spends money
+  /// and consumes stock in August.
+  bool _inEffectOn(SupplementSchedule schedule, DateTime day) {
     if (!schedule.active || schedule.deleted) return false;
     final date = DateTime(day.year, day.month, day.day);
     final start = schedule.startDate;
@@ -1380,7 +1390,32 @@ class SupplementInsights {
     if (end != null && date.isAfter(DateTime(end.year, end.month, end.day))) {
       return false;
     }
+    return true;
+  }
+
+  bool _scheduledOn(SupplementSchedule schedule, DateTime day) {
+    if (!_inEffectOn(schedule, day)) return false;
+    final date = DateTime(day.year, day.month, day.day);
     return schedule.weekdays.contains(_weekdays[date.weekday - 1]);
+  }
+
+  /// The units per week [supplement] is planned to consume on [day].
+  ///
+  /// Shared by every forward-looking projection so cost, stock, and the
+  /// shopping list can never disagree about which schedules still count.
+  double _weeklyScheduledUnits({
+    required Supplement supplement,
+    required List<SupplementSchedule> householdSchedules,
+    required DateTime day,
+  }) {
+    var weekly = 0.0;
+    for (final schedule in householdSchedules) {
+      if (schedule.supplementId != supplement.id) continue;
+      if (!_inEffectOn(schedule, day)) continue;
+      if (!_sameStockUnit(schedule.unit, supplement.stockUnit)) continue;
+      weekly += schedule.dose * schedule.weekdays.length;
+    }
+    return weekly;
   }
 
   DateTime _dueAt(DateTime day, String value) {

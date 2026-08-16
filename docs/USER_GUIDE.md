@@ -52,7 +52,7 @@ The Supplements screen has four tabs:
 
 - **Catalog** — products, their ingredients, and their schedules. The stock unit is what one of the things is called — capsule, scoop, ml — and the suggestions next to the field cover the common answers. Everywhere an amount is shown, that unit is used; a product saved without one reads as plain "units" rather than an internal placeholder. Ingredients are edited as rows with separate name, amount, and unit fields; the amount is per one stock unit. **Paste label** opens a panel where you paste the ingredient table from the packaging together with the serving size it applies to — for example 4 capsules. The configured lab document parser model reads it into the rows, dividing the stated amounts down to one unit. The rows stay editable, so nothing is stored until you save the product. If the model reads a different serving size on the label than you entered, it says so instead of quietly storing a dose several times too high. No health record is sent with the request; only the pasted packaging text.
 - **Plan** — the weekly pillbox: dose per weekday and part of the day. Tap a filled cell to edit the schedule behind it. Below the grid, the components the active plan is designed to deliver each week, independent of adherence.
-- **Stock** — days of cover per product, the shopping list for a 1, 3, 6, or 12 month horizon rounded up to whole packages, and the planned monthly cost per product.
+- **Stock** — days of cover per product, the shopping list for a 1, 3, 6, or 12 month horizon rounded up to whole packages, and the planned monthly cost per product. All three read the schedules that are in force today: a course whose end date has passed, or whose start date has not arrived, consumes nothing and costs nothing until it is running.
 - **History** — weekly adherence, product intake, and component exposure charts, the known intake cost trend, and CSV export. **Choose** on a chart opens the full list of products or components with checkboxes; every one you select is drawn, and with nothing selected the chart shows the six largest. Tapping a legend entry removes that line again. The same selection drives the pins in the exposure lists further down. A long range scrolls sideways rather than squeezing a year of weeks into one screen.
 
 The stock button in the app bar opens a drawer with days of cover for every product, from any screen.
@@ -76,7 +76,8 @@ Elsewhere:
 2. The complete active-profile history and full biomarker catalog are sent to the configured advisor model without silent truncation.
 3. A fresh second call to the same configured model independently verifies the parsed plan against the same complete context. Rejected or malformed reviews fail closed and cannot be saved or exported.
 4. Review the unsaved Core, Advanced, and Comprehensive draft. Advanced includes Core; Comprehensive includes both earlier tiers.
-5. Save the plan or export it to PDF, CSV, or JSON. Known totals use stored EUR prices and disclose missing prices; the verifier summary, warnings, sources, and verification time remain attached to the saved plan and exports.
+5. Where a test package is cheaper than the tests it covers, it is listed in the tier with its own checkbox, its price and saving, and an expandable list of every test it contains — including any the plan did not ask for. Ticking the package ticks each planned test it covers; its box is half-filled while only some of them are.
+6. Save the plan or export it to PDF, CSV, or JSON. Known totals use stored EUR prices and disclose missing prices; the verifier summary, warnings, sources, and verification time remain attached to the saved plan and exports.
 
 ## Advisor files
 

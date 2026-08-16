@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../ai/document_parsing_service.dart';
+import '../analysis/lab_plan_pricing.dart';
 import '../ai/lab_planner_service.dart';
 import '../ai/provider_clients.dart';
 import '../app/app_controller.dart';
@@ -589,8 +590,11 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
               _SavedPlanCard(
                 plan: plan,
                 onExport: () => _export(context, controller, plan),
-                onToggle: (item, checked) =>
-                    controller.setLabPlanItemChecked(plan, item, checked),
+                onToggle: (items, checked) => controller.setLabPlanItemsChecked(
+                  plan,
+                  {for (final item in items) item.id},
+                  checked,
+                ),
                 onDelete: () async {
                   final confirmed = await showConfirmAction(
                     context,
@@ -2541,7 +2545,7 @@ class _SavedPlanCard extends StatelessWidget {
 
   final LabPlan plan;
   final VoidCallback onExport;
-  final Future<void> Function(LabPlanItem, bool) onToggle;
+  final Future<void> Function(List<LabPlanItem>, bool) onToggle;
   final VoidCallback onDelete;
 
   @override
@@ -2632,7 +2636,7 @@ class _PlanTiers extends StatelessWidget {
   const _PlanTiers({required this.plan, this.onToggle});
 
   final LabPlan plan;
-  final Future<void> Function(LabPlanItem, bool)? onToggle;
+  final Future<void> Function(List<LabPlanItem>, bool)? onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -2670,25 +2674,16 @@ class _PlanTiers extends StatelessWidget {
                       // Named before the tests, because a bundle changes what the tier
                       // costs and the reader has to see why the total is not the sum.
                       for (final applied in costing.appliedPackages)
-                        ListTile(
-                          dense: true,
-                          contentPadding: const EdgeInsets.only(left: 8),
-                          leading: const Icon(
-                            Icons.inventory_2_outlined,
-                            size: 20,
-                          ),
-                          title: Text(applied.package.name),
-                          subtitle: Text(
-                            _labsText(
-                              context,
-                              '${applied.package.priceEur!.toStringAsFixed(2)} € for '
-                                  '${applied.coveredBiomarkerIds.length} test(s)'
-                                  '${applied.savingEur == null ? '' : ' · saves ${applied.savingEur!.toStringAsFixed(2)} €'}',
-                              '${applied.package.priceEur!.toStringAsFixed(2)} € für '
-                                  '${applied.coveredBiomarkerIds.length} Test(s)'
-                                  '${applied.savingEur == null ? '' : ' · spart ${applied.savingEur!.toStringAsFixed(2)} €'}',
-                            ),
-                          ),
+                        _AppliedPackageTile(
+                          applied: applied,
+                          items: [
+                            for (final item in plan.itemsThrough(tier))
+                              if (applied.coveredBiomarkerIds.contains(
+                                item.biomarkerId,
+                              ))
+                                item,
+                          ],
+                          onToggle: onToggle,
                         ),
                       for (final item in plan.itemsThrough(tier))
                         CheckboxListTile(
@@ -2712,7 +2707,8 @@ class _PlanTiers extends StatelessWidget {
                           value: item.checked,
                           onChanged: onToggle == null
                               ? null
-                              : (checked) => onToggle!(item, checked ?? false),
+                              : (checked) =>
+                                    onToggle!([item], checked ?? false),
                           controlAffinity: ListTileControlAffinity.leading,
                         ),
                     ],
@@ -2766,6 +2762,183 @@ class _PlanTiers extends StatelessWidget {
       'Umfassend (enthält alle)',
     ),
   };
+}
+
+/// A bundle the costing applied, presented as one of the tier's line items.
+///
+/// A package is a purchase decision exactly like a single test is, so it reads
+/// like one: the same leading checkbox, the same explanatory subtitle. Ticking
+/// it ticks every planned test it covers, and its box is half-filled while only
+/// some of them are — otherwise the package and the tests it pays for could
+/// disagree on screen with no way to tell which was true.
+///
+/// It also lists its contents. "89 € for 5 tests" is not something a reader can
+/// check, act on, or compare against another lab's bundle; the names are.
+class _AppliedPackageTile extends StatelessWidget {
+  const _AppliedPackageTile({
+    required this.applied,
+    required this.items,
+    this.onToggle,
+  });
+
+  final AppliedPackage applied;
+
+  /// The tier's planned tests this package covers, in the order they are shown.
+  final List<LabPlanItem> items;
+
+  final Future<void> Function(List<LabPlanItem>, bool)? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<AppController>();
+    final theme = Theme.of(context);
+    final checkedCount = items.where((item) => item.checked).length;
+    // Null is Flutter's indeterminate box, which is the honest state when a
+    // package's tests are partly ticked.
+    final value = items.isEmpty
+        ? false
+        : checkedCount == items.length
+        ? true
+        : checkedCount == 0
+        ? false
+        : null;
+    final memberIds =
+        controller.biomarkerPackageMembers[applied.package.id] ??
+        const <String>{};
+    final plannedIds = applied.coveredBiomarkerIds.toSet();
+    final names = _memberNames(controller, memberIds);
+    final saving = applied.savingEur;
+    final price = applied.package.priceEur!.toStringAsFixed(2);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CheckboxListTile(
+          dense: true,
+          tristate: true,
+          contentPadding: const EdgeInsets.only(left: 8),
+          secondary: const Icon(Icons.inventory_2_outlined, size: 20),
+          title: Text(applied.package.name),
+          subtitle: Text(
+            [
+              _labsText(context, 'Package', 'Paket'),
+              '$price €',
+              _labsText(
+                context,
+                'covers ${applied.coveredBiomarkerIds.length} planned test(s)',
+                'deckt ${applied.coveredBiomarkerIds.length} geplante(n) Test(s) ab',
+              ),
+              if (saving != null)
+                _labsText(
+                  context,
+                  'saves ${saving.toStringAsFixed(2)} € against buying them singly',
+                  'spart ${saving.toStringAsFixed(2)} € gegenüber Einzelkauf',
+                )
+              else
+                _labsText(
+                  context,
+                  'prices a test that has none on its own',
+                  'setzt einen Preis für einen Test ohne Einzelpreis',
+                ),
+            ].join(' · '),
+          ),
+          value: value,
+          onChanged: onToggle == null || items.isEmpty
+              ? null
+              : (next) => onToggle!(items, next ?? false),
+          controlAffinity: ListTileControlAffinity.leading,
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: ExpansionTile(
+            dense: true,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            childrenPadding: const EdgeInsets.only(left: 12, bottom: 8),
+            title: Text(
+              _labsText(
+                context,
+                'Contains ${names.length} test(s)',
+                'Enthält ${names.length} Test(s)',
+              ),
+              style: theme.textTheme.bodySmall,
+            ),
+            children: [
+              for (final entry in names)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        plannedIds.contains(entry.id)
+                            ? Icons.check_circle_outline
+                            : Icons.remove_circle_outline,
+                        size: 16,
+                        color: plannedIds.contains(entry.id)
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          entry.name,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                      // A bundle usually carries tests this plan did not ask
+                      // for. Saying so stops them reading as plan omissions.
+                      if (!plannedIds.contains(entry.id))
+                        Text(
+                          _labsText(context, 'not planned', 'nicht geplant'),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              if (names.isEmpty)
+                Text(
+                  _labsText(
+                    context,
+                    'This package has no tests recorded yet.',
+                    'Für dieses Paket sind noch keine Tests hinterlegt.',
+                  ),
+                  style: theme.textTheme.bodySmall,
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Package members with a readable name, planned ones first then alphabetical.
+  ///
+  /// The catalog is the naming authority; a planned item's own label is the
+  /// fallback, and the raw ID the last resort — a member the catalog has since
+  /// lost is still part of what the package costs, so it is never dropped.
+  List<({String id, String name})> _memberNames(
+    AppController controller,
+    Set<String> memberIds,
+  ) {
+    final catalog = {
+      for (final biomarker in controller.biomarkers)
+        biomarker.id: biomarker.displayName,
+    };
+    final planned = {for (final item in items) item.biomarkerId: item};
+    final result = [
+      for (final id in memberIds)
+        (id: id, name: catalog[id] ?? planned[id]?.biomarkerName ?? id),
+    ];
+    final plannedIds = applied.coveredBiomarkerIds.toSet();
+    result.sort((a, b) {
+      final aPlanned = plannedIds.contains(a.id);
+      if (aPlanned != plannedIds.contains(b.id)) return aPlanned ? -1 : 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return result;
+  }
 }
 
 /// What a cheaper tier gives up against the next one, and why.

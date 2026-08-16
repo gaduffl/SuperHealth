@@ -2069,11 +2069,23 @@ class AppController extends ChangeNotifier {
     LabPlan plan,
     LabPlanItem item,
     bool checked,
+  ) => setLabPlanItemsChecked(plan, {item.id}, checked);
+
+  /// Ticks or unticks several planned tests as one edit.
+  ///
+  /// A package covers many tests at once, and saving the plan once per test
+  /// would write the whole plan N times and reload between each — leaving the
+  /// list visibly half-toggled while it worked.
+  Future<void> setLabPlanItemsChecked(
+    LabPlan plan,
+    Set<String> itemIds,
+    bool checked,
   ) async {
+    if (itemIds.isEmpty) return;
     final now = DateTime.now();
     final updatedItems = [
       for (final current in plan.items)
-        current.id == item.id
+        itemIds.contains(current.id) && current.checked != checked
             ? LabPlanItem(
                 id: current.id,
                 planId: current.planId,
