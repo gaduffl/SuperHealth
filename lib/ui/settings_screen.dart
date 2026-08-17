@@ -28,6 +28,59 @@ import 'unit_migration_screen.dart';
 String _settingsText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
 
+/// A cloud copy older than this is called out rather than simply dated.
+///
+/// Two days covers a weekend of an unopened app. Beyond it, the gap is more
+/// likely a phone that cannot reach OneDrive than one nobody has picked up.
+const _staleSyncThreshold = Duration(days: 2);
+
+bool _syncIsStale(DateTime? lastSyncedAt) =>
+    lastSyncedAt == null ||
+    DateTime.now().difference(lastSyncedAt) >= _staleSyncThreshold;
+
+/// Describes the age of the cloud copy in whole units.
+///
+/// Deliberately coarse: the exact minute of an upload is never the question,
+/// and rounding down keeps the label from claiming the record is fresher than
+/// it is.
+String _lastSyncedLabel(BuildContext context, DateTime? lastSyncedAt) {
+  if (lastSyncedAt == null) {
+    return _settingsText(
+      context,
+      'Never synced from this device',
+      'Von diesem Gerät noch nie synchronisiert',
+    );
+  }
+  // Both sides are absolute instants, so a UTC timestamp and a local now
+  // compare correctly without converting either.
+  final elapsed = DateTime.now().difference(lastSyncedAt);
+  if (elapsed < const Duration(minutes: 1)) {
+    return _settingsText(context, 'Synced just now', 'Gerade synchronisiert');
+  }
+  if (elapsed < const Duration(hours: 1)) {
+    final minutes = elapsed.inMinutes;
+    return _settingsText(
+      context,
+      'Last synced $minutes minute${minutes == 1 ? '' : 's'} ago',
+      'Zuletzt vor $minutes Minute${minutes == 1 ? '' : 'n'} synchronisiert',
+    );
+  }
+  if (elapsed < const Duration(days: 1)) {
+    final hours = elapsed.inHours;
+    return _settingsText(
+      context,
+      'Last synced $hours hour${hours == 1 ? '' : 's'} ago',
+      'Zuletzt vor $hours Stunde${hours == 1 ? '' : 'n'} synchronisiert',
+    );
+  }
+  final days = elapsed.inDays;
+  return _settingsText(
+    context,
+    'Last synced $days day${days == 1 ? '' : 's'} ago',
+    'Zuletzt vor $days Tag${days == 1 ? '' : 'en'} synchronisiert',
+  );
+}
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -373,6 +426,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
                 if (_oneDriveSignedIn == true) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: Icon(
+                      _syncIsStale(controller.lastSuccessfulSyncAt)
+                          ? Icons.cloud_off_outlined
+                          : Icons.cloud_done_outlined,
+                    ),
+                    title: Text(
+                      _lastSyncedLabel(
+                        context,
+                        controller.lastSuccessfulSyncAt,
+                      ),
+                    ),
+                    subtitle: Text(
+                      controller.lastAutoSyncError != null
+                          ? _settingsText(
+                              context,
+                              'The last automatic sync failed: '
+                                  '${controller.lastAutoSyncError}',
+                              'Die letzte automatische Synchronisierung ist '
+                                  'fehlgeschlagen: '
+                                  '${controller.lastAutoSyncError}',
+                            )
+                          : _settingsText(
+                              context,
+                              'SuperHealth syncs automatically when you open '
+                                  'the app, at most every 15 minutes. Changes '
+                                  'stay on this device until then.',
+                              'SuperHealth synchronisiert automatisch beim '
+                                  'Öffnen der App, höchstens alle 15 Minuten. '
+                                  'Änderungen bleiben bis dahin auf diesem '
+                                  'Gerät.',
+                            ),
+                    ),
+                  ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.link_off),

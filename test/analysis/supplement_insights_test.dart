@@ -667,4 +667,115 @@ void main() {
       closeTo(values.single.eur, 0.0001),
     );
   });
+
+  group('a schedule outside its own dates funds nothing', () {
+    final today = DateTime(2026, 7, 13);
+
+    SupplementSchedule dated({DateTime? start, DateTime? end}) =>
+        SupplementSchedule(
+          id: 'schedule',
+          profileId: 'profile',
+          supplementId: supplement.id,
+          dose: 2,
+          unit: 'capsules',
+          timeOfDay: 'Morning',
+          weekdays: const [
+            'monday',
+            'tuesday',
+            'wednesday',
+            'thursday',
+            'friday',
+            'saturday',
+            'sunday',
+          ],
+          startDate: start,
+          endDate: end,
+          createdAt: monday,
+          updatedAt: monday,
+        );
+
+    test('a finished course costs nothing next month', () {
+      expect(
+        service.monthlyCostByProduct(
+          supplements: [supplement],
+          householdSchedules: [dated(end: DateTime(2026, 3, 31))],
+          now: today,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a course that has not started yet costs nothing yet', () {
+      expect(
+        service.monthlyCostByProduct(
+          supplements: [supplement],
+          householdSchedules: [dated(start: DateTime(2026, 9, 1))],
+          now: today,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a course ending today still counts today', () {
+      expect(
+        service.monthlyCostByProduct(
+          supplements: [supplement],
+          householdSchedules: [dated(end: today)],
+          now: today,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('a finished course consumes no stock and projects no days', () {
+      final projection = service
+          .stockProjections(
+            supplements: [supplement],
+            householdSchedules: [dated(end: DateTime(2026, 3, 31))],
+            stockLevels: {supplement.id: 140},
+            now: today,
+          )
+          .single;
+
+      expect(projection.weeklyScheduledUnits, 0);
+      expect(projection.daysRemaining, isNull);
+      expect(projection.suggestedPurchaseUnits, 0);
+    });
+
+    test('a finished course is nothing to shop for', () {
+      expect(
+        service.purchasePlan(
+          supplements: [supplement],
+          householdSchedules: [dated(end: DateTime(2026, 3, 31))],
+          stockLevels: const {},
+          months: 3,
+          now: today,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('an open-ended course is unaffected', () {
+      expect(
+        service.monthlyCostByProduct(
+          supplements: [supplement],
+          householdSchedules: [dated()],
+          now: today,
+        ),
+        hasLength(1),
+      );
+      expect(
+        service
+            .stockProjections(
+              supplements: [supplement],
+              householdSchedules: [dated()],
+              stockLevels: {supplement.id: 14},
+              now: today,
+            )
+            .single
+            .daysRemaining,
+        7,
+      );
+    });
+  });
 }
