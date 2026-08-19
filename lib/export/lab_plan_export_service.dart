@@ -30,6 +30,167 @@ class LabPlanExportService {
         LabPlanExportFormat.json => _json(plan),
       };
 
+  /// The tier's ticked tests as a page to hand to a doctor.
+  ///
+  /// Deliberately not one of [LabPlanExportFormat]. Those export the whole
+  /// plan — every tier, the reasoning, the independent review, the disclosures
+  /// about what a cheaper tier gives up — which is what the person who made
+  /// the plan needs and precisely what a consultation does not. Here the
+  /// question is only "which tests am I asking for", so the page carries the
+  /// chosen tests and what each one needs beforehand, and nothing else.
+  ///
+  /// One line of provenance stays at the foot. A list of tests on a printed
+  /// page reads as a requisition, and this one is not: it was assembled by the
+  /// patient, and saying so once is what keeps it honest without putting a
+  /// wall of warnings in front of a clinician.
+  Future<ExportedFile> buildTierRequest(LabPlan plan, LabTier tier) async {
+    final items = plan.selectedItemsThrough(tier);
+    final document = pw.Document(
+      title: '${plan.title} — ${_tierName(tier)}',
+      author: 'SuperHealth',
+      subject: 'Requested laboratory tests',
+    );
+    final planned = plan.plannedFor == null
+        ? null
+        : DateFormat('dd.MM.yyyy').format(plan.plannedFor!);
+    document.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(40),
+        footer: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            pw.Divider(color: PdfColors.grey400),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  'Prepared by the patient with SuperHealth. Not a medical order.',
+                  style: const pw.TextStyle(
+                    fontSize: 8,
+                    color: PdfColors.grey700,
+                  ),
+                ),
+                pw.Text(
+                  '${context.pageNumber}/${context.pagesCount}',
+                  style: const pw.TextStyle(
+                    fontSize: 8,
+                    color: PdfColors.grey700,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        build: (context) => [
+          pw.Text(
+            'Requested laboratory tests',
+            style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 4),
+          pw.Text(
+            [
+              plan.title,
+              _tierName(tier),
+              if (planned != null) 'Planned visit: $planned',
+            ].join(' · '),
+            style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey800),
+          ),
+          pw.SizedBox(height: 18),
+          if (items.isEmpty)
+            pw.Text(
+              'No tests were selected for this tier.',
+              style: const pw.TextStyle(fontSize: 11),
+            )
+          else ...[
+            for (final item in items) _requestItem(item),
+            pw.SizedBox(height: 10),
+            pw.Text(
+              '${items.length} test(s) requested.',
+              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+            ),
+          ],
+          // Collected once at the end rather than repeated per test: whoever
+          // draws the blood needs the instructions together, before the
+          // appointment, not scattered down a checklist.
+          if (_preparationNotes(items).isNotEmpty) ...[
+            pw.SizedBox(height: 16),
+            pw.Text(
+              'Preparation',
+              style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 4),
+            for (final note in _preparationNotes(items))
+              pw.Bullet(
+                text: note,
+                style: const pw.TextStyle(fontSize: 9),
+                bulletSize: 2,
+              ),
+          ],
+        ],
+      ),
+    );
+    return ExportedFile(
+      fileName: '${_baseName(plan)}-${tier.name}-request.pdf',
+      mimeType: 'application/pdf',
+      bytes: await document.save(),
+    );
+  }
+
+  /// Distinct preparation instructions, in the order their tests appear.
+  ///
+  /// Two tests asking to fast for twelve hours is one instruction, not two.
+  List<String> _preparationNotes(List<LabPlanItem> items) {
+    final seen = <String>{};
+    final notes = <String>[];
+    for (final item in items) {
+      final note = item.preparation.trim();
+      if (note.isEmpty || !seen.add(note.toLowerCase())) continue;
+      notes.add(note);
+    }
+    return notes;
+  }
+
+  pw.Widget _requestItem(LabPlanItem item) => pw.Container(
+    padding: const pw.EdgeInsets.symmetric(vertical: 6),
+    decoration: const pw.BoxDecoration(
+      border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey300)),
+    ),
+    child: pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Container(
+          width: 11,
+          height: 11,
+          margin: const pw.EdgeInsets.only(top: 2, right: 10),
+          decoration: pw.BoxDecoration(border: pw.Border.all()),
+        ),
+        pw.Expanded(
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                item.biomarkerName,
+                style: pw.TextStyle(
+                  fontSize: 12,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              if (item.rationale.trim().isNotEmpty)
+                pw.Text(
+                  item.rationale,
+                  style: const pw.TextStyle(
+                    fontSize: 9,
+                    color: PdfColors.grey800,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
   String _baseName(LabPlan plan) {
     final date = DateFormat(
       'yyyy-MM-dd',

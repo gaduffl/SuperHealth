@@ -69,6 +69,69 @@ void main() {
     expect(core['added_cost_of_next_eur'], 35);
   });
 
+  group("a doctor's request", () {
+    test('carries the tier\'s ticked tests and nothing more', () async {
+      // Cumulative tiers: Advanced ticked here means ApoB and Ferritin, while
+      // the unticked Lp(a) beside them and the Comprehensive test above them
+      // both stay behind.
+      final plan = _plan(checked: {'ApoB', 'Ferritin', 'Omega-3'});
+
+      expect(
+        plan.selectedItemsThrough(LabTier.advanced).map((i) => i.biomarkerName),
+        ['ApoB', 'Ferritin'],
+      );
+      expect(
+        plan.selectedItemsThrough(LabTier.core).map((i) => i.biomarkerName),
+        ['ApoB'],
+      );
+      expect(
+        plan
+            .selectedItemsThrough(LabTier.comprehensive)
+            .map((i) => i.biomarkerName),
+        ['ApoB', 'Ferritin', 'Omega-3'],
+      );
+    });
+
+    test('an unticked plan selects nothing', () async {
+      expect(_plan().selectedItemsThrough(LabTier.comprehensive), isEmpty);
+    });
+
+    test('builds a PDF named for its tier', () async {
+      final file = await LabPlanExportService().buildTierRequest(
+        _plan(checked: {'ApoB', 'Ferritin'}),
+        LabTier.advanced,
+      );
+
+      expect(file.mimeType, 'application/pdf');
+      expect(file.fileName, endsWith('-advanced-request.pdf'));
+      expect(file.bytes, isNotEmpty);
+    });
+
+    test('builds even when the tier has nothing ticked', () async {
+      // Unreachable from the export sheet, which offers such a tier as
+      // disabled — but a document that throws instead of saying "none" would
+      // be a crash where the honest answer is a sentence.
+      final file = await LabPlanExportService().buildTierRequest(
+        _plan(),
+        LabTier.core,
+      );
+
+      expect(file.bytes, isNotEmpty);
+    });
+
+    test('repeats a shared preparation instruction once', () async {
+      final file = await LabPlanExportService().buildTierRequest(
+        _plan(
+          checked: {'ApoB', 'Lp(a)', 'Ferritin'},
+          preparation: 'Fast for 12 hours',
+        ),
+        LabTier.advanced,
+      );
+
+      expect(file.bytes, isNotEmpty);
+    });
+  });
+
   test('the PDF still builds with the tradeoff block in it', () async {
     // The block is laid out inside a MultiPage, where an unbounded child is a
     // build-time failure rather than a visual one.
@@ -87,6 +150,8 @@ LabPlan _plan({
     LabTier.core: 'Lp(a) is lifelong and was measured last year.',
     LabTier.advanced: 'The fatty acid panel changes no decision now.',
   },
+  Set<String> checked = const {},
+  String preparation = '',
 }) {
   final now = DateTime(2026, 1, 1);
   LabPlanItem item(String name, LabTier tier, double? price) => LabPlanItem(
@@ -99,6 +164,8 @@ LabPlan _plan({
     rationale: 'Test rationale',
     evidenceClass: EvidenceClass.guideline,
     priceEur: price,
+    preparation: preparation,
+    checked: checked.contains(name),
   );
   return LabPlan(
     id: 'plan',

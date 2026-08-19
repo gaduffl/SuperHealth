@@ -554,7 +554,8 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   if (context.mounted) await showAppError(context, error);
                 }
               },
-              onExport: () => _export(context, controller, draft.plan),
+              onExport: () =>
+                  _export(context, controller, draft.plan, saved: false),
             )
           else
             Card(
@@ -1040,12 +1041,15 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     priorities.dispose();
   }
 
+  /// [saved] is false for the unsaved draft, whose tests cannot be ticked yet
+  /// and so has nothing to build a doctor's request from.
   Future<void> _export(
     BuildContext context,
     AppController controller,
-    LabPlan plan,
-  ) async {
-    final format = await showModalBottomSheet<LabPlanExportFormat>(
+    LabPlan plan, {
+    bool saved = true,
+  }) async {
+    final choice = await showModalBottomSheet<_ExportChoice>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
@@ -1068,6 +1072,28 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                 ),
               ),
             ),
+            if (saved) ...[
+              ListTile(
+                leading: const Icon(Icons.medical_information_outlined),
+                title: Text(
+                  _labsText(
+                    context,
+                    'PDF for the doctor',
+                    'PDF für die Ärztin oder den Arzt',
+                  ),
+                ),
+                subtitle: Text(
+                  _labsText(
+                    context,
+                    'One tier, only the tests you ticked, without the planning notes.',
+                    'Eine Stufe, nur die angehakten Tests, ohne die Planungshinweise.',
+                  ),
+                ),
+                onTap: () =>
+                    Navigator.pop(context, _ExportChoice.doctorRequest),
+              ),
+              const Divider(height: 1),
+            ],
             for (final format in LabPlanExportFormat.values)
               ListTile(
                 leading: Icon(switch (format) {
@@ -1075,14 +1101,25 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   LabPlanExportFormat.csv => Icons.table_chart_outlined,
                   LabPlanExportFormat.json => Icons.data_object,
                 }),
-                title: Text(format.name.toUpperCase()),
-                onTap: () => Navigator.pop(context, format),
+                title: Text(
+                  _labsText(
+                    context,
+                    'Full plan · ${format.name.toUpperCase()}',
+                    'Vollständiger Plan · ${format.name.toUpperCase()}',
+                  ),
+                ),
+                onTap: () => Navigator.pop(context, _ExportChoice.of(format)),
               ),
           ],
         ),
       ),
     );
-    if (format == null || !context.mounted) return;
+    if (choice == null || !context.mounted) return;
+    if (choice == _ExportChoice.doctorRequest) {
+      await _exportDoctorRequest(context, controller, plan);
+      return;
+    }
+    final format = choice.format!;
     try {
       final file = await controller.exportService.build(plan, format);
       if (!context.mounted) return;
@@ -1115,6 +1152,113 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
       if (context.mounted) await showAppError(context, error);
     }
   }
+
+  /// Exports one tier's ticked tests as the page to hand over.
+  ///
+  /// The tier is asked for rather than assumed: the tiers are cumulative, so
+  /// "the chosen one" is a decision about how much to request at this visit,
+  /// and only the reader knows which they settled on.
+  Future<void> _exportDoctorRequest(
+    BuildContext context,
+    AppController controller,
+    LabPlan plan,
+  ) async {
+    final tier = await showDialog<LabTier>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(_labsText(context, 'Which tier?', 'Welche Stufe?')),
+        children: [
+          for (final tier in LabTier.values)
+            Builder(
+              builder: (context) {
+                final all = plan.itemsThrough(tier);
+                final selected = plan.selectedItemsThrough(tier).length;
+                return ListTile(
+                  // A tier with nothing ticked would export an empty page, so
+                  // it is offered as unavailable rather than as a choice that
+                  // silently produces nothing.
+                  enabled: selected > 0,
+                  title: Text(_shortTierLabel(context, tier)),
+                  subtitle: Text(
+                    selected == 0
+                        ? _labsText(
+                            context,
+                            'Nothing ticked yet',
+                            'Noch nichts angehakt',
+                          )
+                        : _labsText(
+                            context,
+                            '$selected of ${all.length} tests',
+                            '$selected von ${all.length} Tests',
+                          ),
+                  ),
+                  onTap: () => Navigator.pop(context, tier),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+    if (tier == null || !context.mounted) return;
+    try {
+      final file = await controller.exportService.buildTierRequest(plan, tier);
+      if (!context.mounted) return;
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: _labsText(
+          context,
+          'Save ${file.fileName}',
+          '${file.fileName} speichern',
+        ),
+        fileName: file.fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        bytes: file.bytes,
+      );
+      if (path != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _labsText(
+                context,
+                'Saved ${plan.selectedItemsThrough(tier).length} test(s) for the doctor.',
+                '${plan.selectedItemsThrough(tier).length} Test(s) für die Praxis gespeichert.',
+              ),
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
+  }
+
+  String _shortTierLabel(BuildContext context, LabTier tier) => switch (tier) {
+    LabTier.core => _labsText(context, 'Core', 'Basis'),
+    LabTier.advanced => _labsText(context, 'Advanced', 'Erweitert'),
+    LabTier.comprehensive => _labsText(context, 'Comprehensive', 'Umfassend'),
+  };
+}
+
+/// What the export sheet can produce.
+///
+/// The three formats export the whole plan and map straight onto
+/// [LabPlanExportFormat]; the doctor's request is a different document with a
+/// different audience, which is why it is not a fourth format.
+enum _ExportChoice {
+  doctorRequest(null),
+  pdf(LabPlanExportFormat.pdf),
+  csv(LabPlanExportFormat.csv),
+  json(LabPlanExportFormat.json);
+
+  const _ExportChoice(this.format);
+
+  final LabPlanExportFormat? format;
+
+  static _ExportChoice of(LabPlanExportFormat format) => switch (format) {
+    LabPlanExportFormat.pdf => _ExportChoice.pdf,
+    LabPlanExportFormat.csv => _ExportChoice.csv,
+    LabPlanExportFormat.json => _ExportChoice.json,
+  };
 }
 
 Map<String, Measurement> _latestMeasurements(
@@ -2671,6 +2815,14 @@ class _PlanTiers extends StatelessWidget {
                       ),
                     ),
                     children: [
+                      // The ticks are what a doctor's request is built from, so
+                      // setting them for a whole tier has to be one action
+                      // rather than a scroll and a dozen taps.
+                      if (onToggle case final toggle?)
+                        _TierSelection(
+                          items: plan.itemsThrough(tier),
+                          onToggle: toggle,
+                        ),
                       // Named before the tests, because a bundle changes what the tier
                       // costs and the reader has to see why the total is not the sum.
                       for (final applied in costing.appliedPackages)
@@ -2762,6 +2914,54 @@ class _PlanTiers extends StatelessWidget {
       'Umfassend (enthält alle)',
     ),
   };
+}
+
+/// Ticks or clears every test in a tier, and says how many are ticked.
+///
+/// The count is the part that earns its place: the ticks decide what a
+/// doctor's request contains, and a tier collapsed to its header would
+/// otherwise give no sign that half of it was left out.
+class _TierSelection extends StatelessWidget {
+  const _TierSelection({required this.items, required this.onToggle});
+
+  final List<LabPlanItem> items;
+  final Future<void> Function(List<LabPlanItem>, bool) onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final selected = items.where((item) => item.checked).length;
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              _labsText(
+                context,
+                '$selected of ${items.length} selected',
+                '$selected von ${items.length} ausgewählt',
+              ),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: selected == items.length
+                ? null
+                : () => onToggle(items, true),
+            child: Text(_labsText(context, 'Select all', 'Alle auswählen')),
+          ),
+          TextButton(
+            onPressed: selected == 0 ? null : () => onToggle(items, false),
+            child: Text(_labsText(context, 'Clear', 'Zurücksetzen')),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// A bundle the costing applied, presented as one of the tier's line items.
