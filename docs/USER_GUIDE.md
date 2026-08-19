@@ -80,7 +80,7 @@ Elsewhere:
 6. Tick the tests you actually want. **Select all** and **Clear** at the top of a tier set the whole tier at once, and the header says how many of its tests are ticked.
 7. Save the plan or export it to PDF, CSV, or JSON. Known totals use stored EUR prices and disclose missing prices; the verifier summary, warnings, sources, and verification time remain attached to the saved plan and exports.
 
-**PDF for the doctor** exports one tier as a plain list of the tests you ticked — nothing else. No planning disclaimer, no AI verification summary, no note about what a cheaper tier leaves out, and no prices. Each test carries its one-line reason, shared preparation instructions are collected once at the end, and a single line at the foot says the page was prepared by you rather than issued as a medical order. You pick the tier when you export; a tier with nothing ticked is offered as unavailable rather than producing an empty page.
+**PDF for the doctor** exports one tier as a plain list of the tests you ticked — nothing else. No planning disclaimer, no AI verification summary, and no note about what a cheaper tier leaves out. Each test carries its one-line reason and its price, with a total for the selection that says separately how many of the chosen tests have no price recorded. Shared preparation instructions are collected once at the end, and a single line at the foot says the page was prepared by you rather than issued as a medical order. You pick the tier when you export; a tier with nothing ticked is offered as unavailable rather than producing an empty page.
 
 ## Advisor files
 

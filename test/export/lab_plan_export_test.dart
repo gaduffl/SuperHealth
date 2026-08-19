@@ -119,6 +119,30 @@ void main() {
       expect(file.bytes, isNotEmpty);
     });
 
+    test(
+      'totals only the chosen tests, and says what it could not price',
+      () async {
+        // The tier totals more than this: the point of the page is that part of
+        // it was not chosen, so its own arithmetic has to stand alone.
+        final plan = _plan(checked: {'ApoB', 'Lp(a)'});
+
+        expect(plan.knownTotal(LabTier.advanced), 45);
+        expect(
+          plan
+              .selectedItemsThrough(LabTier.advanced)
+              .map((item) => item.priceEur)
+              .fold<double>(0, (sum, price) => sum + (price ?? 0)),
+          30,
+        );
+
+        final file = await LabPlanExportService().buildTierRequest(
+          plan,
+          LabTier.advanced,
+        );
+        expect(file.bytes, isNotEmpty);
+      },
+    );
+
     test('repeats a shared preparation instruction once', () async {
       final file = await LabPlanExportService().buildTierRequest(
         _plan(

@@ -103,10 +103,12 @@ class LabPlanExportService {
               style: const pw.TextStyle(fontSize: 11),
             )
           else ...[
-            for (final item in items) _requestItem(item),
+            for (final item in items) _requestItem(item, plan.currency),
             pw.SizedBox(height: 10),
             pw.Text(
-              '${items.length} test(s) requested.',
+              '${items.length} test(s) requested · '
+              '${_selectedTotal(items).toStringAsFixed(2)} ${plan.currency}'
+              '${_unpricedCount(items) == 0 ? '' : ' + ${_unpricedCount(items)} without a price'}',
               style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
             ),
           ],
@@ -137,6 +139,11 @@ class LabPlanExportService {
     );
   }
 
+  /// Chosen tests carrying no price, so a total is never mistaken for the
+  /// whole bill when part of the list is unknown.
+  int _unpricedCount(List<LabPlanItem> items) =>
+      items.where((item) => !hasLabPrice(item.priceEur)).length;
+
   /// Distinct preparation instructions, in the order their tests appear.
   ///
   /// Two tests asking to fast for twelve hours is one instruction, not two.
@@ -151,7 +158,7 @@ class LabPlanExportService {
     return notes;
   }
 
-  pw.Widget _requestItem(LabPlanItem item) => pw.Container(
+  pw.Widget _requestItem(LabPlanItem item, String currency) => pw.Container(
     padding: const pw.EdgeInsets.symmetric(vertical: 6),
     decoration: const pw.BoxDecoration(
       border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey300)),
@@ -169,12 +176,25 @@ class LabPlanExportService {
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Text(
-                item.biomarkerName,
-                style: pw.TextStyle(
-                  fontSize: 12,
-                  fontWeight: pw.FontWeight.bold,
-                ),
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(
+                    child: pw.Text(
+                      item.biomarkerName,
+                      style: pw.TextStyle(
+                        fontSize: 12,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  pw.Text(
+                    !hasLabPrice(item.priceEur)
+                        ? 'Price missing'
+                        : '${item.priceEur!.toStringAsFixed(2)} $currency',
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ],
               ),
               if (item.rationale.trim().isNotEmpty)
                 pw.Text(
@@ -190,6 +210,15 @@ class LabPlanExportService {
       ],
     ),
   );
+
+  /// What the chosen tests cost together, counting only the ones with a price.
+  ///
+  /// Kept separate from [LabPlan.knownTotal], which totals a whole tier: the
+  /// point of this page is that some of that tier was not chosen.
+  double _selectedTotal(List<LabPlanItem> items) => items
+      .map((item) => item.priceEur)
+      .where(hasLabPrice)
+      .fold<double>(0, (total, price) => total + price!);
 
   String _baseName(LabPlan plan) {
     final date = DateFormat(
