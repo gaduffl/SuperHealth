@@ -27,6 +27,7 @@ import 'common.dart';
 import 'biomarker_package_screen.dart';
 import 'dialogs.dart';
 import 'lab_price_screen.dart';
+import 'lab_report_screen.dart';
 import 'dose_underlay.dart';
 import 'temporary_biomarker_resolution_screen.dart';
 
@@ -407,23 +408,202 @@ class _LabsScreenState extends State<LabsScreen> {
   void _openWorkspace({String? initialStatus}) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          appBar: AppBar(
-            title: Text(
-              _labsText(context, 'Biomarker management', 'Biomarkerverwaltung'),
-            ),
-          ),
-          body: _BiomarkerWorkspaceScreen(initialStatus: initialStatus),
-        ),
+        // A status filter is a request for one section, and that section
+        // builds its own scaffold; only the hub needs one wrapped around it.
+        builder: (_) => initialStatus != null
+            ? _BiomarkerWorkspaceScreen(initialStatus: initialStatus)
+            : Scaffold(
+                appBar: AppBar(
+                  title: Text(
+                    _labsText(
+                      context,
+                      'Biomarker management',
+                      'Biomarkerverwaltung',
+                    ),
+                  ),
+                ),
+                body: const _BiomarkerWorkspaceScreen(),
+              ),
       ),
     );
   }
 }
 
-class _BiomarkerWorkspaceScreen extends StatelessWidget {
-  const _BiomarkerWorkspaceScreen({this.initialStatus});
+/// The entry points into biomarker management, with what each one holds.
+///
+/// The counts are the point: a button that says "12 reports" is a decision the
+/// reader can make before tapping, where a bare label is a guess.
+class _WorkspaceHub extends StatelessWidget {
+  const _WorkspaceHub({required this.controller, required this.onOpen});
 
+  final AppController controller;
+  final void Function(_WorkspaceSection section) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final plans = controller.labPlans.length;
+    final due = controller.dueBiomarkers.length;
+    return PageBody(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        children: [
+          _HubTile(
+            icon: Icons.checklist_rtl_outlined,
+            title: _labsText(
+              context,
+              'Lab visit planner',
+              'Laborbesuch planen',
+            ),
+            detail: controller.draftLabPlan != null
+                ? _labsText(
+                    context,
+                    'An unsaved draft is waiting',
+                    'Ein ungespeicherter Entwurf wartet',
+                  )
+                : _labsText(
+                    context,
+                    plans == 1 ? '1 saved plan' : '$plans saved plans',
+                    plans == 1
+                        ? '1 gespeicherter Plan'
+                        : '$plans gespeicherte Pläne',
+                  ),
+            onTap: () => onOpen(_WorkspaceSection.plans),
+          ),
+          _HubTile(
+            icon: Icons.science_outlined,
+            title: _labsText(context, 'Biomarker catalog', 'Biomarkerkatalog'),
+            detail: _labsText(
+              context,
+              '${controller.biomarkers.length} tests · ${controller.measurements.length} results',
+              '${controller.biomarkers.length} Tests · ${controller.measurements.length} Ergebnisse',
+            ),
+            onTap: () => onOpen(_WorkspaceSection.catalog),
+          ),
+          _HubTile(
+            icon: Icons.picture_as_pdf_outlined,
+            title: _labsText(context, 'Lab documents', 'Labordokumente'),
+            detail: _labsText(
+              context,
+              controller.documents.length == 1
+                  ? '1 imported report'
+                  : '${controller.documents.length} imported reports',
+              controller.documents.length == 1
+                  ? '1 importierter Bericht'
+                  : '${controller.documents.length} importierte Berichte',
+            ),
+            onTap: () => onOpen(_WorkspaceSection.documents),
+          ),
+          // Only when something is actually due: an entry that always reads
+          // "0 due" trains the reader to ignore it.
+          if (due > 0)
+            _HubTile(
+              icon: Icons.event_repeat_outlined,
+              title: _labsText(
+                context,
+                'Due for retest',
+                'Erneute Messung fällig',
+              ),
+              detail: _labsText(
+                context,
+                due == 1 ? '1 biomarker due' : '$due biomarkers due',
+                due == 1 ? '1 Biomarker fällig' : '$due Biomarker fällig',
+              ),
+              tone: Theme.of(context).colorScheme.error,
+              onTap: () => onOpen(_WorkspaceSection.due),
+            ),
+          _HubTile(
+            icon: Icons.inventory_2_outlined,
+            title: _labsText(context, 'Test packages', 'Testpakete'),
+            detail: _labsText(
+              context,
+              '${controller.biomarkerPackages.length} priced bundles',
+              '${controller.biomarkerPackages.length} Pakete mit Preis',
+            ),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const BiomarkerPackageScreen(),
+              ),
+            ),
+          ),
+          _HubTile(
+            icon: Icons.euro_outlined,
+            title: _labsText(context, 'Lab prices', 'Laborpreise'),
+            detail: _labsText(
+              context,
+              '${controller.biomarkers.where((item) => item.hasPrice).length} of ${controller.biomarkers.length} tests priced',
+              '${controller.biomarkers.where((item) => item.hasPrice).length} von ${controller.biomarkers.length} Tests mit Preis',
+            ),
+            onTap: controller.busy
+                ? null
+                : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const LabPriceScreen(),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HubTile extends StatelessWidget {
+  const _HubTile({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.onTap,
+    this.tone,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+  final VoidCallback? onTap;
+  final Color? tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: CircleAvatar(
+          backgroundColor: (tone ?? theme.colorScheme.primary).withValues(
+            alpha: 0.14,
+          ),
+          child: Icon(icon, color: tone ?? theme.colorScheme.primary),
+        ),
+        title: Text(title, style: theme.textTheme.titleMedium),
+        subtitle: Text(detail),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+/// The parts of biomarker management, each its own page.
+enum _WorkspaceSection { plans, due, documents, catalog }
+
+/// The workspace, as a hub or as one of its sections.
+///
+/// It used to be a single scroll holding all four: the planner, what is due,
+/// the reports, and the catalog — so reaching the catalog meant scrolling past
+/// every saved plan and every PDF ever imported, and nothing on screen said
+/// how much further it went. One page per section, reached from a hub that
+/// names them and counts what is inside, replaces that.
+class _BiomarkerWorkspaceScreen extends StatelessWidget {
+  const _BiomarkerWorkspaceScreen({this.initialStatus, this.section});
+
+  /// A status filter from a Today tile, which is a request for the catalog
+  /// already filtered — so it opens that section directly rather than a hub
+  /// the user would have to step through.
   final String? initialStatus;
+
+  /// Null shows the hub.
+  final _WorkspaceSection? section;
 
   @override
   Widget build(BuildContext context) {
@@ -437,320 +617,343 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
         latestByBiomarker[measurement.biomarkerId] = measurement;
       }
     }
-    return PageBody(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
-        children: [
-          SectionHeader(
-            title: _labsText(
-              context,
-              'Lab visit planner',
-              'Laborbesuch planen',
-            ),
-            subtitle: _labsText(
-              context,
-              'Three cumulative tiers priced from your biomarker catalog',
-              'Drei aufeinander aufbauende Stufen mit Preisen aus deinem Biomarkerkatalog',
-            ),
-            action: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton.filledTonal(
-                  tooltip: _labsText(
-                    context,
-                    'Import lab PDF',
-                    'Labor-PDF importieren',
-                  ),
-                  onPressed: controller.busy
-                      ? null
-                      : () => _importLabPdf(context, controller),
-                  icon: const Icon(Icons.document_scanner_outlined),
-                ),
-                const SizedBox(width: 6),
-                IconButton.filledTonal(
-                  tooltip: _labsText(context, 'Test packages', 'Testpakete'),
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const BiomarkerPackageScreen(),
-                    ),
-                  ),
-                  icon: const Icon(Icons.inventory_2_outlined),
-                ),
-                const SizedBox(width: 6),
-                IconButton.filledTonal(
-                  tooltip: _labsText(
-                    context,
-                    'Update lab prices',
-                    'Laborpreise aktualisieren',
-                  ),
-                  onPressed: controller.busy
-                      ? null
-                      : () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const LabPriceScreen(),
-                          ),
-                        ),
-                  icon: const Icon(Icons.euro_outlined),
-                ),
-                const SizedBox(width: 6),
-                FilledButton.icon(
-                  onPressed: controller.busy || controller.biomarkers.isEmpty
-                      ? null
-                      : () => _generate(context, controller),
-                  icon: const Icon(Icons.auto_awesome),
-                  label: Text(_labsText(context, 'Plan', 'Planen')),
-                ),
-              ],
-            ),
+    final target =
+        section ?? (initialStatus == null ? null : _WorkspaceSection.catalog);
+    if (target == null) {
+      return _WorkspaceHub(
+        controller: controller,
+        onOpen: (chosen) => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => _BiomarkerWorkspaceScreen(section: chosen),
           ),
-          if (controller.labPlanStage != null)
-            _LabPlanProgressCard(
-              stage: controller.labPlanStage!,
-              startedAt: controller.labPlanStartedAt,
-              survivesBackground: controller.labPlanSurvivesBackground,
-              activity: controller.labPlanActivity,
-              activityAt: controller.labPlanActivityAt,
-            ),
-          if (controller.biomarkers.isEmpty)
-            EmptyState(
-              icon: Icons.science_outlined,
-              title: _labsText(
-                context,
-                'Import or add your biomarker catalog first',
-                'Importiere oder ergänze zuerst deinen Biomarkerkatalog',
-              ),
-              message: _labsText(
-                context,
-                'The planner only selects known biomarkers and calculates tiers from stored EUR prices.',
-                'Die Planung wählt nur bekannte Biomarker und berechnet die Stufen aus den gespeicherten Euro-Preisen.',
-              ),
-              action: FilledButton.tonal(
-                onPressed: () => showAddBiomarkerDialog(context, controller),
-                child: Text(
-                  _labsText(context, 'Add biomarker', 'Biomarker hinzufügen'),
+        ),
+      );
+    }
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          _labsText(context, 'Biomarker management', 'Biomarkerverwaltung'),
+        ),
+      ),
+      body: PageBody(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
+          children: switch (target) {
+            _WorkspaceSection.plans => [
+              SectionHeader(
+                title: _labsText(
+                  context,
+                  'Lab visit planner',
+                  'Laborbesuch planen',
                 ),
-              ),
-            )
-          else if (controller.draftLabPlan case final draft?)
-            _DraftPlanCard(
-              generation: draft,
-              onSave: () async {
-                try {
-                  await controller.saveDraftLabPlan();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          _labsText(
-                            context,
-                            'Lab plan saved.',
-                            'Laborplan gespeichert.',
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-                } on Object catch (error) {
-                  if (context.mounted) await showAppError(context, error);
-                }
-              },
-              onExport: () =>
-                  _export(context, controller, draft.plan, saved: false),
-            )
-          else
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
+                subtitle: _labsText(
+                  context,
+                  'Three cumulative tiers priced from your biomarker catalog',
+                  'Drei aufeinander aufbauende Stufen mit Preisen aus deinem Biomarkerkatalog',
+                ),
+                action: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.auto_awesome_outlined,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        _labsText(
-                          context,
-                          'The advisor will review the complete active profile, including past '
-                              'results, supplements, conditions, medicines, goals, symptoms, and prices.',
-                          'Die Beratung prüft das vollständige aktive Profil einschließlich früherer '
-                              'Ergebnisse, Nahrungsergänzungen, Erkrankungen, Medikamente, Ziele, Symptome und Preise.',
-                        ),
+                    IconButton.filledTonal(
+                      tooltip: _labsText(
+                        context,
+                        'Import lab PDF',
+                        'Labor-PDF importieren',
                       ),
+                      onPressed: controller.busy
+                          ? null
+                          : () => _importLabPdf(context, controller),
+                      icon: const Icon(Icons.document_scanner_outlined),
+                    ),
+                    // Packages and prices moved to the hub, which names them
+                    // and says how many of each there are. Two unlabelled
+                    // icons here were a second, worse door to the same rooms.
+                    const SizedBox(width: 6),
+                    FilledButton.icon(
+                      onPressed:
+                          controller.busy || controller.biomarkers.isEmpty
+                          ? null
+                          : () => _generate(context, controller),
+                      icon: const Icon(Icons.auto_awesome),
+                      label: Text(_labsText(context, 'Plan', 'Planen')),
                     ),
                   ],
                 ),
               ),
-            ),
-          if (controller.labPlans.isNotEmpty) ...[
-            SectionHeader(
-              title: _labsText(context, 'Saved plans', 'Gespeicherte Pläne'),
-            ),
-            for (final plan in controller.labPlans)
-              _SavedPlanCard(
-                plan: plan,
-                onExport: () => _export(context, controller, plan),
-                onToggle: (items, checked) => controller.setLabPlanItemsChecked(
-                  plan,
-                  {for (final item in items) item.id},
-                  checked,
+              if (controller.labPlanStage != null)
+                _LabPlanProgressCard(
+                  stage: controller.labPlanStage!,
+                  startedAt: controller.labPlanStartedAt,
+                  survivesBackground: controller.labPlanSurvivesBackground,
+                  activity: controller.labPlanActivity,
+                  activityAt: controller.labPlanActivityAt,
                 ),
-                onDelete: () async {
-                  final confirmed = await showConfirmAction(
+              if (controller.biomarkers.isEmpty)
+                EmptyState(
+                  icon: Icons.science_outlined,
+                  title: _labsText(
                     context,
-                    title: _labsText(
-                      context,
-                      'Delete ${plan.title}?',
-                      '${plan.title} löschen?',
-                    ),
-                    message: _labsText(
-                      context,
-                      'The exported files, if any, are not affected.',
-                      'Bereits exportierte Dateien bleiben erhalten.',
-                    ),
-                    confirmLabel: _labsText(context, 'Delete', 'Löschen'),
-                    destructive: true,
-                  );
-                  if (confirmed) await controller.deleteLabPlan(plan);
-                },
-              ),
-          ],
-          if (controller.dueBiomarkers.isNotEmpty) ...[
-            SectionHeader(
-              title: _labsText(
-                context,
-                'Due for retest',
-                'Erneute Messung fällig',
-              ),
-              subtitle: _labsText(
-                context,
-                'From the active profile’s saved biomarker lists',
-                'Aus den gespeicherten Biomarkerlisten des aktiven Profils',
-              ),
-            ),
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (final due in controller.dueBiomarkers)
-                    ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.event_repeat_outlined),
-                      ),
-                      title: Text(due.biomarker.displayName),
-                      subtitle: Text(
-                        '${listMembershipLabel(AppLocalizations.of(context), due.listNames)} · ${_labsText(context, 'every ${due.intervalDays} days', 'alle ${due.intervalDays} Tage')} · '
-                        '${due.lastMeasuredAt == null ? _labsText(context, 'never measured', 'noch nie gemessen') : _labsText(context, '${due.daysOverdue} days overdue', '${due.daysOverdue} Tage überfällig')}',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => showBiomarkerDetail(context, due.biomarker),
-                    ),
-                ],
-              ),
-            ),
-          ],
-          if (controller.documents.isNotEmpty) ...[
-            SectionHeader(
-              title: _labsText(context, 'Lab documents', 'Labordokumente'),
-              subtitle: _labsText(
-                context,
-                'Reviewed PDF imports and their extraction status',
-                'Geprüfte PDF-Importe und ihr Extraktionsstatus',
-              ),
-            ),
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (final document in controller.documents)
-                    ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.picture_as_pdf_outlined),
-                      ),
-                      title: Text(document.fileName),
-                      subtitle: Text(
-                        [
-                          if (document.labName?.isNotEmpty == true)
-                            document.labName!,
-                          if (document.documentDate != null)
-                            DateFormat(
-                              'dd.MM.yyyy',
-                            ).format(document.documentDate!),
-                          '${document.parserProvider ?? 'import'} · ${document.parserModel ?? 'legacy'}',
-                        ].join(' · '),
-                      ),
-                      trailing: Icon(
-                        document.oneDriveItemId == null
-                            ? Icons.phone_android
-                            : Icons.cloud_done_outlined,
-                      ),
-                      onTap: () => _showDocument(context, controller, document),
-                    ),
-                ],
-              ),
-            ),
-          ],
-          SectionHeader(
-            title: _labsText(context, 'Biomarker catalog', 'Biomarkerkatalog'),
-            subtitle: _labsText(
-              context,
-              '${controller.biomarkers.length} tests · ${controller.measurements.length} results',
-              '${controller.biomarkers.length} Tests · ${controller.measurements.length} Ergebnisse',
-            ),
-            action: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton.filledTonal(
-                  tooltip: _labsText(
-                    context,
-                    'Saved biomarker lists',
-                    'Gespeicherte Biomarkerlisten',
+                    'Import or add your biomarker catalog first',
+                    'Importiere oder ergänze zuerst deinen Biomarkerkatalog',
                   ),
-                  onPressed: () => showBiomarkerListsSheet(context, controller),
-                  icon: const Icon(Icons.checklist_outlined),
+                  message: _labsText(
+                    context,
+                    'The planner only selects known biomarkers and calculates tiers from stored EUR prices.',
+                    'Die Planung wählt nur bekannte Biomarker und berechnet die Stufen aus den gespeicherten Euro-Preisen.',
+                  ),
+                  action: FilledButton.tonal(
+                    onPressed: () =>
+                        showAddBiomarkerDialog(context, controller),
+                    child: Text(
+                      _labsText(
+                        context,
+                        'Add biomarker',
+                        'Biomarker hinzufügen',
+                      ),
+                    ),
+                  ),
+                )
+              else if (controller.draftLabPlan case final draft?)
+                _DraftPlanCard(
+                  generation: draft,
+                  onSave: () async {
+                    try {
+                      await controller.saveDraftLabPlan();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              _labsText(
+                                context,
+                                'Lab plan saved.',
+                                'Laborplan gespeichert.',
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                    } on Object catch (error) {
+                      if (context.mounted) await showAppError(context, error);
+                    }
+                  },
+                  onExport: () =>
+                      _export(context, controller, draft.plan, saved: false),
+                )
+              else
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.auto_awesome_outlined,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            _labsText(
+                              context,
+                              'The advisor will review the complete active profile, including past '
+                                  'results, supplements, conditions, medicines, goals, symptoms, and prices.',
+                              'Die Beratung prüft das vollständige aktive Profil einschließlich früherer '
+                                  'Ergebnisse, Nahrungsergänzungen, Erkrankungen, Medikamente, Ziele, Symptome und Preise.',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                if (controller.biomarkers.any((item) => item.isTemporary)) ...[
-                  const SizedBox(width: 6),
-                  IconButton.filledTonal(
-                    tooltip: _labsText(
-                      context,
-                      'Resolve temporary biomarkers',
-                      'Temporäre Biomarker zuordnen',
-                    ),
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) =>
-                            const TemporaryBiomarkerResolutionScreen(),
-                      ),
-                    ),
-                    icon: const Icon(Icons.merge_type_outlined),
-                  ),
-                ],
-                const SizedBox(width: 6),
-                IconButton.filledTonal(
-                  tooltip: _labsText(
+              if (controller.labPlans.isNotEmpty) ...[
+                SectionHeader(
+                  title: _labsText(
                     context,
-                    'Add biomarker',
-                    'Biomarker hinzufügen',
+                    'Saved plans',
+                    'Gespeicherte Pläne',
                   ),
-                  onPressed: () => showAddBiomarkerDialog(context, controller),
-                  icon: const Icon(Icons.add),
+                ),
+                for (final plan in controller.labPlans)
+                  _SavedPlanCard(
+                    plan: plan,
+                    onExport: () => _export(context, controller, plan),
+                    onToggle: (items, checked) =>
+                        controller.setLabPlanItemsChecked(plan, {
+                          for (final item in items) item.id,
+                        }, checked),
+                    onDelete: () async {
+                      final confirmed = await showConfirmAction(
+                        context,
+                        title: _labsText(
+                          context,
+                          'Delete ${plan.title}?',
+                          '${plan.title} löschen?',
+                        ),
+                        message: _labsText(
+                          context,
+                          'The exported files, if any, are not affected.',
+                          'Bereits exportierte Dateien bleiben erhalten.',
+                        ),
+                        confirmLabel: _labsText(context, 'Delete', 'Löschen'),
+                        destructive: true,
+                      );
+                      if (confirmed) await controller.deleteLabPlan(plan);
+                    },
+                  ),
+              ],
+            ],
+            _WorkspaceSection.due => [
+              if (controller.dueBiomarkers.isNotEmpty) ...[
+                SectionHeader(
+                  title: _labsText(
+                    context,
+                    'Due for retest',
+                    'Erneute Messung fällig',
+                  ),
+                  subtitle: _labsText(
+                    context,
+                    'From the active profile’s saved biomarker lists',
+                    'Aus den gespeicherten Biomarkerlisten des aktiven Profils',
+                  ),
+                ),
+                Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      for (final due in controller.dueBiomarkers)
+                        ListTile(
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.event_repeat_outlined),
+                          ),
+                          title: Text(due.biomarker.displayName),
+                          subtitle: Text(
+                            '${listMembershipLabel(AppLocalizations.of(context), due.listNames)} · ${_labsText(context, 'every ${due.intervalDays} days', 'alle ${due.intervalDays} Tage')} · '
+                            '${due.lastMeasuredAt == null ? _labsText(context, 'never measured', 'noch nie gemessen') : _labsText(context, '${due.daysOverdue} days overdue', '${due.daysOverdue} Tage überfällig')}',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () =>
+                              showBiomarkerDetail(context, due.biomarker),
+                        ),
+                    ],
+                  ),
                 ),
               ],
-            ),
-          ),
-          if (controller.biomarkers.isNotEmpty && activeProfile != null)
-            _BiomarkerCatalog(
-              controller: controller,
-              latestByBiomarker: latestByBiomarker,
-              profile: activeProfile,
-              now: now,
-              statusRequest: initialStatus == null
-                  ? null
-                  : (token: -1, status: initialStatus!),
-            ),
-        ],
+            ],
+            _WorkspaceSection.documents => [
+              if (controller.documents.isNotEmpty) ...[
+                SectionHeader(
+                  title: _labsText(context, 'Lab documents', 'Labordokumente'),
+                  subtitle: _labsText(
+                    context,
+                    'Reviewed PDF imports and their extraction status',
+                    'Geprüfte PDF-Importe und ihr Extraktionsstatus',
+                  ),
+                ),
+                Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      for (final document in controller.documents)
+                        ListTile(
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.picture_as_pdf_outlined),
+                          ),
+                          title: Text(document.fileName),
+                          subtitle: Text(
+                            [
+                              if (document.labName?.isNotEmpty == true)
+                                document.labName!,
+                              if (document.documentDate != null)
+                                DateFormat(
+                                  'dd.MM.yyyy',
+                                ).format(document.documentDate!),
+                              '${document.parserProvider ?? 'import'} · ${document.parserModel ?? 'legacy'}',
+                            ].join(' · '),
+                          ),
+                          trailing: Icon(
+                            document.oneDriveItemId == null
+                                ? Icons.phone_android
+                                : Icons.cloud_done_outlined,
+                          ),
+                          onTap: () =>
+                              _showDocument(context, controller, document),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+            _WorkspaceSection.catalog => [
+              SectionHeader(
+                title: _labsText(
+                  context,
+                  'Biomarker catalog',
+                  'Biomarkerkatalog',
+                ),
+                subtitle: _labsText(
+                  context,
+                  '${controller.biomarkers.length} tests · ${controller.measurements.length} results',
+                  '${controller.biomarkers.length} Tests · ${controller.measurements.length} Ergebnisse',
+                ),
+                action: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton.filledTonal(
+                      tooltip: _labsText(
+                        context,
+                        'Saved biomarker lists',
+                        'Gespeicherte Biomarkerlisten',
+                      ),
+                      onPressed: () =>
+                          showBiomarkerListsSheet(context, controller),
+                      icon: const Icon(Icons.checklist_outlined),
+                    ),
+                    if (controller.biomarkers.any(
+                      (item) => item.isTemporary,
+                    )) ...[
+                      const SizedBox(width: 6),
+                      IconButton.filledTonal(
+                        tooltip: _labsText(
+                          context,
+                          'Resolve temporary biomarkers',
+                          'Temporäre Biomarker zuordnen',
+                        ),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                const TemporaryBiomarkerResolutionScreen(),
+                          ),
+                        ),
+                        icon: const Icon(Icons.merge_type_outlined),
+                      ),
+                    ],
+                    const SizedBox(width: 6),
+                    IconButton.filledTonal(
+                      tooltip: _labsText(
+                        context,
+                        'Add biomarker',
+                        'Biomarker hinzufügen',
+                      ),
+                      onPressed: () =>
+                          showAddBiomarkerDialog(context, controller),
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+              ),
+              if (controller.biomarkers.isNotEmpty && activeProfile != null)
+                _BiomarkerCatalog(
+                  controller: controller,
+                  latestByBiomarker: latestByBiomarker,
+                  profile: activeProfile,
+                  now: now,
+                  statusRequest: initialStatus == null
+                      ? null
+                      : (token: -1, status: initialStatus!),
+                ),
+            ],
+          },
+        ),
       ),
     );
   }
@@ -777,6 +980,20 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   '${controller.measurements.where((item) => item.documentId == document.id).length} verknüpfte Ergebnisse',
                 ),
               ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.fact_check_outlined),
+              title: Text(
+                _labsText(context, 'View extraction', 'Extraktion ansehen'),
+              ),
+              subtitle: Text(
+                _labsText(
+                  context,
+                  'Every result read from this PDF, and the PDF itself',
+                  'Alle aus dieser PDF gelesenen Ergebnisse und die PDF selbst',
+                ),
+              ),
+              onTap: () => Navigator.pop(context, 'view'),
             ),
             ListTile(
               leading: const Icon(Icons.edit_outlined),
@@ -808,7 +1025,9 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
       ),
     );
     if (!context.mounted || action == null) return;
-    if (action == 'edit') {
+    if (action == 'view') {
+      await showLabReport(context, document);
+    } else if (action == 'edit') {
       await _editDocument(context, controller, document);
     } else {
       final confirmed = await showConfirmAction(

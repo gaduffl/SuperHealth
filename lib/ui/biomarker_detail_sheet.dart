@@ -1,11 +1,9 @@
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
@@ -14,6 +12,7 @@ import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import 'lab_report_screen.dart';
 import 'reference_range_tools.dart';
 
 String _detailText(BuildContext context, String english, String german) =>
@@ -769,12 +768,24 @@ class _BiomarkerDetail extends StatelessWidget {
                             ],
                             child: _StatusIndicator(status: status),
                           ),
-                          onTap: () => showAddMeasurementDialog(
-                            context,
-                            controller,
-                            biomarker,
-                            existing: value,
-                          ),
+                          // A reading extracted from a report opens that
+                          // report: the value is a claim about a document, and
+                          // this is the shortest path from one to the other.
+                          // A hand-entered reading has no document behind it,
+                          // so tapping it still opens the editor. Editing a
+                          // parsed one moved to the menu beside it.
+                          onTap: document != null
+                              ? () => showLabReport(
+                                  context,
+                                  document,
+                                  highlightMeasurementId: value.id,
+                                )
+                              : () => showAddMeasurementDialog(
+                                  context,
+                                  controller,
+                                  biomarker,
+                                  existing: value,
+                                ),
                         );
                       },
                     ),
@@ -821,12 +832,14 @@ class _BiomarkerDetail extends StatelessWidget {
   }
 }
 
-/// The report a reading was extracted from, and a way to open it.
+/// The report a reading was extracted from, and a way into it.
 ///
 /// A parsed number is a claim about a document. Being able to reach that
 /// document from the number is what makes the claim checkable — otherwise
 /// verifying one surprising value means hunting through the report list by
-/// date and hoping.
+/// date and hoping. It opens the extraction overview rather than the file:
+/// the other rows the same report produced are usually what settles whether
+/// one of them is wrong.
 class _SourceDocumentLink extends StatelessWidget {
   const _SourceDocumentLink({required this.document, this.page});
 
@@ -863,7 +876,7 @@ class _SourceDocumentLink extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: InkWell(
-        onTap: () => _open(context, source),
+        onTap: () => showLabReport(context, source),
         borderRadius: BorderRadius.circular(6),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 2),
@@ -891,42 +904,6 @@ class _SourceDocumentLink extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  /// Hands the file to the system so it opens in a PDF viewer.
-  ///
-  /// A report that exists only in OneDrive has no local file to open yet, and
-  /// the honest answer there is to say which sync brings it back rather than
-  /// to fail silently.
-  Future<void> _open(BuildContext context, HealthDocument source) async {
-    final path = source.localPath?.trim() ?? '';
-    if (path.isEmpty || !File(path).existsSync()) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            source.oneDriveItemId == null
-                ? _detailText(
-                    context,
-                    'The PDF for ${source.fileName} is not stored on this device.',
-                    'Die PDF-Datei für ${source.fileName} liegt nicht auf diesem Gerät.',
-                  )
-                : _detailText(
-                    context,
-                    '${source.fileName} is in OneDrive and arrives with the next sync.',
-                    '${source.fileName} liegt in OneDrive und kommt mit der nächsten Synchronisierung.',
-                  ),
-          ),
-        ),
-      );
-      return;
-    }
-    await SharePlus.instance.share(
-      ShareParams(
-        files: [XFile(path, mimeType: source.mimeType)],
-        subject: source.fileName,
       ),
     );
   }
