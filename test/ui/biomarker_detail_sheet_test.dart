@@ -167,6 +167,57 @@ void main() {
 
     expect(find.text('Glucose'), findsNothing);
   });
+
+  testWidgets('add to list ticks the lists the marker is already on', (
+    tester,
+  ) async {
+    // The lists sheet asks "what is on this list" and makes you find the
+    // marker in a dropdown of the whole catalog. From the marker's own page
+    // the question runs the other way, so the marker is fixed and the lists
+    // are what you tick — including the ones it is already on.
+    final controller = _seededController(
+      lists: [
+        _list(
+          id: 'annual',
+          name: 'Annual baseline',
+          items: [_listItem(listId: 'annual', dueIntervalDays: 365)],
+        ),
+        _list(id: 'iron', name: 'Iron follow-up'),
+      ],
+    );
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await _settleSheet(tester);
+    await tester.tap(find.text('Add to list').last);
+    await _settleSheet(tester);
+
+    expect(find.text('Annual baseline'), findsOneWidget);
+    expect(find.text('Iron follow-up'), findsOneWidget);
+    expect(find.text('Already on this list · every 365 days'), findsOneWidget);
+    final boxes = tester
+        .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+        .toList();
+    expect(boxes.map((box) => box.value), [true, false]);
+  });
+
+  testWidgets('with no lists the dialog offers to create one', (tester) async {
+    // Otherwise a phone that has never made a list reaches a dead end here and
+    // has to be sent off to find the lists sheet first.
+    final controller = _seededController();
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await _settleSheet(tester);
+    await tester.tap(find.text('Add to list').last);
+    await _settleSheet(tester);
+
+    expect(find.byType(CheckboxListTile), findsNothing);
+    expect(find.textContaining('No lists yet'), findsOneWidget);
+    expect(find.text('New list'), findsOneWidget);
+  });
 }
 
 Biomarker _glucose({
@@ -262,6 +313,7 @@ _TestController _seededController({
   String description = '',
   List<Measurement> measurements = const [],
   List<HealthDocument> documents = const [],
+  List<BiomarkerList> lists = const [],
 }) {
   final database = AppDatabase(
     factory: databaseFactoryFfi,
@@ -315,8 +367,32 @@ _TestController _seededController({
     ..activeProfile = profile
     ..biomarkers = [_glucose(description: description)]
     ..measurements = measurements
-    ..documents = documents;
+    ..documents = documents
+    ..biomarkerLists = lists;
 }
+
+BiomarkerList _list({
+  required String id,
+  required String name,
+  List<BiomarkerListItem> items = const [],
+}) => BiomarkerList(
+  id: id,
+  profileId: 'profile',
+  name: name,
+  createdAt: DateTime(2026, 1, 1),
+  updatedAt: DateTime(2026, 1, 1),
+  items: items,
+);
+
+BiomarkerListItem _listItem({required String listId, int? dueIntervalDays}) =>
+    BiomarkerListItem(
+      id: '$listId-glucose',
+      listId: listId,
+      biomarkerId: 'glucose',
+      dueIntervalDays: dueIntervalDays,
+      createdAt: DateTime(2026, 1, 1),
+      updatedAt: DateTime(2026, 1, 1),
+    );
 
 Measurement _reading({
   required String id,

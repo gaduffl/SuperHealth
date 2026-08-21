@@ -1705,6 +1705,52 @@ class AppController extends ChangeNotifier {
     return (added: added, alreadyPresent: present);
   });
 
+  /// Puts [biomarker] on exactly the lists named by [listIds], and off the rest.
+  ///
+  /// A membership that is already there is left completely alone. Its retest
+  /// interval and notes were chosen for that marker on that list, and ticking
+  /// a box that was already ticked is not a request to reset them; only a new
+  /// membership takes [dueIntervalDays].
+  ///
+  /// Returns what actually changed, so a caller can say "added to two lists"
+  /// rather than claiming work that a no-op dialog never did.
+  Future<({int added, int removed})> setBiomarkerListMemberships({
+    required Biomarker biomarker,
+    required Set<String> listIds,
+    int? dueIntervalDays,
+  }) => _withBusy(() async {
+    if (dueIntervalDays != null && dueIntervalDays <= 0) {
+      throw StateError('The retest interval must be a positive number.');
+    }
+    var added = 0;
+    var removed = 0;
+    final now = DateTime.now();
+    for (final list in biomarkerLists) {
+      final existing = list.items.firstWhereOrNull(
+        (item) => item.biomarkerId == biomarker.id,
+      );
+      final wanted = listIds.contains(list.id);
+      if (wanted && existing == null) {
+        await repository.saveBiomarkerListItem(
+          BiomarkerListItem(
+            id: repository.newId(),
+            listId: list.id,
+            biomarkerId: biomarker.id,
+            dueIntervalDays: dueIntervalDays,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+        added++;
+      } else if (!wanted && existing != null) {
+        await repository.softDelete('biomarker_list_items', existing.id);
+        removed++;
+      }
+    }
+    if (added > 0 || removed > 0) await refreshActiveData();
+    return (added: added, removed: removed);
+  });
+
   Future<void> removeBiomarkerListItem(BiomarkerListItem item) async {
     await repository.softDelete('biomarker_list_items', item.id);
     await refreshActiveData();

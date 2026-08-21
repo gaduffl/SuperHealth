@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 
 import '../app/app_controller.dart';
@@ -511,9 +512,251 @@ class _ListCard extends StatelessWidget {
   }
 }
 
-extension<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
+/// Puts one biomarker onto lists, from the biomarker's own side.
+///
+/// The lists sheet answers "what is on this list", and adding a marker there
+/// means finding it in a dropdown of the whole catalog. This answers the
+/// question you actually have while looking at a result — "which lists should
+/// this be on" — so the marker is fixed and the lists are what you tick.
+Future<void> showAddBiomarkerToListDialog(
+  BuildContext context,
+  AppController controller,
+  Biomarker biomarker,
+) async {
+  final selected = _listIdsHolding(controller, biomarker);
+  final interval = TextEditingController(text: '365');
+  try {
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setState) => AnimatedBuilder(
+          // A list created from inside this dialog has to appear in it.
+          animation: controller,
+          builder: (context, _) => AlertDialog(
+            title: Text(
+              _listsText(context, 'Add to list', 'Zur Liste hinzufügen'),
+            ),
+            content: SizedBox(
+              width: 380,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    biomarker.displayName,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  if (controller.biomarkerLists.isEmpty)
+                    Text(
+                      _listsText(
+                        context,
+                        'No lists yet. Create one to schedule this test for retesting.',
+                        'Noch keine Listen. Erstelle eine, um diesen Test zur Wiederholung einzuplanen.',
+                      ),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    )
+                  else
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final list in controller.biomarkerLists)
+                            CheckboxListTile(
+                              value: selected.contains(list.id),
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: Text(list.name),
+                              subtitle: Text(
+                                _membershipLabel(context, list, biomarker),
+                              ),
+                              onChanged: (value) => setState(() {
+                                if (value == true) {
+                                  selected.add(list.id);
+                                } else {
+                                  selected.remove(list.id);
+                                }
+                              }),
+                            ),
+                        ],
+                      ),
+                    ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => _createListFor(
+                        dialogContext,
+                        controller,
+                        selected,
+                        setState,
+                      ),
+                      icon: const Icon(Icons.add),
+                      label: Text(
+                        _listsText(context, 'New list', 'Neue Liste'),
+                      ),
+                    ),
+                  ),
+                  TextField(
+                    controller: interval,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: _listsText(
+                        context,
+                        'Retest interval (days)',
+                        'Wiederholungsintervall (Tage)',
+                      ),
+                      helperText: _listsText(
+                        context,
+                        'Used only where it is newly added. Empty means no due alerts.',
+                        'Gilt nur für neu hinzugefügte Listen. Leer bedeutet keine Fälligkeitshinweise.',
+                      ),
+                      helperMaxLines: 2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(_listsText(context, 'Cancel', 'Abbrechen')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(_listsText(context, 'Save', 'Speichern')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (save != true || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    // Resolved before the await, so no context is read across the gap.
+    String message(int added, int removed) => _listsText(
+      context,
+      added == 0 && removed == 0
+          ? 'List membership is unchanged.'
+          : [
+              if (added > 0) 'Added to $added list(s)',
+              if (removed > 0) 'removed from $removed',
+            ].join(', '),
+      added == 0 && removed == 0
+          ? 'Listenzuordnung unverändert.'
+          : [
+              if (added > 0) 'Zu $added Liste(n) hinzugefügt',
+              if (removed > 0) 'aus $removed entfernt',
+            ].join(', '),
+    );
+    final raw = interval.text.trim();
+    final parsed = raw.isEmpty ? null : int.tryParse(raw);
+    if (raw.isNotEmpty && parsed == null) {
+      throw StateError(
+        _listsText(
+          context,
+          'The retest interval must be a whole number of days.',
+          'Das Wiederholungsintervall muss eine ganze Zahl von Tagen sein.',
+        ),
+      );
+    }
+    if (parsed != null && parsed <= 0) {
+      throw StateError(
+        _listsText(
+          context,
+          'The retest interval must be a positive number.',
+          'Das Wiederholungsintervall muss positiv sein.',
+        ),
+      );
+    }
+    final result = await controller.setBiomarkerListMemberships(
+      biomarker: biomarker,
+      listIds: selected,
+      dueIntervalDays: parsed,
+    );
+    messenger.showSnackBar(
+      SnackBar(content: Text(message(result.added, result.removed))),
+    );
+  } on Object catch (error) {
+    if (context.mounted) await showAppError(context, error);
+  } finally {
+    interval.dispose();
+  }
+}
+
+Set<String> _listIdsHolding(AppController controller, Biomarker biomarker) => {
+  for (final list in controller.biomarkerLists)
+    if (list.items.any((item) => item.biomarkerId == biomarker.id)) list.id,
+};
+
+String _membershipLabel(
+  BuildContext context,
+  BiomarkerList list,
+  Biomarker biomarker,
+) {
+  final item = list.items.firstWhereOrNull(
+    (entry) => entry.biomarkerId == biomarker.id,
+  );
+  if (item == null) {
+    final count = list.items.length;
+    return _listsText(context, '$count test(s)', '$count Test(s)');
+  }
+  final days = item.dueIntervalDays;
+  return days == null
+      ? _listsText(context, 'Already on this list', 'Bereits auf dieser Liste')
+      : _listsText(
+          context,
+          'Already on this list · every $days days',
+          'Bereits auf dieser Liste · alle $days Tage',
+        );
+}
+
+/// Creates a list from inside the add-to-list dialog and ticks it.
+///
+/// Without this, a marker on a phone with no lists yet is a dead end: the
+/// dialog would say there is nothing to add to and send you somewhere else.
+Future<void> _createListFor(
+  BuildContext context,
+  AppController controller,
+  Set<String> selected,
+  void Function(void Function()) setState,
+) async {
+  final name = TextEditingController();
+  try {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          _listsText(
+            context,
+            'Create biomarker list',
+            'Biomarkerliste erstellen',
+          ),
+        ),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: _listsText(context, 'Name *', 'Name *'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(_listsText(context, 'Cancel', 'Abbrechen')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(_listsText(context, 'Create', 'Erstellen')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || name.text.trim().isEmpty) return;
+    final created = await controller.createBiomarkerList(name: name.text);
+    setState(() => selected.add(created.id));
+  } on Object catch (error) {
+    if (context.mounted) await showAppError(context, error);
+  } finally {
+    name.dispose();
   }
 }
