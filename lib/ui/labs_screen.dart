@@ -159,25 +159,7 @@ class _LabsScreenState extends State<LabsScreen> {
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final profile = controller.activeProfile;
-    final latestByBiomarker = _latestMeasurements(controller.measurements);
-    final statuses = profile == null
-        ? const <String, BiomarkerStatus>{}
-        : _biomarkerStatuses(
-            controller: controller,
-            profile: profile,
-            latestByBiomarker: latestByBiomarker,
-          );
     _openRequestedCatalog(context.watch<ShellNavigation>());
-
-    final latestBiomarkers =
-        controller.biomarkers
-            .where((item) => latestByBiomarker.containsKey(item.id))
-            .toList()
-          ..sort((a, b) => a.displayName.compareTo(b.displayName));
-    final attention = latestBiomarkers.where((item) {
-      final status = statuses[item.id];
-      return status?.isBelow == true || status?.isAbove == true;
-    }).toList();
 
     return PageBody(
       child: RefreshIndicator(
@@ -267,79 +249,6 @@ class _LabsScreenState extends State<LabsScreen> {
                 const Expanded(child: SizedBox()),
               ],
             ),
-            const SizedBox(height: 32),
-            Text(
-              _labsText(context, 'Latest values', 'Neueste Werte'),
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            if (latestBiomarkers.isEmpty)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      const Icon(Icons.timeline, size: 48, color: Colors.grey),
-                      const SizedBox(height: 8),
-                      Text(
-                        _labsText(
-                          context,
-                          'No measurements yet',
-                          'Noch keine Messwerte',
-                        ),
-                        style: Theme.of(context).textTheme.bodyLarge,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _labsText(
-                          context,
-                          'Add your first measurement to see the status overview.',
-                          'Füge den ersten Messwert hinzu, um die Statusübersicht zu sehen.',
-                        ),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else ...[
-              _BiomarkerStatusSummary(
-                statuses: [
-                  for (final item in latestBiomarkers) statuses[item.id]!,
-                ],
-              ),
-              const SizedBox(height: 8),
-              if (attention.isEmpty)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.check_circle, color: Colors.green),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _labsText(
-                              context,
-                              'No latest value is outside its selected comparison range.',
-                              'Kein neuester Wert liegt außerhalb seines gewählten Vergleichsbereichs.',
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                for (final biomarker in attention)
-                  _BiomarkerHomeTile(
-                    biomarker: biomarker,
-                    measurement: latestByBiomarker[biomarker.id]!,
-                    status: statuses[biomarker.id]!,
-                    controller: controller,
-                  ),
-            ],
             const SizedBox(height: 24),
             // The workspace is catalogue administration — PDF imports aside,
             // it is prices, packages, plans and the full biomarker list.
@@ -2249,38 +2158,6 @@ class _BiomarkerStatusCount extends StatelessWidget {
         const SizedBox(width: 4),
         Text('$count', style: Theme.of(context).textTheme.bodySmall),
       ],
-    ),
-  );
-}
-
-class _BiomarkerHomeTile extends StatelessWidget {
-  const _BiomarkerHomeTile({
-    required this.biomarker,
-    required this.measurement,
-    required this.status,
-    required this.controller,
-  });
-
-  final Biomarker biomarker;
-  final Measurement measurement;
-  final BiomarkerStatus status;
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    margin: const EdgeInsets.symmetric(vertical: 6),
-    child: ListTile(
-      leading: const Icon(Icons.analytics),
-      title: Text(
-        biomarker.displayName,
-        style: const TextStyle(fontWeight: FontWeight.w600),
-      ),
-      subtitle: Text(
-        '${measurement.value} ${measurement.unit}  •  '
-        '${DateFormat('yyyy-MM-dd').format(measurement.takenAt)}',
-      ),
-      trailing: _BiomarkerStatusBadge(status: status),
-      onTap: () => showBiomarkerDetail(context, biomarker),
     ),
   );
 }
