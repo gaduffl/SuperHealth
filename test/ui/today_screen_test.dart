@@ -223,8 +223,10 @@ void main() {
     expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('Biomarker lists'), findsOneWidget);
     expect(find.text('Due biomarkers'), findsOneWidget);
-    expect(find.text('Latest values'), findsOneWidget);
     expect(find.text('Lab planning and biomarker management'), findsOneWidget);
+    // The latest-value list duplicated the dashboard and the catalog, both of
+    // which are one tap away from here.
+    expect(find.text('Latest values'), findsNothing);
   });
 
   testWidgets('reopening after midnight moves Today onto the new day', (
