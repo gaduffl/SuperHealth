@@ -134,6 +134,11 @@ class WeeklySeriesChart extends StatelessWidget {
         ),
         lineTouchData: LineTouchData(
           touchTooltipData: LineTouchTooltipData(
+            // Without these the label is centred on the touched point and
+            // simply leaves the plot at either edge, which is where the last
+            // reading — the one most worth tapping — always sits.
+            fitInsideHorizontally: true,
+            fitInsideVertically: true,
             getTooltipColor: (_) => scheme.inverseSurface,
             getTooltipItems: (spots) => [
               for (final spot in spots)
@@ -222,6 +227,8 @@ class AdherenceChart extends StatelessWidget {
             borderData: FlBorderData(show: false),
             barTouchData: BarTouchData(
               touchTooltipData: BarTouchTooltipData(
+                fitInsideHorizontally: true,
+                fitInsideVertically: true,
                 getTooltipColor: (_) => scheme.inverseSurface,
                 getTooltipItem: (group, _, rod, _) =>
                     group.x < 0 || group.x >= values.length
@@ -360,6 +367,8 @@ class DailyValueChart extends StatelessWidget {
             borderData: FlBorderData(show: false),
             barTouchData: BarTouchData(
               touchTooltipData: BarTouchTooltipData(
+                fitInsideHorizontally: true,
+                fitInsideVertically: true,
                 getTooltipColor: (_) => scheme.inverseSurface,
                 getTooltipItem: (group, _, rod, _) =>
                     group.x < 0 || group.x >= points.length
@@ -441,6 +450,7 @@ class TrendChart extends StatelessWidget {
     this.rangeLow,
     this.rangeHigh,
     this.rangeColor,
+    this.noteLabel,
     this.doseSeries,
     this.doseColor,
     this.doseValueLabel,
@@ -457,6 +467,13 @@ class TrendChart extends StatelessWidget {
   final double? rangeLow;
   final double? rangeHigh;
   final Color? rangeColor;
+
+  /// A remark to show under the value when the reading for [day] carries one.
+  ///
+  /// The remark is often the reason a point sits where it does — a different
+  /// lab, a fasting sample, an illness that week — so a chart that hides it
+  /// invites the wrong conclusion from the shape of the line.
+  final String? Function(DateTime day)? noteLabel;
 
   /// Optional supplement dose drawn behind the trend on its own right-hand
   /// scale. Its unit is unrelated to the trend's, so the two are never mapped
@@ -637,6 +654,8 @@ class TrendChart extends StatelessWidget {
             ),
             lineTouchData: LineTouchData(
               touchTooltipData: LineTouchTooltipData(
+                fitInsideHorizontally: true,
+                fitInsideVertically: true,
                 getTooltipColor: (_) => scheme.inverseSurface,
                 getTooltipItems: (spots) => [
                   for (final spot in spots)
@@ -653,6 +672,22 @@ class TrendChart extends StatelessWidget {
                           color: scheme.onInverseSurface,
                           fontWeight: FontWeight.w600,
                         ),
+                        children: [
+                          if (noteLabel?.call(
+                                DateTime.fromMillisecondsSinceEpoch(
+                                  spot.x.round(),
+                                ),
+                              )
+                              case final note? when note.trim().isNotEmpty)
+                            TextSpan(
+                              text: '\n$note',
+                              style: TextStyle(
+                                color: scheme.onInverseSurface,
+                                fontWeight: FontWeight.w400,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
                       ),
                 ],
               ),

@@ -66,7 +66,10 @@ Elsewhere:
 ## Biomarkers and PDFs
 
 - Add biomarkers manually, including the price charged by the German lab, or import the existing Biomarkers catalog.
-- Tap a biomarker for trends, change from the previous result, lab range status, and full history.
+- **Lab planning and biomarker management** opens a hub rather than one long scroll: the visit planner, the biomarker catalog, the imported reports, anything due for retest, test packages, and lab prices, each a button naming what it holds. A Today tile that filters the catalog still opens it directly.
+- Tap a biomarker for trends, change from the previous result, lab range status, and full history. The description sits under the name, before the numbers. Each result in the history shows its own remark on its own line, and — when it came from a parsed report — the report's file name and page.
+- Tapping a result that came from a PDF opens that report's extraction overview: every result the report produced, each with the lab's own reference range, the page it was read from, the parser's confidence, the raw line it was read from, and any remark. Parser warnings travel with the report instead of living only in the import flow. **Open the PDF** hands the file to a viewer; a report held only in OneDrive says which sync brings it back. A hand-entered result has no report behind it, so tapping it still opens the editor — editing a parsed result moved to the menu beside it.
+- Tapping a point on a trend shows its date, value, and any remark recorded with the reading. The label stays inside the chart, including at either edge.
 - Use the document-scanner button in Labs to select a PDF. Parsing does not save the PDF or measurements.
 - Review the extracted date, every row, confidence, raw text, and biomarker mapping. Use the edit action to correct the reported name, value, unit, reference limits, PDF page, or notes. Exclude bad rows or map unknown rows. “Save PDF + results” is the explicit persistence approval. Unmapped rows become clearly marked temporary biomarkers.
 
@@ -77,7 +80,10 @@ Elsewhere:
 3. A fresh second call to the same configured model independently verifies the parsed plan against the same complete context. Rejected or malformed reviews fail closed and cannot be saved or exported.
 4. Review the unsaved Core, Advanced, and Comprehensive draft. Advanced includes Core; Comprehensive includes both earlier tiers.
 5. Where a test package is cheaper than the tests it covers, it is listed in the tier with its own checkbox, its price and saving, and an expandable list of every test it contains — including any the plan did not ask for. Ticking the package ticks each planned test it covers; its box is half-filled while only some of them are.
-6. Save the plan or export it to PDF, CSV, or JSON. Known totals use stored EUR prices and disclose missing prices; the verifier summary, warnings, sources, and verification time remain attached to the saved plan and exports.
+6. Tick the tests you actually want. **Select all** and **Clear** at the top of a tier set the whole tier at once, and the header says how many of its tests are ticked.
+7. Save the plan or export it to PDF, CSV, or JSON. Known totals use stored EUR prices and disclose missing prices; the verifier summary, warnings, sources, and verification time remain attached to the saved plan and exports.
+
+**PDF for the doctor** exports one tier as a plain list of the tests you ticked — nothing else. No planning disclaimer, no AI verification summary, and no note about what a cheaper tier leaves out. Each test carries its one-line reason and its price, with a total for the selection that says separately how many of the chosen tests have no price recorded. Shared preparation instructions are collected once at the end, and a single line at the foot says the page was prepared by you rather than issued as a medical order. You pick the tier when you export; a tier with nothing ticked is offered as unavailable rather than producing an empty page.
 
 ## Advisor files
 

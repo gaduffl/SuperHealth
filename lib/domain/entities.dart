@@ -1569,6 +1569,14 @@ class LabPlan {
       .where((item) => item.tier.index <= tier.index)
       .toList(growable: false);
 
+  /// The tier's ticked tests, in the order the checklist shows them.
+  ///
+  /// The ticks are the decision someone actually made about this plan, so
+  /// anything handed onward — a request for a doctor, a count on screen — asks
+  /// for them here rather than filtering the list again in its own way.
+  List<LabPlanItem> selectedItemsThrough(LabTier tier) =>
+      itemsThrough(tier).where((item) => item.checked).toList(growable: false);
+
   /// The tier one step more expensive than [tier], or null for the largest.
   static LabTier? nextTierAfter(LabTier tier) =>
       tier.index + 1 < LabTier.values.length

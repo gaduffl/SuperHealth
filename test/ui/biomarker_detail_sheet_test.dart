@@ -67,6 +67,94 @@ void main() {
     expect(find.text('metabolic · mg/dL · No price'), findsOneWidget);
   });
 
+  testWidgets('the explanation sits under the name, not past the history', (
+    tester,
+  ) async {
+    // It explains what the number means, so it belongs where the number is
+    // introduced. At the foot of the sheet it sat behind every reading ever
+    // recorded, which on a well-used marker is a long way down.
+    final controller = _seededController(
+      description: 'Fasting blood sugar.',
+      measurements: [_reading(id: 'm1', takenAt: DateTime(2026, 1, 2))],
+    );
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    final explanation = find.text('Fasting blood sugar.');
+    expect(explanation, findsOneWidget);
+    expect(
+      tester.getTopLeft(explanation).dy,
+      lessThan(tester.getTopLeft(find.text('History')).dy),
+    );
+  });
+
+  testWidgets('a remark is its own line rather than the tail of a chain', (
+    tester,
+  ) async {
+    // Joined onto the end of the metadata it was the first thing an
+    // overflowing row dropped, which is the opposite of what a remark is for.
+    final controller = _seededController(
+      measurements: [
+        _reading(
+          id: 'm1',
+          takenAt: DateTime(2026, 1, 2),
+          notes: 'Not fasting, ate at 7am',
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    expect(find.text('Not fasting, ate at 7am'), findsOneWidget);
+  });
+
+  testWidgets('a reading names the report it was read from', (tester) async {
+    final controller = _seededController(
+      measurements: [
+        _reading(
+          id: 'm1',
+          takenAt: DateTime(2026, 1, 2),
+          documentId: 'doc',
+          page: 3,
+        ),
+      ],
+      documents: [_report()],
+    );
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    expect(find.text('labor-2026-01.pdf · page 3'), findsOneWidget);
+  });
+
+  testWidgets('a reading whose report is gone says so', (tester) async {
+    // The measurement outlives a deleted report. A link that goes nowhere
+    // would be worse than the sentence.
+    final controller = _seededController(
+      measurements: [
+        _reading(
+          id: 'm1',
+          takenAt: DateTime(2026, 1, 2),
+          documentId: 'missing',
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    expect(find.text('Source report is no longer available'), findsOneWidget);
+  });
+
+  testWidgets('a reading with no report shows no source line', (tester) async {
+    final controller = _seededController(
+      measurements: [_reading(id: 'm1', takenAt: DateTime(2026, 1, 2))],
+    );
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    expect(find.textContaining('.pdf'), findsNothing);
+    expect(find.text('Source report is no longer available'), findsNothing);
+  });
+
   testWidgets('a biomarker deleted while the sheet is open renders nothing', (
     tester,
   ) async {
@@ -81,19 +169,24 @@ void main() {
   });
 }
 
-Biomarker _glucose({double? priceEur, String? lab, bool deleted = false}) =>
-    Biomarker(
-      id: 'glucose',
-      canonicalName: 'glucose',
-      displayName: 'Glucose',
-      category: 'metabolic',
-      defaultUnit: 'mg/dL',
-      priceEur: priceEur,
-      labName: lab,
-      createdAt: DateTime(2026, 1, 1),
-      updatedAt: DateTime(2026, 1, 1),
-      deleted: deleted,
-    );
+Biomarker _glucose({
+  double? priceEur,
+  String? lab,
+  bool deleted = false,
+  String description = '',
+}) => Biomarker(
+  id: 'glucose',
+  canonicalName: 'glucose',
+  displayName: 'Glucose',
+  category: 'metabolic',
+  defaultUnit: 'mg/dL',
+  description: description,
+  priceEur: priceEur,
+  labName: lab,
+  createdAt: DateTime(2026, 1, 1),
+  updatedAt: DateTime(2026, 1, 1),
+  deleted: deleted,
+);
 
 Future<void> _openSheet(WidgetTester tester, AppController controller) async {
   tester.view.devicePixelRatio = 1;
@@ -165,7 +258,11 @@ class _TestController extends AppController {
   }
 }
 
-_TestController _seededController() {
+_TestController _seededController({
+  String description = '',
+  List<Measurement> measurements = const [],
+  List<HealthDocument> documents = const [],
+}) {
   final database = AppDatabase(
     factory: databaseFactoryFfi,
     databasePath: inMemoryDatabasePath,
@@ -216,5 +313,38 @@ _TestController _seededController() {
     )
     ..profiles = [profile]
     ..activeProfile = profile
-    ..biomarkers = [_glucose()];
+    ..biomarkers = [_glucose(description: description)]
+    ..measurements = measurements
+    ..documents = documents;
 }
+
+Measurement _reading({
+  required String id,
+  required DateTime takenAt,
+  double value = 95,
+  String notes = '',
+  String? documentId,
+  int? page,
+}) => Measurement(
+  id: id,
+  profileId: 'profile',
+  biomarkerId: 'glucose',
+  takenAt: takenAt,
+  value: value,
+  unit: 'mg/dL',
+  notes: notes,
+  documentId: documentId,
+  page: page,
+  createdAt: takenAt,
+  updatedAt: takenAt,
+);
+
+HealthDocument _report({String id = 'doc', String? localPath}) =>
+    HealthDocument(
+      id: id,
+      profileId: 'profile',
+      fileName: 'labor-2026-01.pdf',
+      localPath: localPath,
+      createdAt: DateTime(2026, 1, 1),
+      updatedAt: DateTime(2026, 1, 1),
+    );

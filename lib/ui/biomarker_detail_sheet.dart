@@ -12,6 +12,7 @@ import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import 'lab_report_screen.dart';
 import 'reference_range_tools.dart';
 
 String _detailText(BuildContext context, String english, String german) =>
@@ -321,6 +322,16 @@ class _BiomarkerDetail extends StatelessWidget {
               ),
             ],
           ),
+          if (biomarker.description.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                biomarker.description,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           if (excludedFromTrend > 0)
             Card(
               color: Theme.of(context).colorScheme.errorContainer,
@@ -664,27 +675,64 @@ class _BiomarkerDetail extends StatelessWidget {
                           referenceRanges: controller.biomarkerRanges,
                           now: now,
                         );
+                        final document = value.documentId == null
+                            ? null
+                            : controller.documents.firstWhereOrNull(
+                                (item) => item.id == value.documentId,
+                              );
                         return ListTile(
+                          isThreeLine:
+                              value.notes.trim().isNotEmpty ||
+                              value.documentId != null,
                           title: Text(_displayValue(value)),
-                          subtitle: Text(
-                            [
-                              DateFormat('dd.MM.yyyy').format(value.takenAt),
-                              if (value.labRefLow != null ||
-                                  value.labRefHigh != null)
-                                '${_detailText(context, 'Lab ref', 'Laborreferenz')} '
-                                    '${value.labRefLow ?? '…'}–${value.labRefHigh ?? '…'}',
-                              if (value.extractionConfidence != null)
-                                '${_detailText(context, 'Parse', 'Extraktion')} '
-                                    '${(value.extractionConfidence! * 100).round()}%',
-                              if (value.conversionStatus == 'unsupported')
-                                _detailText(
-                                  context,
-                                  'No safe conversion to standard unit',
-                                  'Keine sichere Umrechnung in die Standardeinheit',
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                [
+                                  DateFormat(
+                                    'dd.MM.yyyy',
+                                  ).format(value.takenAt),
+                                  if (value.labRefLow != null ||
+                                      value.labRefHigh != null)
+                                    '${_detailText(context, 'Lab ref', 'Laborreferenz')} '
+                                        '${value.labRefLow ?? '…'}–${value.labRefHigh ?? '…'}',
+                                  if (value.extractionConfidence != null)
+                                    '${_detailText(context, 'Parse', 'Extraktion')} '
+                                        '${(value.extractionConfidence! * 100).round()}%',
+                                  if (value.conversionStatus == 'unsupported')
+                                    _detailText(
+                                      context,
+                                      'No safe conversion to standard unit',
+                                      'Keine sichere Umrechnung in die Standardeinheit',
+                                    ),
+                                  _detailStatusLabel(context, status),
+                                ].join(' · '),
+                              ),
+                              // Its own line rather than the tail of that
+                              // chain: a remark is the reason a reading looks
+                              // the way it does, and appended last it was the
+                              // first thing an overflowing row dropped.
+                              if (value.notes.trim().isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    value.notes.trim(),
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          fontStyle: FontStyle.italic,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                        ),
+                                  ),
                                 ),
-                              _detailStatusLabel(context, status),
-                              if (value.notes.isNotEmpty) value.notes,
-                            ].join(' · '),
+                              if (value.documentId != null)
+                                _SourceDocumentLink(
+                                  document: document,
+                                  page: value.page,
+                                ),
+                            ],
                           ),
                           trailing: PopupMenuButton<String>(
                             tooltip: _detailText(
@@ -720,22 +768,30 @@ class _BiomarkerDetail extends StatelessWidget {
                             ],
                             child: _StatusIndicator(status: status),
                           ),
-                          onTap: () => showAddMeasurementDialog(
-                            context,
-                            controller,
-                            biomarker,
-                            existing: value,
-                          ),
+                          // A reading extracted from a report opens that
+                          // report: the value is a claim about a document, and
+                          // this is the shortest path from one to the other.
+                          // A hand-entered reading has no document behind it,
+                          // so tapping it still opens the editor. Editing a
+                          // parsed one moved to the menu beside it.
+                          onTap: document != null
+                              ? () => showLabReport(
+                                  context,
+                                  document,
+                                  highlightMeasurementId: value.id,
+                                )
+                              : () => showAddMeasurementDialog(
+                                  context,
+                                  controller,
+                                  biomarker,
+                                  existing: value,
+                                ),
                         );
                       },
                     ),
                 ],
               ),
             ),
-          if (biomarker.description.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(biomarker.description),
-          ],
         ],
       ),
     );
@@ -773,6 +829,83 @@ class _BiomarkerDetail extends StatelessWidget {
       return raw;
     }
     return '$raw · ${value.canonicalValue!.toStringAsPrecision(5)} ${value.canonicalUnit}';
+  }
+}
+
+/// The report a reading was extracted from, and a way into it.
+///
+/// A parsed number is a claim about a document. Being able to reach that
+/// document from the number is what makes the claim checkable — otherwise
+/// verifying one surprising value means hunting through the report list by
+/// date and hoping. It opens the extraction overview rather than the file:
+/// the other rows the same report produced are usually what settles whether
+/// one of them is wrong.
+class _SourceDocumentLink extends StatelessWidget {
+  const _SourceDocumentLink({required this.document, this.page});
+
+  final HealthDocument? document;
+
+  /// The page the value was read from, when the parser recorded one.
+  final int? page;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final source = document;
+    // The measurement names a document the catalog no longer has. Saying so
+    // is better than a link that goes nowhere.
+    if (source == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          _detailText(
+            context,
+            'Source report is no longer available',
+            'Quellbericht ist nicht mehr verfügbar',
+          ),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
+    final label = [
+      source.fileName,
+      if (page != null) _detailText(context, 'page $page', 'Seite $page'),
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: InkWell(
+        onTap: () => showLabReport(context, source),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.picture_as_pdf_outlined,
+                size: 15,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                    decorationColor: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

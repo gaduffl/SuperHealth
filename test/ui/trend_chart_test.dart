@@ -43,6 +43,63 @@ void main() {
     expect(longGap, greaterThan(shortGap * 20));
   });
 
+  testWidgets('the tooltip is kept inside the plot', (tester) async {
+    // The reported bug: tapping the right-most point — the newest reading, and
+    // the one most worth tapping — pushed its own label off the right edge and
+    // out of the rendered area. fl_chart centres the tooltip on the touched
+    // point unless told to reflow.
+    final data = await pump(
+      tester,
+      TrendChart(
+        points: [
+          (day: DateTime(2026, 1, 1), value: 20),
+          (day: DateTime(2026, 1, 4), value: 25),
+        ],
+        dayLabel: (day) => '${day.month}/${day.year}',
+        semanticLabel: 'trend',
+      ),
+    );
+
+    final tooltip = data.lineTouchData.touchTooltipData;
+    expect(tooltip.fitInsideHorizontally, isTrue);
+    expect(tooltip.fitInsideVertically, isTrue);
+  });
+
+  testWidgets("a reading's remark rides along in its tooltip", (tester) async {
+    // The remark explains the point's position — a different lab, a
+    // non-fasting sample — so the chart that shows the position should be able
+    // to show the reason.
+    final data = await pump(
+      tester,
+      TrendChart(
+        points: [
+          (day: DateTime(2026, 1, 1), value: 20),
+          (day: DateTime(2026, 1, 4), value: 25),
+        ],
+        dayLabel: (day) => '${day.month}/${day.year}',
+        semanticLabel: 'trend',
+        noteLabel: (day) => day.day == 4 ? 'Not fasting' : null,
+      ),
+    );
+
+    List<String> tooltipFor(int index) {
+      final items = data.lineTouchData.touchTooltipData.getTooltipItems([
+        LineBarSpot(
+          data.lineBarsData.first,
+          0,
+          data.lineBarsData.first.spots[index],
+        ),
+      ]);
+      final item = items.single!;
+      return [item.text, ...?item.children?.map((span) => span.toPlainText())];
+    }
+
+    expect(tooltipFor(1), ['1/2026: 25.0', '\nNot fasting']);
+    // A reading with no remark keeps the bare value; an empty line under every
+    // other point would be noise.
+    expect(tooltipFor(0), ['1/2026: 20.0']);
+  });
+
   testWidgets('out-of-order points are sorted onto the axis', (tester) async {
     final data = await pump(
       tester,
