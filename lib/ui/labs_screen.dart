@@ -2389,6 +2389,7 @@ class _BiomarkerDashboardSection extends StatelessWidget {
               rangeLow: trend.rangeLow,
               rangeHigh: trend.rangeHigh,
               rangeColor: Theme.of(context).colorScheme.secondaryContainer,
+              noteLabel: (day) => _remarkOn(controller, biomarker, day),
               doseSeries: underlay.series,
               height: 150,
             ),
@@ -2470,6 +2471,28 @@ _dashboardTrendData({
     rangeLow: range?.low,
     rangeHigh: range?.high,
   );
+}
+
+/// The remarks recorded for [biomarker] on [day], joined when a day holds more
+/// than one reading.
+///
+/// The chart plots a day, not a measurement, so two results on the same date
+/// share one point and would otherwise have to share one remark — the second
+/// would simply vanish.
+String? _remarkOn(AppController controller, Biomarker biomarker, DateTime day) {
+  final notes = <String>[];
+  for (final measurement in controller.measurements) {
+    if (measurement.biomarkerId != biomarker.id) continue;
+    final taken = measurement.takenAt;
+    if (taken.year != day.year ||
+        taken.month != day.month ||
+        taken.day != day.day) {
+      continue;
+    }
+    final note = measurement.notes.trim();
+    if (note.isNotEmpty && !notes.contains(note)) notes.add(note);
+  }
+  return notes.isEmpty ? null : notes.join(' · ');
 }
 
 Color _biomarkerOptimalColor(BuildContext context) =>

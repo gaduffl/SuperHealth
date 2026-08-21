@@ -66,7 +66,8 @@ Elsewhere:
 ## Biomarkers and PDFs
 
 - Add biomarkers manually, including the price charged by the German lab, or import the existing Biomarkers catalog.
-- Tap a biomarker for trends, change from the previous result, lab range status, and full history.
+- Tap a biomarker for trends, change from the previous result, lab range status, and full history. The description sits under the name, before the numbers. Each result in the history shows its own remark on its own line, and — when it came from a parsed report — the report's file name and page. Tapping that opens the PDF; if the report lives only in OneDrive the app says so instead of failing silently.
+- Tapping a point on a trend shows its date, value, and any remark recorded with the reading. The label stays inside the chart, including at either edge.
 - Use the document-scanner button in Labs to select a PDF. Parsing does not save the PDF or measurements.
 - Review the extracted date, every row, confidence, raw text, and biomarker mapping. Use the edit action to correct the reported name, value, unit, reference limits, PDF page, or notes. Exclude bad rows or map unknown rows. “Save PDF + results” is the explicit persistence approval. Unmapped rows become clearly marked temporary biomarkers.
 

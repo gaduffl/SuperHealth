@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
@@ -321,6 +323,16 @@ class _BiomarkerDetail extends StatelessWidget {
               ),
             ],
           ),
+          if (biomarker.description.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                biomarker.description,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           if (excludedFromTrend > 0)
             Card(
               color: Theme.of(context).colorScheme.errorContainer,
@@ -664,27 +676,64 @@ class _BiomarkerDetail extends StatelessWidget {
                           referenceRanges: controller.biomarkerRanges,
                           now: now,
                         );
+                        final document = value.documentId == null
+                            ? null
+                            : controller.documents.firstWhereOrNull(
+                                (item) => item.id == value.documentId,
+                              );
                         return ListTile(
+                          isThreeLine:
+                              value.notes.trim().isNotEmpty ||
+                              value.documentId != null,
                           title: Text(_displayValue(value)),
-                          subtitle: Text(
-                            [
-                              DateFormat('dd.MM.yyyy').format(value.takenAt),
-                              if (value.labRefLow != null ||
-                                  value.labRefHigh != null)
-                                '${_detailText(context, 'Lab ref', 'Laborreferenz')} '
-                                    '${value.labRefLow ?? '…'}–${value.labRefHigh ?? '…'}',
-                              if (value.extractionConfidence != null)
-                                '${_detailText(context, 'Parse', 'Extraktion')} '
-                                    '${(value.extractionConfidence! * 100).round()}%',
-                              if (value.conversionStatus == 'unsupported')
-                                _detailText(
-                                  context,
-                                  'No safe conversion to standard unit',
-                                  'Keine sichere Umrechnung in die Standardeinheit',
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                [
+                                  DateFormat(
+                                    'dd.MM.yyyy',
+                                  ).format(value.takenAt),
+                                  if (value.labRefLow != null ||
+                                      value.labRefHigh != null)
+                                    '${_detailText(context, 'Lab ref', 'Laborreferenz')} '
+                                        '${value.labRefLow ?? '…'}–${value.labRefHigh ?? '…'}',
+                                  if (value.extractionConfidence != null)
+                                    '${_detailText(context, 'Parse', 'Extraktion')} '
+                                        '${(value.extractionConfidence! * 100).round()}%',
+                                  if (value.conversionStatus == 'unsupported')
+                                    _detailText(
+                                      context,
+                                      'No safe conversion to standard unit',
+                                      'Keine sichere Umrechnung in die Standardeinheit',
+                                    ),
+                                  _detailStatusLabel(context, status),
+                                ].join(' · '),
+                              ),
+                              // Its own line rather than the tail of that
+                              // chain: a remark is the reason a reading looks
+                              // the way it does, and appended last it was the
+                              // first thing an overflowing row dropped.
+                              if (value.notes.trim().isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    value.notes.trim(),
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          fontStyle: FontStyle.italic,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface,
+                                        ),
+                                  ),
                                 ),
-                              _detailStatusLabel(context, status),
-                              if (value.notes.isNotEmpty) value.notes,
-                            ].join(' · '),
+                              if (value.documentId != null)
+                                _SourceDocumentLink(
+                                  document: document,
+                                  page: value.page,
+                                ),
+                            ],
                           ),
                           trailing: PopupMenuButton<String>(
                             tooltip: _detailText(
@@ -732,10 +781,6 @@ class _BiomarkerDetail extends StatelessWidget {
                 ],
               ),
             ),
-          if (biomarker.description.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(biomarker.description),
-          ],
         ],
       ),
     );
@@ -773,6 +818,117 @@ class _BiomarkerDetail extends StatelessWidget {
       return raw;
     }
     return '$raw · ${value.canonicalValue!.toStringAsPrecision(5)} ${value.canonicalUnit}';
+  }
+}
+
+/// The report a reading was extracted from, and a way to open it.
+///
+/// A parsed number is a claim about a document. Being able to reach that
+/// document from the number is what makes the claim checkable — otherwise
+/// verifying one surprising value means hunting through the report list by
+/// date and hoping.
+class _SourceDocumentLink extends StatelessWidget {
+  const _SourceDocumentLink({required this.document, this.page});
+
+  final HealthDocument? document;
+
+  /// The page the value was read from, when the parser recorded one.
+  final int? page;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final source = document;
+    // The measurement names a document the catalog no longer has. Saying so
+    // is better than a link that goes nowhere.
+    if (source == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          _detailText(
+            context,
+            'Source report is no longer available',
+            'Quellbericht ist nicht mehr verfügbar',
+          ),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
+    final label = [
+      source.fileName,
+      if (page != null) _detailText(context, 'page $page', 'Seite $page'),
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: InkWell(
+        onTap: () => _open(context, source),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.picture_as_pdf_outlined,
+                size: 15,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                    decorationColor: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Hands the file to the system so it opens in a PDF viewer.
+  ///
+  /// A report that exists only in OneDrive has no local file to open yet, and
+  /// the honest answer there is to say which sync brings it back rather than
+  /// to fail silently.
+  Future<void> _open(BuildContext context, HealthDocument source) async {
+    final path = source.localPath?.trim() ?? '';
+    if (path.isEmpty || !File(path).existsSync()) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            source.oneDriveItemId == null
+                ? _detailText(
+                    context,
+                    'The PDF for ${source.fileName} is not stored on this device.',
+                    'Die PDF-Datei für ${source.fileName} liegt nicht auf diesem Gerät.',
+                  )
+                : _detailText(
+                    context,
+                    '${source.fileName} is in OneDrive and arrives with the next sync.',
+                    '${source.fileName} liegt in OneDrive und kommt mit der nächsten Synchronisierung.',
+                  ),
+          ),
+        ),
+      );
+      return;
+    }
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(path, mimeType: source.mimeType)],
+        subject: source.fileName,
+      ),
+    );
   }
 }
 
