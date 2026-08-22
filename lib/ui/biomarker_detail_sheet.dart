@@ -10,6 +10,7 @@ import '../app/app_localizations.dart';
 import '../biomarkers/biomarker_status_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
+import 'biomarker_lists_sheet.dart';
 import 'common.dart';
 import 'dialogs.dart';
 import 'lab_report_screen.dart';
@@ -264,6 +265,12 @@ class _BiomarkerDetail extends StatelessWidget {
                       controller,
                       existing: biomarker,
                     );
+                  } else if (value == 'lists') {
+                    await showAddBiomarkerToListDialog(
+                      context,
+                      controller,
+                      biomarker,
+                    );
                   } else if (value == 'target') {
                     await showProfileTargetDialog(
                       context,
@@ -282,6 +289,16 @@ class _BiomarkerDetail extends StatelessWidget {
                   }
                 },
                 itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'lists',
+                    child: Text(
+                      _detailText(
+                        context,
+                        'Add to list',
+                        'Zur Liste hinzufügen',
+                      ),
+                    ),
+                  ),
                   PopupMenuItem(
                     value: 'edit',
                     child: Text(
