@@ -42,6 +42,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   final _dayPlanKey = GlobalKey();
 
   late DateTime _selectedDay;
+  var _lastTodaySelectionToken = 0;
 
   /// The calendar day this screen last synchronised to.
   ///
@@ -82,10 +83,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   /// Moves the selection to today when the date has turned over since it was
-  /// made. Safe to call during build: it only assigns when the day changed.
-  void _syncToCurrentDay() {
+  /// made, or when the owner explicitly taps Today. Ordinary rebuilds leave a
+  /// manually selected day alone.
+  void _syncToCurrentDay({bool force = false}) {
     final now = widget.clock();
-    if (_sameDay(_dayAnchor, now)) return;
+    if (!force && _sameDay(_dayAnchor, now)) return;
     _dayAnchor = now;
     _selectedDay = now;
   }
@@ -121,11 +123,15 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final navigation = context.read<ShellNavigation>();
+    final todaySelectionToken = context.select<ShellNavigation, int>(
+      (navigation) => navigation.todaySelectionToken,
+    );
     final strings = AppLocalizations.of(context);
     final profile = controller.activeProfile!;
     // Before anything reads it: opening the app after midnight rebuilds here
     // first, so this is what makes "Today" mean today rather than launch day.
-    _syncToCurrentDay();
+    _syncToCurrentDay(force: todaySelectionToken != _lastTodaySelectionToken);
+    _lastTodaySelectionToken = todaySelectionToken;
     final now = widget.clock();
     final viewingToday = _sameDay(_selectedDay, now);
 
