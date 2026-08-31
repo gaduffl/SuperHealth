@@ -189,6 +189,13 @@ wrong one. Re-sync on build, on `AppLifecycleState.resumed`, and on a timer to
 the next midnight; the widget takes an injectable `clock` so a test can turn the
 calendar over without waiting.
 
+**Every tap on the Today tab returns Your day to the current local date.**
+`ShellNavigation.todaySelectionToken` advances even when Today is already
+selected; the dashboard consumes it before deriving the day's doses and
+actions. Do not infer this request from tab-index changes alone, and do not
+reset on every rebuild: manually browsing a day must keep working until the
+next Today tap or calendar rollover.
+
 **A per-item opt-in that defaults to off needs a way to see it and a way to set
 it in bulk.** `SupplementSchedule.reminderEnabled` defaults to false and lived
 only inside the edit dialog, so a whole library could have every reminder off

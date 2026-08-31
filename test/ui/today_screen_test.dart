@@ -292,6 +292,66 @@ void main() {
     expect(_selectedDayOf(tester).day, 5);
   });
 
+  for (final leaveToday in [false, true]) {
+    testWidgets(
+      leaveToday
+          ? 'returning to Today resets Your day and its dose actions'
+          : 'tapping the active Today tab resets Your day on every tap',
+      (tester) async {
+        final controller = _seededController();
+        final navigation = ShellNavigation();
+        addTearDown(() {
+          controller.dispose();
+          navigation.dispose();
+        });
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(900, 3200);
+        addTearDown(tester.view.reset);
+        var now = DateTime(2026, 8, 7, 9);
+        await tester.pumpWidget(
+          _todayAppWithClock(controller, navigation, () => now),
+        );
+        await tester.pumpAndSettle();
+        final dashboardState = tester.state(find.byType(DashboardScreen));
+
+        // Repeating with a past and a future day catches a one-shot reset.
+        for (final day in [DateTime(2026, 8, 5), DateTime(2026, 8, 8)]) {
+          tester.widget<DayStrip>(find.byType(DayStrip)).onSelected(day);
+          await tester.pumpAndSettle();
+          expect(_selectedDayOf(tester), day);
+
+          if (leaveToday) {
+            await tester.tap(find.byIcon(Icons.settings));
+            await tester.pumpAndSettle();
+            expect(
+              tester
+                  .widget<DayStrip>(find.byType(DayStrip, skipOffstage: false))
+                  .selectedDay,
+              day,
+            );
+          }
+          now = now.add(const Duration(hours: 1));
+          await tester.tap(find.byIcon(Icons.today));
+          await tester.pumpAndSettle();
+          expect(_selectedDayOf(tester), now);
+          expect(
+            tester.state(find.byType(DashboardScreen)),
+            same(dashboardState),
+          );
+
+          await tester.tap(find.byTooltip('More day actions'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Analyze day'));
+          await tester.pumpAndSettle();
+          expect(navigation.request?.prompt, contains('Friday, 7 August'));
+          navigation.completeRequest(navigation.request!.token);
+          navigation.selectTab(0);
+          await tester.pumpAndSettle();
+        }
+      },
+    );
+  }
+
   testWidgets('the lab PDF import is reachable from the biomarker home', (
     tester,
   ) async {
@@ -542,7 +602,28 @@ Widget _todayAppWithClock(
       GlobalWidgetsLocalizations.delegate,
       GlobalCupertinoLocalizations.delegate,
     ],
-    home: Scaffold(body: DashboardScreen(clock: clock)),
+    home: Consumer<ShellNavigation>(
+      builder: (context, navigation, _) => Scaffold(
+        body: IndexedStack(
+          index: navigation.tabIndex == 0 ? 0 : 1,
+          children: [
+            DashboardScreen(clock: clock),
+            const SizedBox.shrink(),
+          ],
+        ),
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: navigation.tabIndex == 0 ? 0 : 1,
+          onTap: (index) => navigation.selectTab(index == 0 ? 0 : 4),
+          items: const [
+            BottomNavigationBarItem(icon: Icon(Icons.today), label: 'Today'),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.settings),
+              label: 'Settings',
+            ),
+          ],
+        ),
+      ),
+    ),
   ),
 );
 

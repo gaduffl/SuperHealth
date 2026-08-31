@@ -111,13 +111,22 @@ class ShellNavigation extends ChangeNotifier {
   var _tabIndex = 0;
   SectionRequest? _request;
   var _nextToken = 1;
+  var _todaySelectionToken = 0;
 
   int get tabIndex => _tabIndex;
   SectionRequest? get request => _request;
 
+  /// Every Today tap is a request to return to the current day, including a
+  /// tap while the tab is already active and showing a manually chosen day.
+  int get todaySelectionToken => _todaySelectionToken;
+
   /// Switches the bottom navigation tab without issuing a section request.
   void selectTab(int index) {
-    if (_tabIndex == index) return;
+    if (index == 0) {
+      _todaySelectionToken++;
+    } else if (_tabIndex == index) {
+      return;
+    }
     _tabIndex = index;
     notifyListeners();
   }
