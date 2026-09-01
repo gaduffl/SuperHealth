@@ -2171,9 +2171,9 @@ class AppController extends ChangeNotifier {
     // A checkbox callback can outlive the widget that created it. Resolve the
     // current plan first so two quick edits cannot let the second stale object
     // undo the first one.
-    final currentPlan = labPlans.firstWhereOrNull(
-      (candidate) => candidate.id == plan.id,
-    ) ?? plan;
+    final currentPlan =
+        labPlans.firstWhereOrNull((candidate) => candidate.id == plan.id) ??
+        plan;
     final now = DateTime.now();
     final updatedItems = [
       for (final current in currentPlan.items)

@@ -1110,11 +1110,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     final options = await _plannerOptions(
       context,
       title: _labsText(context, 'Plan a lab visit', 'Laborbesuch planen'),
-      actionLabel: _labsText(
-        context,
-        'Generate draft',
-        'Entwurf erstellen',
-      ),
+      actionLabel: _labsText(context, 'Generate draft', 'Entwurf erstellen'),
       actionIcon: Icons.auto_awesome,
     );
     if (options == null || !context.mounted) return;
@@ -1365,7 +1361,9 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
             FilledButton.icon(
               onPressed: () => Navigator.pop(dialogContext, true),
               icon: const Icon(Icons.file_open_outlined),
-              label: Text(_labsText(context, 'Choose response', 'Antwort wählen')),
+              label: Text(
+                _labsText(context, 'Choose response', 'Antwort wählen'),
+              ),
             ),
           ],
         ),

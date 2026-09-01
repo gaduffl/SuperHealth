@@ -421,7 +421,8 @@ warnings.
     final schema = const JsonEncoder.withIndent(
       '  ',
     ).convert(_planJsonSchema(context));
-    final text = '''
+    final text =
+        '''
 SUPERHEALTH LAB PLANNER PROMPT EXPORT
 
 Send this complete file to the external LLM. Ask it to follow the system and
@@ -1234,8 +1235,7 @@ $_verificationSchemaInstructions
     final missingRequired = requiredBiomarkerIds.difference(seen);
     if (missingRequired.isNotEmpty) {
       final names = [
-        for (final id in missingRequired)
-          byId[id]?.displayName ?? id,
+        for (final id in missingRequired) byId[id]?.displayName ?? id,
       ]..sort();
       throw LabPlanFormatException(
         'The plan omitted mandatory overdue biomarker-list items: '

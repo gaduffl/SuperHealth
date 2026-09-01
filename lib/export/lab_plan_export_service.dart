@@ -238,12 +238,13 @@ class LabPlanExportService {
     ),
   );
 
-  String _sampleTypeName(BiomarkerSampleType sampleType) => switch (sampleType) {
-    BiomarkerSampleType.blood => 'Blood',
-    BiomarkerSampleType.urine => 'Urine',
-    BiomarkerSampleType.stool => 'Stool',
-    BiomarkerSampleType.saliva => 'Saliva',
-  };
+  String _sampleTypeName(BiomarkerSampleType sampleType) =>
+      switch (sampleType) {
+        BiomarkerSampleType.blood => 'Blood',
+        BiomarkerSampleType.urine => 'Urine',
+        BiomarkerSampleType.stool => 'Stool',
+        BiomarkerSampleType.saliva => 'Saliva',
+      };
 
   /// What the chosen tests cost together, counting only the ones with a price.
   ///
