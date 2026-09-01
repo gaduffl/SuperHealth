@@ -2325,10 +2325,12 @@ class HealthRepository {
   }
 
   void _validateLabPlan(LabPlan plan) {
-    if (plan.status != 'draft' && plan.status != 'verified') {
+    if (plan.status != 'draft' &&
+        plan.status != 'verified' &&
+        plan.status != 'external') {
       throw ArgumentError('Lab-plan status is invalid.');
     }
-    if (plan.status == 'verified') {
+    if (plan.status == 'verified' || plan.status == 'external') {
       final provider = plan.provider?.trim();
       final model = plan.model?.trim();
       if (plan.contextHash.trim().isEmpty ||
@@ -2339,7 +2341,7 @@ class HealthRepository {
           plan.verificationSummary.trim().isEmpty ||
           plan.verifiedAt == null) {
         throw ArgumentError(
-          'A verified lab plan requires its provider, model, context hash, review summary, and verification time.',
+          'A reviewed or external lab plan requires its provider, model, context hash, review summary, and recorded time.',
         );
       }
     }

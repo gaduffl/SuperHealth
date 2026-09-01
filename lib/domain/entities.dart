@@ -764,6 +764,40 @@ class BiomarkerPackageItem {
 /// the planner total a tier as if those tests were free.
 bool hasLabPrice(double? priceEur) => priceEur != null && priceEur > 0;
 
+enum BiomarkerSampleType { blood, urine, stool, saliva }
+
+/// Best available specimen classification for the imported legacy catalog.
+///
+/// That catalog did not carry a specimen column. Its non-blood markers do,
+/// however, have stable ids and explicit German/English specimen names. Keep
+/// the inference in one public predicate so the plan UI and exports cannot
+/// silently disagree about which tests need something other than blood.
+BiomarkerSampleType biomarkerSampleTypeFor({
+  required String id,
+  required String name,
+}) {
+  final normalizedId = id.trim().toLowerCase();
+  final normalizedName = name.trim().toLowerCase();
+  if (normalizedId == 'acr' ||
+      normalizedId.startsWith('u_') ||
+      normalizedName.contains('urin') ||
+      normalizedName.contains('urine')) {
+    return BiomarkerSampleType.urine;
+  }
+  if (normalizedId == 'calprotectin_stuhl' ||
+      normalizedName.contains('stuhl') ||
+      normalizedName.contains('stool') ||
+      normalizedName.contains('fecal') ||
+      normalizedName.contains('faecal')) {
+    return BiomarkerSampleType.stool;
+  }
+  if (normalizedName.contains('speichel') ||
+      normalizedName.contains('saliva')) {
+    return BiomarkerSampleType.saliva;
+  }
+  return BiomarkerSampleType.blood;
+}
+
 class Biomarker {
   const Biomarker({
     required this.id,

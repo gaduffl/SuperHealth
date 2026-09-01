@@ -10,6 +10,21 @@ import '../domain/entities.dart';
 
 enum LabPlanExportFormat { pdf, csv, json }
 
+/// Normalises punctuation that the PDF package's built-in Helvetica font does
+/// not encode consistently on Android viewers.
+///
+/// Model output commonly uses a non-breaking hyphen in ranges such as
+/// `24‑48`. Visually it is a hyphen; encoding it as ASCII keeps the range
+/// readable without changing its meaning.
+String labPlanPdfSafeText(String value) => value
+    .replaceAll(RegExp('[\u2010\u2011\u2012\u2013\u2212\ufe63\uff0d]'), '-')
+    .replaceAll('\u2014', '--')
+    .replaceAll('\u00a0', ' ')
+    .replaceAll('\u2018', "'")
+    .replaceAll('\u2019', "'")
+    .replaceAll('\u201c', '"')
+    .replaceAll('\u201d', '"');
+
 class ExportedFile {
   const ExportedFile({
     required this.fileName,
@@ -46,7 +61,7 @@ class LabPlanExportService {
   Future<ExportedFile> buildTierRequest(LabPlan plan, LabTier tier) async {
     final items = plan.selectedItemsThrough(tier);
     final document = pw.Document(
-      title: '${plan.title} — ${_tierName(tier)}',
+      title: labPlanPdfSafeText('${plan.title} - ${_tierName(tier)}'),
       author: 'SuperHealth',
       subject: 'Requested laboratory tests',
     );
@@ -90,7 +105,7 @@ class LabPlanExportService {
           pw.SizedBox(height: 4),
           pw.Text(
             [
-              plan.title,
+              labPlanPdfSafeText(plan.title),
               _tierName(tier),
               if (planned != null) 'Planned visit: $planned',
             ].join(' · '),
@@ -124,7 +139,7 @@ class LabPlanExportService {
             pw.SizedBox(height: 4),
             for (final note in _preparationNotes(items))
               pw.Bullet(
-                text: note,
+                text: labPlanPdfSafeText(note),
                 style: const pw.TextStyle(fontSize: 9),
                 bulletSize: 2,
               ),
@@ -153,7 +168,7 @@ class LabPlanExportService {
     for (final item in items) {
       final note = item.preparation.trim();
       if (note.isEmpty || !seen.add(note.toLowerCase())) continue;
-      notes.add(note);
+      notes.add(labPlanPdfSafeText(note));
     }
     return notes;
   }
@@ -181,7 +196,7 @@ class LabPlanExportService {
                 children: [
                   pw.Expanded(
                     child: pw.Text(
-                      item.biomarkerName,
+                      labPlanPdfSafeText(item.biomarkerName),
                       style: pw.TextStyle(
                         fontSize: 12,
                         fontWeight: pw.FontWeight.bold,
@@ -198,10 +213,22 @@ class LabPlanExportService {
               ),
               if (item.rationale.trim().isNotEmpty)
                 pw.Text(
-                  item.rationale,
+                  labPlanPdfSafeText(item.rationale),
                   style: const pw.TextStyle(
                     fontSize: 9,
                     color: PdfColors.grey800,
+                  ),
+                ),
+              if (biomarkerSampleTypeFor(
+                    id: item.biomarkerId,
+                    name: item.biomarkerName,
+                  ) !=
+                  BiomarkerSampleType.blood)
+                pw.Text(
+                  'Specimen: ${_sampleTypeName(biomarkerSampleTypeFor(id: item.biomarkerId, name: item.biomarkerName))} (not blood)',
+                  style: pw.TextStyle(
+                    fontSize: 9,
+                    fontWeight: pw.FontWeight.bold,
                   ),
                 ),
             ],
@@ -210,6 +237,13 @@ class LabPlanExportService {
       ],
     ),
   );
+
+  String _sampleTypeName(BiomarkerSampleType sampleType) => switch (sampleType) {
+    BiomarkerSampleType.blood => 'Blood',
+    BiomarkerSampleType.urine => 'Urine',
+    BiomarkerSampleType.stool => 'Stool',
+    BiomarkerSampleType.saliva => 'Saliva',
+  };
 
   /// What the chosen tests cost together, counting only the ones with a price.
   ///
@@ -372,34 +406,42 @@ class LabPlanExportService {
               style: const pw.TextStyle(fontSize: 9),
             ),
           ),
-          if (plan.status == 'verified') ...[
+          if (plan.status == 'verified' || plan.status == 'external') ...[
             pw.SizedBox(height: 10),
             pw.Container(
               width: double.infinity,
               padding: const pw.EdgeInsets.all(8),
               decoration: pw.BoxDecoration(
-                color: PdfColors.green50,
-                border: pw.Border.all(color: PdfColors.green300),
+                color: plan.status == 'verified'
+                    ? PdfColors.green50
+                    : PdfColors.orange50,
+                border: pw.Border.all(
+                  color: plan.status == 'verified'
+                      ? PdfColors.green300
+                      : PdfColors.orange300,
+                ),
               ),
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
                   pw.Text(
-                    'Independent AI verification',
+                    plan.status == 'verified'
+                        ? 'Independent AI verification'
+                        : 'External LLM import - no independent in-app review',
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                   pw.Text(
-                    plan.verificationSummary,
+                    labPlanPdfSafeText(plan.verificationSummary),
                     style: const pw.TextStyle(fontSize: 9),
                   ),
                   for (final warning in plan.verificationWarnings)
                     pw.Text(
-                      'Warning: $warning',
+                      labPlanPdfSafeText('Warning: $warning'),
                       style: const pw.TextStyle(fontSize: 8),
                     ),
                   for (final citation in plan.verificationCitations)
                     pw.Text(
-                      citation,
+                      labPlanPdfSafeText(citation),
                       style: const pw.TextStyle(
                         fontSize: 7,
                         color: PdfColors.blue700,

@@ -1957,6 +1957,7 @@ class AppController extends ChangeNotifier {
     required LongTaskNotice notice,
     DateTime? targetDate,
     String priorities = '',
+    bool includeOverdueBiomarkers = true,
   }) async {
     // Its own setting. This used to read advisorSettings, so a planner run
     // silently used whatever the advisor was set to — on the most expensive
@@ -1984,6 +1985,7 @@ class AppController extends ChangeNotifier {
           settings: settings,
           targetDate: targetDate,
           priorities: priorities,
+          includeOverdueBiomarkers: includeOverdueBiomarkers,
           onProgress: (update) {
             labPlanStage = update.stage;
             final activity = update.activity;
@@ -2015,6 +2017,44 @@ class AppController extends ChangeNotifier {
       }
     });
   }
+
+  /// Exports the complete drafting request without making an API call.
+  Future<ExportedFile> exportLabPlannerPrompt({
+    DateTime? targetDate,
+    String priorities = '',
+    bool includeOverdueBiomarkers = true,
+  }) async {
+    final package = await _withBusy(
+      () => _labPlannerService.buildExternalPrompt(
+        profileId: _profileId,
+        targetDate: targetDate,
+        priorities: priorities,
+        includeOverdueBiomarkers: includeOverdueBiomarkers,
+      ),
+    );
+    final stamp = DateTime.now().toIso8601String().split('T').first;
+    return ExportedFile(
+      fileName: 'superhealth-lab-planner-prompt-$stamp.txt',
+      mimeType: 'text/plain',
+      bytes: Uint8List.fromList(utf8.encode(package.text)),
+    );
+  }
+
+  /// Validates an external response and exposes it as an unsaved draft.
+  Future<LabPlanGeneration> importExternalLabPlan({
+    required String responseText,
+    bool includeOverdueBiomarkers = true,
+  }) => _withBusy(() async {
+    final result = await _labPlannerService.importExternalPlan(
+      profileId: _profileId,
+      responseText: responseText,
+      includeOverdueBiomarkers: includeOverdueBiomarkers,
+    );
+    draftLabPlan = result;
+    lastContextBytes = result.context.byteLength;
+    lastContextTokens = result.context.estimatedTokens;
+    return result;
+  });
 
   /// Whether a diagnostic log can be produced at all on this build.
   bool aiLogAvailable(AiLogKind kind) => _traceStore(kind) != null;
@@ -2128,9 +2168,15 @@ class AppController extends ChangeNotifier {
     bool checked,
   ) async {
     if (itemIds.isEmpty) return;
+    // A checkbox callback can outlive the widget that created it. Resolve the
+    // current plan first so two quick edits cannot let the second stale object
+    // undo the first one.
+    final currentPlan = labPlans.firstWhereOrNull(
+      (candidate) => candidate.id == plan.id,
+    ) ?? plan;
     final now = DateTime.now();
     final updatedItems = [
-      for (final current in plan.items)
+      for (final current in currentPlan.items)
         itemIds.contains(current.id) && current.checked != checked
             ? LabPlanItem(
                 id: current.id,
@@ -2149,10 +2195,26 @@ class AppController extends ChangeNotifier {
               )
             : current,
     ];
-    await repository.saveLabPlan(
-      plan.copyWith(updatedAt: now, items: updatedItems),
+    final updatedPlan = currentPlan.copyWith(
+      updatedAt: now,
+      items: updatedItems,
     );
-    await refreshActiveData();
+    // Update counts immediately. Otherwise the doctor-export picker can open
+    // in the gap between a visible checkbox tap and the database reload and
+    // report the captured plan's old x-of-x state.
+    labPlans = [
+      for (final candidate in labPlans)
+        if (candidate.id == updatedPlan.id) updatedPlan else candidate,
+    ];
+    notifyListeners();
+    try {
+      await repository.saveLabPlan(updatedPlan);
+      await refreshActiveData();
+    } on Object {
+      // Roll back the optimistic copy to the database's durable truth.
+      await refreshActiveData();
+      rethrow;
+    }
   }
 
   Future<void> deleteLabPlan(LabPlan plan) async {

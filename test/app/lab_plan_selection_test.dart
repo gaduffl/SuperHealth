@@ -75,6 +75,34 @@ void main() {
     expect(fixture.checkedIds(fixture.controller.labPlans.single), {'tsh'});
   });
 
+  test('selection count updates before the database reload completes', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    final capturedPlan = await fixture.seedPlan();
+
+    final write = fixture.controller.setLabPlanItemsChecked(
+      capturedPlan,
+      {'ferritin'},
+      true,
+    );
+
+    // The doctor-export dialog reads controller.labPlans synchronously. It
+    // must already see the tap instead of briefly reporting zero selected.
+    expect(fixture.checkedIds(fixture.controller.labPlans.single), {'ferritin'});
+    await write;
+
+    // Reusing the object captured before the first edit must not clear it.
+    await fixture.controller.setLabPlanItemsChecked(
+      capturedPlan,
+      {'tsh'},
+      true,
+    );
+    expect(fixture.checkedIds(fixture.controller.labPlans.single), {
+      'ferritin',
+      'tsh',
+    });
+  });
+
   test('a row already in the wanted state is not rewritten', () async {
     // Every synchronized row is compared by updated_at, so touching rows that
     // did not actually change would manufacture sync work and, on a second

@@ -33,6 +33,19 @@ class LabPlanGeneration {
   bool get canSave => verification.approved;
 }
 
+/// A self-contained prompt that can be sent to an external LLM.
+///
+/// It deliberately carries the same system prompt, user prompt, health-context
+/// JSON, and structured-output schema as the in-app drafting request. API keys,
+/// provider settings, and the independent second-pass review are not part of a
+/// model prompt and are therefore never exported.
+class LabPlannerPromptPackage {
+  const LabPlannerPromptPackage({required this.text, required this.context});
+
+  final String text;
+  final HealthContextEnvelope context;
+}
+
 class LabPlanVerification {
   const LabPlanVerification({
     required this.approved,
@@ -389,11 +402,169 @@ warnings.
     'additionalProperties': false,
   };
 
+  /// Builds the complete drafting request without contacting a provider.
+  Future<LabPlannerPromptPackage> buildExternalPrompt({
+    required String profileId,
+    DateTime? targetDate,
+    String priorities = '',
+    bool includeOverdueBiomarkers = true,
+  }) async {
+    final context = await _contextBuilder.build(profileId);
+    final dueBiomarkers = await _repository.dueBiomarkers(profileId);
+    final userPrompt = _userPrompt(
+      context: context,
+      targetDate: targetDate,
+      priorities: priorities,
+      dueBiomarkers: dueBiomarkers,
+      includeOverdueBiomarkers: includeOverdueBiomarkers,
+    );
+    final schema = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(_planJsonSchema(context));
+    final text = '''
+SUPERHEALTH LAB PLANNER PROMPT EXPORT
+
+Send this complete file to the external LLM. Ask it to follow the system and
+user prompts below and to return only the JSON object described by the output
+schema. Save that JSON response as a .json or .txt file, then import it with
+"Import External Lab Plan" in SuperHealth.
+
+--- BEGIN SYSTEM PROMPT ---
+${AdvisorService.systemPrompt}
+--- END SYSTEM PROMPT ---
+
+--- BEGIN USER PROMPT ---
+$userPrompt
+--- END USER PROMPT ---
+
+--- BEGIN COMPLETE HEALTH CONTEXT JSON ---
+${context.json}
+--- END COMPLETE HEALTH CONTEXT JSON ---
+
+--- BEGIN REQUIRED JSON OUTPUT SCHEMA ---
+$schema
+--- END REQUIRED JSON OUTPUT SCHEMA ---
+''';
+    return LabPlannerPromptPackage(text: text, context: context);
+  }
+
+  /// Reads a response produced from [buildExternalPrompt].
+  ///
+  /// This performs the same catalog, context-receipt, tier, and mandatory-due
+  /// validation as the in-app draft parser. It does not claim that the app ran
+  /// the independent second LLM review used by an internal generation.
+  Future<LabPlanGeneration> importExternalPlan({
+    required String profileId,
+    required String responseText,
+    bool includeOverdueBiomarkers = true,
+  }) async {
+    final context = await _contextBuilder.build(profileId);
+    final dueBiomarkers = await _repository.dueBiomarkers(profileId);
+    final requiredBiomarkerIds = includeOverdueBiomarkers
+        ? {for (final due in dueBiomarkers) due.biomarker.id}
+        : const <String>{};
+    final candidate = await _parse(
+      ProviderResponse(text: responseText, raw: const {}),
+      profileId: profileId,
+      providerName: 'External LLM',
+      modelName: 'External subscription',
+      context: context,
+      targetDate: null,
+      requiredBiomarkerIds: requiredBiomarkerIds,
+    );
+    const summary =
+        'Imported external response passed SuperHealth structure, catalog, '
+        'context-receipt, and due-biomarker checks. No independent LLM review '
+        'was run inside SuperHealth.';
+    final now = DateTime.now();
+    final plan = candidate.plan.copyWith(
+      status: 'external',
+      verificationSummary: summary,
+      verificationWarnings: candidate.warnings,
+      verifiedAt: now,
+    );
+    return LabPlanGeneration(
+      plan: plan,
+      context: context,
+      warnings: candidate.warnings,
+      citations: candidate.citations,
+      verification: const LabPlanVerification(
+        // Approval here is permission to save a structurally valid import,
+        // not a claim of an independent clinical review. The summary and the
+        // distinct `external` plan status keep that boundary visible.
+        approved: true,
+        summary: summary,
+        blockingIssues: [],
+        warnings: [],
+      ),
+    );
+  }
+
+  String _userPrompt({
+    required HealthContextEnvelope context,
+    required DateTime? targetDate,
+    required String priorities,
+    required List<DueBiomarker> dueBiomarkers,
+    required bool includeOverdueBiomarkers,
+  }) {
+    final dateText =
+        targetDate?.toIso8601String().split('T').first ?? 'not set';
+    return '''
+Create a three-tier German lab visit checklist for this profile.
+Target date: $dateText
+User priorities: ${priorities.trim().isEmpty ? 'Use the stored goals and health context.' : priorities.trim()}
+
+${_dueBiomarkerInstruction(dueBiomarkers, includeOverdueBiomarkers)}
+
+Required context receipt: sha256=${context.sha256}; file_sha256=${context.fileSha256}; record_count=${context.recordCount}; reviewed_sections must contain every key in the package manifest sections. Use the attention index only to navigate, then verify the plan against the complete raw ledger.
+
+${context.coverageInstruction}
+
+$_schemaInstructions
+''';
+  }
+
+  String _dueBiomarkerInstruction(
+    List<DueBiomarker> dueBiomarkers,
+    bool includeOverdueBiomarkers,
+  ) {
+    if (!includeOverdueBiomarkers) {
+      return 'Biomarkers that are overdue in saved biomarker lists are not '
+          'mandatory. Consider their list membership and result age normally.';
+    }
+    if (dueBiomarkers.isEmpty) {
+      return 'The user requires every overdue biomarker-list item, but none '
+          'is currently overdue.';
+    }
+    final rows = [
+      for (final due in dueBiomarkers)
+        {
+          'biomarker_id': due.biomarker.id,
+          'biomarker_name': due.biomarker.displayName,
+          'lists': due.listNames,
+          'last_measured': due.lastMeasuredAt
+              ?.toIso8601String()
+              .split('T')
+              .first,
+          'due_date': due.lastMeasuredAt == null
+              ? null
+              : due.dueDate.toIso8601String().split('T').first,
+          'interval_days': due.intervalDays,
+        },
+    ];
+    return 'Every biomarker in the following OVERDUE_LIST_BIOMARKERS JSON '
+        'must appear exactly once in one of the three tiers. This is a hard '
+        'user choice; do not omit one because another test seems more useful. '
+        'Prioritise its tier normally and explain its profile-specific reason.\n'
+        'OVERDUE_LIST_BIOMARKERS=${jsonEncode(rows)}';
+  }
+
   Future<LabPlanGeneration> generate({
     required String profileId,
     required AiTaskSettings settings,
     DateTime? targetDate,
     String priorities = '',
+    bool includeOverdueBiomarkers = true,
     LabPlanProgress? onProgress,
   }) async {
     var stage = LabPlanStage.preparingContext;
@@ -423,6 +594,7 @@ warnings.
       'code_execution': settings.codeExecution,
       'target_date': targetDate?.toIso8601String(),
       'priorities_chars': priorities.trim().length,
+      'include_overdue_biomarkers': includeOverdueBiomarkers,
     });
     try {
       return await _generate(
@@ -430,6 +602,7 @@ warnings.
         settings: settings,
         targetDate: targetDate,
         priorities: priorities,
+        includeOverdueBiomarkers: includeOverdueBiomarkers,
         emit: emit,
         report: report,
         currentStage: () => stage,
@@ -446,6 +619,7 @@ warnings.
     required AiTaskSettings settings,
     required DateTime? targetDate,
     required String priorities,
+    required bool includeOverdueBiomarkers,
     required void Function(LabPlanUpdate) emit,
     required Future<void> Function(LabPlanStage) report,
     required LabPlanStage Function() currentStage,
@@ -463,6 +637,10 @@ warnings.
       );
     }
     final context = await _contextBuilder.build(profileId);
+    final dueBiomarkers = await _repository.dueBiomarkers(profileId);
+    final requiredBiomarkerIds = includeOverdueBiomarkers
+        ? {for (final due in dueBiomarkers) due.biomarker.id}
+        : const <String>{};
     // Every call in this run shares one key, so the draft's prefill is still
     // cached when the verification pass sends the same context minutes later.
     // Keyed on the context hash: a changed record must not reuse a stale entry.
@@ -481,20 +659,13 @@ warnings.
     // so the cap leaves room for reasoning plus the complete plan JSON while
     // staying inside non-streaming timeout guidance.
     const maxOutputTokens = 16000;
-    final dateText =
-        targetDate?.toIso8601String().split('T').first ?? 'not set';
-    final userPrompt =
-        '''
-Create a three-tier German lab visit checklist for this profile.
-Target date: $dateText
-User priorities: ${priorities.trim().isEmpty ? 'Use the stored goals and health context.' : priorities.trim()}
-
-Required context receipt: sha256=${context.sha256}; record_count=${context.recordCount}; reviewed_sections must contain every key in the package manifest sections. Use the attention index only to navigate, then verify the plan against the complete raw ledger.
-
-${context.coverageInstruction}
-
-$_schemaInstructions
-''';
+    final userPrompt = _userPrompt(
+      context: context,
+      targetDate: targetDate,
+      priorities: priorities,
+      dueBiomarkers: dueBiomarkers,
+      includeOverdueBiomarkers: includeOverdueBiomarkers,
+    );
     final client = _clientFactory.create(settings.provider);
     await _trace.event('counting_context_tokens');
     final delivery = _contextBuilder.deliveryFor(
@@ -551,9 +722,11 @@ $_schemaInstructions
       candidate = await _parse(
         response,
         profileId: profileId,
-        settings: settings,
+        providerName: settings.provider.name,
+        modelName: settings.model,
         context: context,
         targetDate: targetDate,
+        requiredBiomarkerIds: requiredBiomarkerIds,
       );
       await _trace.event('draft_parsed', {
         'items': candidate.plan.items.length,
@@ -580,6 +753,7 @@ $_schemaInstructions
                 'record_count=${context.recordCount}; reviewed_sections must '
                 'contain every manifest section.\n\n'
                 '${context.coverageInstruction}\n\n'
+                '${_dueBiomarkerInstruction(dueBiomarkers, includeOverdueBiomarkers)}\n\n'
                 '$_schemaInstructions',
             contextJson: context.json,
             reasoningLevel: settings.reasoningLevel,
@@ -601,9 +775,11 @@ $_schemaInstructions
         candidate = await _parse(
           response,
           profileId: profileId,
-          settings: settings,
+          providerName: settings.provider.name,
+          modelName: settings.model,
           context: context,
           targetDate: targetDate,
+          requiredBiomarkerIds: requiredBiomarkerIds,
         );
       } on LabPlanFormatException catch (repairError, repairStack) {
         // The end of the road: there is no third pass, so this is the exact
@@ -929,9 +1105,11 @@ $_verificationSchemaInstructions
   Future<LabPlanGeneration> _parse(
     ProviderResponse response, {
     required String profileId,
-    required AiTaskSettings settings,
+    required String providerName,
+    required String modelName,
     required HealthContextEnvelope context,
     required DateTime? targetDate,
+    required Set<String> requiredBiomarkerIds,
   }) async {
     final decoded = _decodeObject(response.text);
     _validateContextReceipt(decoded['context_receipt'], context);
@@ -1053,6 +1231,17 @@ $_verificationSchemaInstructions
         'Core, advanced, and comprehensive tiers are all required.',
       );
     }
+    final missingRequired = requiredBiomarkerIds.difference(seen);
+    if (missingRequired.isNotEmpty) {
+      final names = [
+        for (final id in missingRequired)
+          byId[id]?.displayName ?? id,
+      ]..sort();
+      throw LabPlanFormatException(
+        'The plan omitted mandatory overdue biomarker-list items: '
+        '${names.join(', ')}.',
+      );
+    }
     items.sort((a, b) {
       final tierCompare = a.tier.index.compareTo(b.tier.index);
       return tierCompare != 0 ? tierCompare : a.priority.compareTo(b.priority);
@@ -1072,8 +1261,8 @@ $_verificationSchemaInstructions
       updatedAt: now,
       plannedFor: targetDate ?? parsedDate,
       contextHash: context.sha256,
-      provider: settings.provider.name,
-      model: settings.model,
+      provider: providerName,
+      model: modelName,
       items: items,
       tierTradeoffs: tradeoffs,
     );
