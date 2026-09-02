@@ -178,9 +178,16 @@ class _BiomarkerListsSheet extends StatelessWidget {
     BiomarkerList list, {
     BiomarkerListItem? existing,
   }) async {
-    if (controller.biomarkers.isEmpty) return;
+    final selectableBiomarkers = controller.biomarkers
+        .where(
+          (biomarker) =>
+              !biomarker.isCalculated ||
+              biomarker.id == existing?.biomarkerId,
+        )
+        .toList(growable: false);
+    if (selectableBiomarkers.isEmpty) return;
     var biomarkerId = existing?.biomarkerId;
-    biomarkerId ??= controller.biomarkers
+    biomarkerId ??= selectableBiomarkers
         .where(
           (item) =>
               !list.items.any((listItem) => listItem.biomarkerId == item.id),
@@ -225,7 +232,7 @@ class _BiomarkerListsSheet extends StatelessWidget {
                   labelText: _listsText(context, 'Biomarker', 'Biomarker'),
                 ),
                 items: [
-                  for (final biomarker in controller.biomarkers)
+                  for (final biomarker in selectableBiomarkers)
                     if (biomarker.id == existing?.biomarkerId ||
                         !list.items.any(
                           (item) => item.biomarkerId == biomarker.id,
@@ -523,6 +530,7 @@ Future<void> showAddBiomarkerToListDialog(
   AppController controller,
   Biomarker biomarker,
 ) async {
+  if (biomarker.isCalculated) return;
   final selected = _listIdsHolding(controller, biomarker);
   final interval = TextEditingController(text: '365');
   try {

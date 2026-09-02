@@ -436,7 +436,9 @@ void main() {
 
       await repository.makeTemporaryBiomarkerPermanent(temporary.id);
 
-      final permanent = (await repository.biomarkers()).single;
+      final permanent = (await repository.biomarkers()).singleWhere(
+        (item) => item.id == temporary.id,
+      );
       expect(permanent.id, temporary.id);
       expect(permanent.isTemporary, isFalse);
     },

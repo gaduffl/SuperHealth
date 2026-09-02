@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
+import '../biomarkers/calculated_biomarker_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import '../domain/units.dart';
@@ -51,6 +52,7 @@ const _binaryColumns = <String>{
   'use_score',
   'archived',
   'is_temporary',
+  'is_calculated',
   'checked',
 };
 const _jsonListColumns = <String>{
@@ -410,6 +412,7 @@ class HealthRepository {
   };
 
   final _unitConversions = UnitConversionService();
+  final _calculatedBiomarkers = CalculatedBiomarkerService();
 
   Future<void> saveSupplement(Supplement supplement) async {
     _validateSupplement(supplement);
@@ -729,6 +732,21 @@ class HealthRepository {
       throw ArgumentError.value(package.name, 'name', 'must not be empty');
     }
     final db = await _database.database;
+    if (biomarkerIds.isNotEmpty) {
+      final calculated = await db.query(
+        'biomarkers',
+        columns: ['display_name'],
+        where:
+            'id IN (${List.filled(biomarkerIds.length, '?').join(',')}) '
+            'AND is_calculated = 1 AND deleted = 0',
+        whereArgs: biomarkerIds.toList(),
+      );
+      if (calculated.isNotEmpty) {
+        throw ArgumentError(
+          'Calculated biomarkers cannot be members of a laboratory package.',
+        );
+      }
+    }
     final now = DateTime.now();
     await db.transaction((txn) async {
       await txn.insert(
@@ -1350,7 +1368,13 @@ class HealthRepository {
       whereArgs: [profileId],
       orderBy: 'taken_at DESC',
     );
-    return rows.map(Measurement.fromMap).toList();
+    final reported = rows.map(Measurement.fromMap).toList();
+    final calculated = _calculatedBiomarkers.derive(
+      biomarkers: await biomarkers(),
+      measurements: reported,
+    );
+    return [...reported, ...calculated]
+      ..sort((a, b) => b.takenAt.compareTo(a.takenAt));
   }
 
   Future<void> saveMeasurement(Measurement measurement) async {
@@ -1595,7 +1619,12 @@ class HealthRepository {
       for (final item in list.items) {
         final interval = item.dueIntervalDays;
         final biomarker = catalog[item.biomarkerId];
-        if (interval == null || interval <= 0 || biomarker == null) continue;
+        if (interval == null ||
+            interval <= 0 ||
+            biomarker == null ||
+            biomarker.isCalculated) {
+          continue;
+        }
         final measured = latest[item.biomarkerId];
         final dueDate =
             measured?.add(Duration(days: interval)) ??
@@ -2233,6 +2262,12 @@ class HealthRepository {
     _requireOptionalFinite(biomarker.priceEur, 'Biomarker price');
     if (!biomarker.deleted) {
       _requireOptionalNonNegative(biomarker.priceEur, 'Biomarker price');
+      if (biomarker.isCalculated &&
+          biomarker.calculationFormula?.trim().isNotEmpty != true) {
+        throw ArgumentError(
+          'A calculated biomarker requires a calculation formula.',
+        );
+      }
     }
   }
 
@@ -2409,21 +2444,6 @@ class HealthRepository {
     }
   }
 
-  /// Catalog entries this profile has at least one measurement for.
-  Future<List<Map<String, Object?>>> _measuredBiomarkers(
-    DatabaseExecutor db,
-    String profileId,
-  ) => db.rawQuery(
-    '''
-    SELECT * FROM biomarkers
-    WHERE deleted = 0 AND id IN (
-      SELECT biomarker_id FROM measurements
-        WHERE profile_id = ? AND deleted = 0
-    )
-    ''',
-    [profileId],
-  );
-
   Future<List<Map<String, Object?>>> _measuredBiomarkerRanges(
     DatabaseExecutor db,
     String profileId,
@@ -2449,6 +2469,28 @@ class HealthRepository {
       whereArgs: [profileId],
     );
     if (profileRows.isEmpty) throw StateError('Active profile not found');
+    final biomarkerRows = await db.query(
+      'biomarkers',
+      where: 'deleted = 0',
+    );
+    final reportedMeasurementRows = await _profileRows(
+      db,
+      'measurements',
+      profileId,
+    );
+    final calculatedMeasurements = _calculatedBiomarkers.derive(
+      biomarkers: biomarkerRows.map(Biomarker.fromMap).toList(),
+      measurements: reportedMeasurementRows.map(Measurement.fromMap).toList(),
+    );
+    final calculatedMeasurementRows = <Map<String, Object?>>[
+      for (final measurement in calculatedMeasurements) measurement.toMap(),
+    ];
+    final measuredBiomarkerIds = {
+      for (final row in reportedMeasurementRows)
+        row['biomarker_id']?.toString(),
+      for (final row in calculatedMeasurementRows)
+        row['biomarker_id']?.toString(),
+    }..remove(null);
 
     final data = <String, Object?>{
       'profile': profileRows.single,
@@ -2507,7 +2549,10 @@ class HealthRepository {
               ..remove('one_drive_item_id'),
           )
           .toList(),
-      'measurements': await _profileRows(db, 'measurements', profileId),
+      'measurements': reportedMeasurementRows,
+      // Kept separate from reported evidence: these rows are deterministic
+      // views whose flags, formula and source ids make their provenance clear.
+      'calculated_measurements': calculatedMeasurementRows,
       'conditions_medications_goals_history': await _profileRows(
         db,
         'named_health_records',
@@ -2529,11 +2574,12 @@ class HealthRepository {
       // actually measured, which is a small fraction of a 169-entry catalog.
       // One shared context could not serve both without wasting most of it.
       'biomarker_catalog': switch (scope) {
-        HealthContextScope.labPlanning => await db.query(
-          'biomarkers',
-          where: 'deleted = 0',
-        ),
-        HealthContextScope.advisory => await _measuredBiomarkers(db, profileId),
+        HealthContextScope.labPlanning => biomarkerRows,
+        HealthContextScope.advisory => biomarkerRows
+            .where(
+              (row) => measuredBiomarkerIds.contains(row['id']?.toString()),
+            )
+            .toList(growable: false),
       },
       'biomarker_ranges': switch (scope) {
         HealthContextScope.labPlanning => await db.query(

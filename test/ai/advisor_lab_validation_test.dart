@@ -15,6 +15,7 @@ import 'package:super_health/ai/lab_planner_service.dart';
 import 'package:super_health/ai/lab_price_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 import 'package:super_health/app/app_controller.dart';
+import 'package:super_health/biomarkers/calculated_biomarker_service.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
@@ -296,6 +297,39 @@ void main() {
       expect(reloaded.verificationSummary, contains('No independent LLM'));
     },
   );
+
+  test('lab plans reject calculated biomarkers as orderable tests', () async {
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    final service = _planner(fixture, _Client(_validLabResponse));
+    final exported = await service.buildExternalPrompt(
+      profileId: fixture.profile.id,
+    );
+
+    await expectLater(
+      service.importExternalPlan(
+        profileId: fixture.profile.id,
+        responseText: jsonEncode(
+          _externalLabBody(exported.context, const [
+            (
+              'core',
+              CalculatedBiomarkerService.homa1FallbackId,
+              CalculatedBiomarkerService.homa1DisplayName,
+            ),
+            ('advanced', 'bio-2', 'Lp(a)'),
+            ('comprehensive', 'bio-3', 'HbA1c'),
+          ]),
+        ),
+      ),
+      throwsA(
+        isA<LabPlanFormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('not an orderable laboratory test'),
+        ),
+      ),
+    );
+  });
 
   test(
     'mandatory overdue biomarkers are enforced after external generation',

@@ -813,6 +813,8 @@ class Biomarker {
     this.description = '',
     this.synonyms = const [],
     this.isTemporary = false,
+    this.isCalculated = false,
+    this.calculationFormula,
     this.deleted = false,
   });
 
@@ -830,6 +832,8 @@ class Biomarker {
   final String description;
   final List<String> synonyms;
   final bool isTemporary;
+  final bool isCalculated;
+  final String? calculationFormula;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
@@ -846,6 +850,8 @@ class Biomarker {
     'description': description,
     'synonyms_json': jsonEncode(synonyms),
     'is_temporary': isTemporary ? 1 : 0,
+    'is_calculated': isCalculated ? 1 : 0,
+    'calculation_formula': calculationFormula,
     'created_at': _iso(createdAt),
     'updated_at': _iso(updatedAt),
     'deleted': deleted ? 1 : 0,
@@ -865,6 +871,8 @@ class Biomarker {
     description: map['description']?.toString() ?? '',
     synonyms: _strings(map['synonyms_json']),
     isTemporary: _boolFromDb(map['is_temporary']),
+    isCalculated: _boolFromDb(map['is_calculated']),
+    calculationFormula: map['calculation_formula']?.toString(),
     createdAt: _date(map['created_at']),
     updatedAt: _date(map['updated_at']),
     deleted: _boolFromDb(map['deleted']),
@@ -1136,6 +1144,10 @@ class Measurement {
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
+
+  /// True only for a deterministic view over other stored measurements.
+  /// Calculated rows are not source evidence and must not be edited directly.
+  bool get isCalculated => conversionStatus == 'calculated';
 
   Map<String, Object?> toMap() => {
     'id': id,

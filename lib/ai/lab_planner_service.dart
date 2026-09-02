@@ -224,7 +224,7 @@ Return exactly one JSON object and no markdown. Use this shape:
 }
 ITEM is {"biomarker_id":"exact catalog id","biomarker_name":"exact catalog display name","priority":1,"rationale":"profile-specific concise rationale","evidence_class":"guideline|longevity|experimental|unclassified","preparation":"concise preparation/timing note"}.
 
-Each biomarker must appear exactly once, in the first tier where it is added. The app makes tiers cumulative: Advanced includes Core, and Comprehensive includes both. Use only biomarkers present in biomarker_catalog. Never invent prices or identifiers; the app resolves prices from the catalog. Put the highest-value, most actionable checks in Core. Include meaningful additions in all three tiers. Account for existing results, result age, conditions, medicines, supplements, goals, symptoms, and duplicate/redundant tests. Treat the result as a draft checklist rather than a diagnosis, and do not write that anywhere in the output — the app says it once, on the screen, under every plan.
+Each biomarker must appear exactly once, in the first tier where it is added. The app makes tiers cumulative: Advanced includes Core, and Comprehensive includes both. Use only biomarkers present in biomarker_catalog. Catalog rows with is_calculated=1 are derived values, not orderable laboratory tests: never put one into a tier; include its required measured inputs instead when relevant. Never invent prices or identifiers; the app resolves prices from the catalog. Put the highest-value, most actionable checks in Core. Include meaningful additions in all three tiers. Account for existing results, result age, conditions, medicines, supplements, goals, symptoms, and duplicate/redundant tests. Treat the result as a draft checklist rather than a diagnosis, and do not write that anywhere in the output — the app says it once, on the screen, under every plan.
 
 Every field is read on a phone, one test at a time. Write for that.
 rationale is one short German sentence naming why this test, for this profile,
@@ -1170,6 +1170,12 @@ $_verificationSchemaInstructions
         if (biomarker == null) {
           throw LabPlanFormatException(
             'Biomarker id “$rawId” is not in the catalog.',
+          );
+        }
+        if (biomarker.isCalculated) {
+          throw LabPlanFormatException(
+            'Calculated biomarker “${biomarker.displayName}” is not an '
+            'orderable laboratory test. Include its measured inputs instead.',
           );
         }
         final rawName = raw['biomarker_name'];

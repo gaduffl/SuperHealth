@@ -2034,6 +2034,8 @@ Future<void> showAddBiomarkerDialog(
             description: description.text,
             synonyms: parsedSynonyms,
             isTemporary: existing.isTemporary,
+            isCalculated: existing.isCalculated,
+            calculationFormula: existing.calculationFormula,
             createdAt: existing.createdAt,
             updatedAt: DateTime.now(),
           ),

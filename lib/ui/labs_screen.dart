@@ -212,7 +212,9 @@ class _LabsScreenState extends State<LabsScreen> {
                       'Add measurement',
                       'Messwert hinzufügen',
                     ),
-                    onTap: controller.biomarkers.isEmpty
+                    onTap: !controller.biomarkers.any(
+                      (biomarker) => !biomarker.isCalculated,
+                    )
                         ? null
                         : () => _addMeasurement(controller),
                   ),
@@ -313,7 +315,12 @@ class _LabsScreenState extends State<LabsScreen> {
   }
 
   Future<void> _addMeasurement(AppController controller) async {
-    final biomarker = await _chooseBiomarker(context, controller.biomarkers);
+    final biomarker = await _chooseBiomarker(
+      context,
+      controller.biomarkers
+          .where((biomarker) => !biomarker.isCalculated)
+          .toList(growable: false),
+    );
     if (biomarker != null && mounted) {
       await showAddMeasurementDialog(context, controller, biomarker);
     }
@@ -532,6 +539,9 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     final controller = context.watch<AppController>();
     final now = DateTime.now();
     final activeProfile = controller.activeProfile;
+    final hasOrderableBiomarkers = controller.biomarkers.any(
+      (biomarker) => !biomarker.isCalculated,
+    );
     final latestByBiomarker = <String, Measurement>{};
     for (final measurement in controller.measurements) {
       final existing = latestByBiomarker[measurement.biomarkerId];
@@ -593,7 +603,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                     const SizedBox(width: 6),
                     FilledButton.icon(
                       onPressed:
-                          controller.busy || controller.biomarkers.isEmpty
+                          controller.busy || !hasOrderableBiomarkers
                           ? null
                           : () => _generate(context, controller),
                       icon: const Icon(Icons.auto_awesome),
@@ -611,7 +621,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                     children: [
                       OutlinedButton.icon(
                         onPressed:
-                            controller.busy || controller.biomarkers.isEmpty
+                            controller.busy || !hasOrderableBiomarkers
                             ? null
                             : () => _exportPlannerPrompt(context, controller),
                         icon: const Icon(Icons.file_download_outlined),
@@ -625,7 +635,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                       ),
                       OutlinedButton.icon(
                         onPressed:
-                            controller.busy || controller.biomarkers.isEmpty
+                            controller.busy || !hasOrderableBiomarkers
                             ? null
                             : () => _importExternalPlan(context, controller),
                         icon: const Icon(Icons.file_upload_outlined),
@@ -649,7 +659,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   activity: controller.labPlanActivity,
                   activityAt: controller.labPlanActivityAt,
                 ),
-              if (controller.biomarkers.isEmpty)
+              if (!hasOrderableBiomarkers)
                 EmptyState(
                   icon: Icons.science_outlined,
                   title: _labsText(
@@ -3968,6 +3978,12 @@ class _BiomarkerTile extends StatelessWidget {
       subtitle: Text(
         [
           if (biomarker.category.isNotEmpty) biomarker.category,
+          if (biomarker.isCalculated)
+            _labsText(
+              context,
+              'Calculated automatically',
+              'Automatisch berechnet',
+            ),
           if (latest != null)
             '${latest!.value} ${latest!.unit} · ${DateFormat.yMMMd().format(latest!.takenAt)}'
           else
@@ -3986,7 +4002,9 @@ class _BiomarkerTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(
-            !biomarker.hasPrice
+            biomarker.isCalculated
+                ? _labsText(context, 'Calculated', 'Berechnet')
+                : !biomarker.hasPrice
                 ? _labsText(context, 'No price', 'Kein Preis')
                 : '${biomarker.priceEur!.toStringAsFixed(2)} €',
           ),

@@ -25,24 +25,7 @@ void main() {
             await db.execute(legacyLabPlansTable);
             // Only what this migration touches. A fixture that creates every
             // table would hide an ALTER against one it forgot.
-            await db.execute('''
-            CREATE TABLE biomarkers (
-              id TEXT PRIMARY KEY,
-              canonical_name TEXT NOT NULL,
-              display_name TEXT NOT NULL,
-              category TEXT NOT NULL DEFAULT '',
-              default_unit TEXT NOT NULL DEFAULT '',
-              price_eur REAL,
-              lab_name TEXT,
-              price_checked_at TEXT,
-              description TEXT NOT NULL DEFAULT '',
-              synonyms_json TEXT NOT NULL DEFAULT '[]',
-              is_temporary INTEGER NOT NULL DEFAULT 0,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL,
-              deleted INTEGER NOT NULL DEFAULT 0
-            )
-          ''');
+            await db.execute(legacyBiomarkersTable);
             // v11 alters profiles, so a fixture without it fails here while
             // working fine against a real database of this version.
             await db.execute('''
@@ -82,7 +65,10 @@ void main() {
       final repository = HealthRepository(database);
 
       // The pre-existing row survives the upgrade.
-      expect((await repository.biomarkers()).single.id, 'hb');
+      expect(
+        (await repository.biomarkers()).singleWhere((item) => item.id == 'hb').id,
+        'hb',
+      );
       // And the new tables exist and are empty rather than absent.
       expect(await repository.biomarkerPackages(), isEmpty);
       expect(await repository.biomarkerPackageMembers(), isEmpty);

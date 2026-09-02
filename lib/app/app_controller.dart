@@ -1273,6 +1273,11 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> updateBiomarker(Biomarker biomarker) async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Built-in calculated biomarker definitions cannot be edited.',
+      );
+    }
     await repository.saveBiomarker(
       Biomarker(
         id: biomarker.id,
@@ -1286,6 +1291,8 @@ class AppController extends ChangeNotifier {
         description: biomarker.description.trim(),
         synonyms: biomarker.synonyms,
         isTemporary: biomarker.isTemporary,
+        isCalculated: biomarker.isCalculated,
+        calculationFormula: biomarker.calculationFormula,
         createdAt: biomarker.createdAt,
         updatedAt: DateTime.now(),
         deleted: biomarker.deleted,
@@ -1295,6 +1302,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> deleteBiomarker(Biomarker biomarker) async {
+    if (biomarker.isCalculated) {
+      throw StateError('Built-in calculated biomarkers cannot be deleted.');
+    }
     if (measurements.any((item) => item.biomarkerId == biomarker.id)) {
       throw StateError(
         'This biomarker has measurements. Reassign or delete those results first.',
@@ -1322,7 +1332,9 @@ class AppController extends ChangeNotifier {
     }
     return _withBusy(
       () => _labPriceService.propose(
-        catalog: biomarkers.where((item) => !item.deleted).toList(),
+        catalog: biomarkers
+            .where((item) => !item.deleted && !item.isCalculated)
+            .toList(),
         packages: biomarkerPackages,
         packageMembers: biomarkerPackageMembers,
         settings: settings,
@@ -1372,7 +1384,7 @@ class AppController extends ChangeNotifier {
             continue;
           }
           final biomarker = byId[proposal.targetId];
-          if (biomarker == null) continue;
+          if (biomarker == null || biomarker.isCalculated) continue;
           await repository.saveBiomarker(
             Biomarker(
               id: biomarker.id,
@@ -1388,6 +1400,8 @@ class AppController extends ChangeNotifier {
               description: biomarker.description,
               synonyms: biomarker.synonyms,
               isTemporary: biomarker.isTemporary,
+              isCalculated: biomarker.isCalculated,
+              calculationFormula: biomarker.calculationFormula,
               createdAt: biomarker.createdAt,
               updatedAt: now,
               deleted: biomarker.deleted,
@@ -1489,6 +1503,11 @@ class AppController extends ChangeNotifier {
     double? refHigh,
     String notes = '',
   }) async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Calculated biomarkers are created from their source results.',
+      );
+    }
     final now = DateTime.now();
     await repository.saveMeasurement(
       Measurement(
@@ -1509,6 +1528,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> updateMeasurement(Measurement measurement) async {
+    if (measurement.isCalculated) {
+      throw StateError('Calculated results cannot be edited directly.');
+    }
     await repository.saveMeasurement(
       Measurement(
         id: measurement.id,
@@ -1534,6 +1556,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> deleteMeasurement(Measurement measurement) async {
+    if (measurement.isCalculated) {
+      throw StateError('Calculated results cannot be deleted directly.');
+    }
     await repository.softDelete('measurements', measurement.id);
     await refreshActiveData();
   }
@@ -1643,6 +1668,11 @@ class AppController extends ChangeNotifier {
     int? dueIntervalDays,
     String notes = '',
   }) async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Calculated biomarkers do not have their own laboratory retest.',
+      );
+    }
     final existing = list.items.firstWhereOrNull(
       (item) => item.biomarkerId == biomarker.id,
     );
@@ -1682,7 +1712,7 @@ class AppController extends ChangeNotifier {
     var present = 0;
     for (final memberId in memberIds) {
       final biomarker = byId[memberId];
-      if (biomarker == null) continue;
+      if (biomarker == null || biomarker.isCalculated) continue;
       // An existing entry keeps its own interval and notes: the owner set
       // those deliberately, and a bulk add is not the place to overwrite them.
       if (list.items.any((item) => item.biomarkerId == memberId)) {
@@ -1719,6 +1749,11 @@ class AppController extends ChangeNotifier {
     required Set<String> listIds,
     int? dueIntervalDays,
   }) => _withBusy(() async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Calculated biomarkers do not have their own laboratory retest.',
+      );
+    }
     if (dueIntervalDays != null && dueIntervalDays <= 0) {
       throw StateError('The retest interval must be a positive number.');
     }

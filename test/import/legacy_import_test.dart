@@ -201,7 +201,9 @@ void main() {
     expect(preview.counts['target_overrides'], 1);
     await service.commit(preview);
 
-    final biomarker = (await repository.biomarkers()).single;
+    final biomarker = (await repository.biomarkers()).singleWhere(
+      (item) => !item.isCalculated,
+    );
     expect(biomarker.displayName, 'LDL-C');
     expect(biomarker.defaultUnit, 'mg/dL');
     expect(biomarker.priceEur, 4.2);
@@ -265,7 +267,9 @@ void main() {
 
       await service.commit(preview);
 
-      final biomarker = (await repository.biomarkers()).single;
+      final biomarker = (await repository.biomarkers()).singleWhere(
+        (item) => !item.isCalculated,
+      );
       final measurement = (await repository.measurements(profile.id)).single;
       expect(biomarker.canonicalName, 'lymphs');
       expect(measurement.canonicalValue, closeTo(2.4, 1e-9));
@@ -336,7 +340,9 @@ void main() {
       );
       await service.commit(preview);
 
-      final biomarkers = await repository.biomarkers();
+      final biomarkers = (await repository.biomarkers())
+          .where((item) => !item.isCalculated)
+          .toList();
       expect(biomarkers, hasLength(1));
       expect(biomarkers.single.canonicalName, '1_25_dihydroxy_vitamin_d');
       final db = await database.database;

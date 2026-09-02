@@ -233,7 +233,7 @@ class _BiomarkerDetail extends StatelessWidget {
                         if (biomarker.hasPrice)
                           '${biomarker.priceEur!.toStringAsFixed(2)} €'
                               '${biomarker.labName?.trim().isNotEmpty == true ? ' · ${biomarker.labName!.trim()}' : ''}'
-                        else
+                        else if (!biomarker.isCalculated)
                           _detailText(context, 'No price', 'Kein Preis'),
                         if (biomarker.isTemporary)
                           _detailText(
@@ -241,16 +241,33 @@ class _BiomarkerDetail extends StatelessWidget {
                             'Temporary mapping',
                             'Temporäre Zuordnung',
                           ),
+                        if (biomarker.isCalculated)
+                          _detailText(
+                            context,
+                            'Calculated automatically',
+                            'Automatisch berechnet',
+                          ),
                       ].join(' · '),
                     ),
                   ],
                 ),
               ),
               FilledButton.icon(
-                onPressed: () =>
-                    showAddMeasurementDialog(context, controller, biomarker),
-                icon: const Icon(Icons.add),
-                label: Text(_detailText(context, 'Result', 'Ergebnis')),
+                onPressed: biomarker.isCalculated
+                    ? null
+                    : () => showAddMeasurementDialog(
+                        context,
+                        controller,
+                        biomarker,
+                      ),
+                icon: Icon(
+                  biomarker.isCalculated ? Icons.calculate_outlined : Icons.add,
+                ),
+                label: Text(
+                  biomarker.isCalculated
+                      ? _detailText(context, 'Calculated', 'Berechnet')
+                      : _detailText(context, 'Result', 'Ergebnis'),
+                ),
               ),
               PopupMenuButton<String>(
                 tooltip: _detailText(
@@ -289,22 +306,24 @@ class _BiomarkerDetail extends StatelessWidget {
                   }
                 },
                 itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'lists',
-                    child: Text(
-                      _detailText(
-                        context,
-                        'Add to list',
-                        'Zur Liste hinzufügen',
+                  if (!biomarker.isCalculated) ...[
+                    PopupMenuItem(
+                      value: 'lists',
+                      child: Text(
+                        _detailText(
+                          context,
+                          'Add to list',
+                          'Zur Liste hinzufügen',
+                        ),
                       ),
                     ),
-                  ),
-                  PopupMenuItem(
-                    value: 'edit',
-                    child: Text(
-                      _detailText(context, 'Edit test', 'Test bearbeiten'),
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Text(
+                        _detailText(context, 'Edit test', 'Test bearbeiten'),
+                      ),
                     ),
-                  ),
+                  ],
                   PopupMenuItem(
                     value: 'target',
                     child: Text(
@@ -328,13 +347,15 @@ class _BiomarkerDetail extends StatelessWidget {
                         ),
                       ),
                     ),
-                  const PopupMenuDivider(),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Text(
-                      _detailText(context, 'Delete test', 'Test löschen'),
+                  if (!biomarker.isCalculated) ...[
+                    const PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text(
+                        _detailText(context, 'Delete test', 'Test löschen'),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ],
@@ -751,7 +772,16 @@ class _BiomarkerDetail extends StatelessWidget {
                                 ),
                             ],
                           ),
-                          trailing: PopupMenuButton<String>(
+                          trailing: value.isCalculated
+                              ? Tooltip(
+                                  message: _detailText(
+                                    context,
+                                    'Calculated automatically from fasting glucose and fasting insulin',
+                                    'Automatisch aus Nüchternglukose und Nüchterninsulin berechnet',
+                                  ),
+                                  child: const Icon(Icons.calculate_outlined),
+                                )
+                              : PopupMenuButton<String>(
                             tooltip: _detailText(
                               context,
                               'Result actions',
@@ -791,7 +821,9 @@ class _BiomarkerDetail extends StatelessWidget {
                           // A hand-entered reading has no document behind it,
                           // so tapping it still opens the editor. Editing a
                           // parsed one moved to the menu beside it.
-                          onTap: document != null
+                          onTap: value.isCalculated
+                              ? null
+                              : document != null
                               ? () => showLabReport(
                                   context,
                                   document,

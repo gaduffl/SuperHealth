@@ -7,10 +7,29 @@
 /// table failed with "no such table". A real database at any of those versions
 /// has it, so the fixtures carry it too.
 ///
-/// Keep this at the shape a v5 database already had. A migration that alters
+/// Keep these at the shape a v5 database already had. A migration that alters
 /// one of these tables belongs here as well, so the next one does not have to
 /// rediscover the same failure.
 library;
+
+const legacyBiomarkersTable = '''
+  CREATE TABLE biomarkers (
+    id TEXT PRIMARY KEY,
+    canonical_name TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    default_unit TEXT NOT NULL DEFAULT '',
+    price_eur REAL,
+    lab_name TEXT,
+    price_checked_at TEXT,
+    description TEXT NOT NULL DEFAULT '',
+    synonyms_json TEXT NOT NULL DEFAULT '[]',
+    is_temporary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+  )
+''';
 
 const legacyLabPlansTable = '''
   CREATE TABLE lab_plans (

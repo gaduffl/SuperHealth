@@ -24,6 +24,7 @@ void main() {
             // Present in a real database at this version; the v12 upgrade
             // adds a column to it.
             await db.execute(legacyLabPlansTable);
+            await db.execute(legacyBiomarkersTable);
             await db.execute('''
             CREATE TABLE profiles (
               id TEXT PRIMARY KEY,

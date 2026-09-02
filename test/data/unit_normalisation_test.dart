@@ -104,7 +104,14 @@ void main() {
     );
 
     final db = await database.database;
-    expect((await db.query('biomarkers')).single['default_unit'], 'ug/L');
+    expect(
+      (await db.query(
+        'biomarkers',
+        where: 'id = ?',
+        whereArgs: ['b'],
+      )).single['default_unit'],
+      'ug/L',
+    );
     expect((await db.query('measurements')).single['unit_reported'], 'ug/L');
   });
 
