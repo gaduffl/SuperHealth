@@ -2469,10 +2469,7 @@ class HealthRepository {
       whereArgs: [profileId],
     );
     if (profileRows.isEmpty) throw StateError('Active profile not found');
-    final biomarkerRows = await db.query(
-      'biomarkers',
-      where: 'deleted = 0',
-    );
+    final biomarkerRows = await db.query('biomarkers', where: 'deleted = 0');
     final reportedMeasurementRows = await _profileRows(
       db,
       'measurements',
@@ -2575,11 +2572,12 @@ class HealthRepository {
       // One shared context could not serve both without wasting most of it.
       'biomarker_catalog': switch (scope) {
         HealthContextScope.labPlanning => biomarkerRows,
-        HealthContextScope.advisory => biomarkerRows
-            .where(
-              (row) => measuredBiomarkerIds.contains(row['id']?.toString()),
-            )
-            .toList(growable: false),
+        HealthContextScope.advisory =>
+          biomarkerRows
+              .where(
+                (row) => measuredBiomarkerIds.contains(row['id']?.toString()),
+              )
+              .toList(growable: false),
       },
       'biomarker_ranges': switch (scope) {
         HealthContextScope.labPlanning => await db.query(

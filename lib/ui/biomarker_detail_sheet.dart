@@ -782,39 +782,47 @@ class _BiomarkerDetail extends StatelessWidget {
                                   child: const Icon(Icons.calculate_outlined),
                                 )
                               : PopupMenuButton<String>(
-                            tooltip: _detailText(
-                              context,
-                              'Result actions',
-                              'Ergebnisaktionen',
-                            ),
-                            onSelected: (action) async {
-                              if (action == 'edit') {
-                                await showAddMeasurementDialog(
-                                  context,
-                                  controller,
-                                  biomarker,
-                                  existing: value,
-                                );
-                              } else if (action == 'delete') {
-                                await controller.deleteMeasurement(value);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text(
-                                  _detailText(context, 'Edit', 'Bearbeiten'),
+                                  tooltip: _detailText(
+                                    context,
+                                    'Result actions',
+                                    'Ergebnisaktionen',
+                                  ),
+                                  onSelected: (action) async {
+                                    if (action == 'edit') {
+                                      await showAddMeasurementDialog(
+                                        context,
+                                        controller,
+                                        biomarker,
+                                        existing: value,
+                                      );
+                                    } else if (action == 'delete') {
+                                      await controller.deleteMeasurement(value);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text(
+                                        _detailText(
+                                          context,
+                                          'Edit',
+                                          'Bearbeiten',
+                                        ),
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text(
+                                        _detailText(
+                                          context,
+                                          'Delete',
+                                          'Löschen',
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                  child: _StatusIndicator(status: status),
                                 ),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text(
-                                  _detailText(context, 'Delete', 'Löschen'),
-                                ),
-                              ),
-                            ],
-                            child: _StatusIndicator(status: status),
-                          ),
                           // A reading extracted from a report opens that
                           // report: the value is a claim about a document, and
                           // this is the shortest path from one to the other.

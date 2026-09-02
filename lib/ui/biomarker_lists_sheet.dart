@@ -181,8 +181,7 @@ class _BiomarkerListsSheet extends StatelessWidget {
     final selectableBiomarkers = controller.biomarkers
         .where(
           (biomarker) =>
-              !biomarker.isCalculated ||
-              biomarker.id == existing?.biomarkerId,
+              !biomarker.isCalculated || biomarker.id == existing?.biomarkerId,
         )
         .toList(growable: false);
     if (selectableBiomarkers.isEmpty) return;

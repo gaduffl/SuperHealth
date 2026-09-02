@@ -212,9 +212,10 @@ class _LabsScreenState extends State<LabsScreen> {
                       'Add measurement',
                       'Messwert hinzufügen',
                     ),
-                    onTap: !controller.biomarkers.any(
-                      (biomarker) => !biomarker.isCalculated,
-                    )
+                    onTap:
+                        !controller.biomarkers.any(
+                          (biomarker) => !biomarker.isCalculated,
+                        )
                         ? null
                         : () => _addMeasurement(controller),
                   ),
@@ -602,8 +603,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                     // icons here were a second, worse door to the same rooms.
                     const SizedBox(width: 6),
                     FilledButton.icon(
-                      onPressed:
-                          controller.busy || !hasOrderableBiomarkers
+                      onPressed: controller.busy || !hasOrderableBiomarkers
                           ? null
                           : () => _generate(context, controller),
                       icon: const Icon(Icons.auto_awesome),
@@ -620,8 +620,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                     runSpacing: 10,
                     children: [
                       OutlinedButton.icon(
-                        onPressed:
-                            controller.busy || !hasOrderableBiomarkers
+                        onPressed: controller.busy || !hasOrderableBiomarkers
                             ? null
                             : () => _exportPlannerPrompt(context, controller),
                         icon: const Icon(Icons.file_download_outlined),
@@ -634,8 +633,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                         ),
                       ),
                       OutlinedButton.icon(
-                        onPressed:
-                            controller.busy || !hasOrderableBiomarkers
+                        onPressed: controller.busy || !hasOrderableBiomarkers
                             ? null
                             : () => _importExternalPlan(context, controller),
                         icon: const Icon(Icons.file_upload_outlined),

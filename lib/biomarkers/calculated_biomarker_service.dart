@@ -101,7 +101,8 @@ class CalculatedBiomarkerService {
         final difference = glucoseMeasurement.takenAt
             .difference(insulinMeasurement.takenAt)
             .abs();
-        final sameDocument = glucoseMeasurement.documentId != null &&
+        final sameDocument =
+            glucoseMeasurement.documentId != null &&
             glucoseMeasurement.documentId == insulinMeasurement.documentId;
         if (!sameDocument && difference > sourcePairWindow) continue;
         candidates.add(
@@ -125,9 +126,7 @@ class CalculatedBiomarkerService {
       );
       return glucoseId != 0
           ? glucoseId
-          : left.insulin.measurement.id.compareTo(
-              right.insulin.measurement.id,
-            );
+          : left.insulin.measurement.id.compareTo(right.insulin.measurement.id);
     });
 
     final usedGlucose = <String>{};
@@ -147,24 +146,22 @@ class CalculatedBiomarkerService {
       final value = (unrounded * 100).roundToDouble() / 100;
       usedGlucose.add(glucoseMeasurement.id);
       usedInsulin.add(insulinMeasurement.id);
-      final takenAt = glucoseMeasurement.takenAt.isAfter(
-        insulinMeasurement.takenAt,
-      )
+      final takenAt =
+          glucoseMeasurement.takenAt.isAfter(insulinMeasurement.takenAt)
           ? glucoseMeasurement.takenAt
           : insulinMeasurement.takenAt;
-      final createdAt = glucoseMeasurement.createdAt.isAfter(
-        insulinMeasurement.createdAt,
-      )
+      final createdAt =
+          glucoseMeasurement.createdAt.isAfter(insulinMeasurement.createdAt)
           ? glucoseMeasurement.createdAt
           : insulinMeasurement.createdAt;
-      final updatedAt = glucoseMeasurement.updatedAt.isAfter(
-        insulinMeasurement.updatedAt,
-      )
+      final updatedAt =
+          glucoseMeasurement.updatedAt.isAfter(insulinMeasurement.updatedAt)
           ? glucoseMeasurement.updatedAt
           : insulinMeasurement.updatedAt;
       derived.add(
         Measurement(
-          id: '$homa1FallbackId:${glucoseMeasurement.id}:'
+          id:
+              '$homa1FallbackId:${glucoseMeasurement.id}:'
               '${insulinMeasurement.id}',
           profileId: glucoseMeasurement.profileId,
           biomarkerId: homa1.id,

@@ -66,7 +66,9 @@ void main() {
 
       // The pre-existing row survives the upgrade.
       expect(
-        (await repository.biomarkers()).singleWhere((item) => item.id == 'hb').id,
+        (await repository.biomarkers())
+            .singleWhere((item) => item.id == 'hb')
+            .id,
         'hb',
       );
       // And the new tables exist and are empty rather than absent.

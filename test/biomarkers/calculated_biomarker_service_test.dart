@@ -30,10 +30,7 @@ void main() {
     expect(result.single.value, closeTo(1.11, 0.01));
     expect(result.single.unit, 'index');
     expect(result.single.isCalculated, isTrue);
-    expect(
-      result.single.flags,
-      contains(CalculatedBiomarkerService.homa1Flag),
-    );
+    expect(result.single.flags, contains(CalculatedBiomarkerService.homa1Flag));
     expect(result.single.notes, contains('Not HOMA2-IR'));
   });
 

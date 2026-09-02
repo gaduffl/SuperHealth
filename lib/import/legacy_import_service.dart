@@ -461,8 +461,8 @@ class LegacyImportService {
         unit: isLegacyHoma1
             ? 'index'
             : (row['default_unit'] ?? row['unit_primary'] ?? row['unit'])
-                    ?.toString() ??
-                '',
+                      ?.toString() ??
+                  '',
         priceEur: price,
         description: isLegacyHoma1
             ? CalculatedBiomarkerService.homa1Description
