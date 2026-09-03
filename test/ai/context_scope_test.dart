@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/ai/ai_models.dart';
+import 'package:super_health/biomarkers/calculated_biomarker_service.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
@@ -69,7 +70,7 @@ void main() {
       );
 
       // The planner has to be able to propose a test that has never been run.
-      expect(catalog(planning), hasLength(2));
+      expect(catalog(planning), hasLength(3));
       // Advice reasons about results that exist, so an unmeasured marker is
       // context the advisor pays for and cannot use.
       expect(catalog(advisory), hasLength(1));
@@ -84,6 +85,90 @@ void main() {
       await database.close();
     },
   );
+
+  test('calculated HOMA1 is visible to the app and AI context', () async {
+    final database = AppDatabase(
+      factory: databaseFactoryFfi,
+      databasePath: inMemoryDatabasePath,
+    );
+    addTearDown(database.close);
+    final repository = HealthRepository(database);
+    final profile = await repository.createProfile(displayName: 'HOMA1');
+    final takenAt = DateTime(2026, 8, 22, 8);
+    for (final biomarker in [
+      Biomarker(
+        id: 'glu',
+        canonicalName: 'glu',
+        displayName: 'Glucose (nüchtern)',
+        defaultUnit: 'mg/dL',
+        createdAt: takenAt,
+        updatedAt: takenAt,
+      ),
+      Biomarker(
+        id: 'ins',
+        canonicalName: 'ins',
+        displayName: 'Insulin (nüchtern)',
+        defaultUnit: 'µIU/mL',
+        createdAt: takenAt,
+        updatedAt: takenAt,
+      ),
+    ]) {
+      await repository.saveBiomarker(biomarker);
+    }
+    for (final measurement in [
+      Measurement(
+        id: 'glu-result',
+        profileId: profile.id,
+        biomarkerId: 'glu',
+        takenAt: takenAt,
+        value: 90,
+        unit: 'mg/dL',
+        createdAt: takenAt,
+        updatedAt: takenAt,
+      ),
+      Measurement(
+        id: 'ins-result',
+        profileId: profile.id,
+        biomarkerId: 'ins',
+        takenAt: takenAt,
+        value: 5,
+        unit: 'µIU/mL',
+        createdAt: takenAt,
+        updatedAt: takenAt,
+      ),
+    ]) {
+      await repository.saveMeasurement(measurement);
+    }
+
+    final measurements = await repository.measurements(profile.id);
+    final calculated = measurements.singleWhere(
+      (measurement) => measurement.isCalculated,
+    );
+    expect(calculated.value, closeTo(1.11, 0.01));
+
+    final snapshot = await repository.completeProfileSnapshot(
+      profile.id,
+      scope: HealthContextScope.advisory,
+    );
+    final data = snapshot['data']! as Map<String, Object?>;
+    final contextMeasurements =
+        data['calculated_measurements']! as List<Object?>;
+    expect(
+      contextMeasurements.whereType<Map>().any(
+        (row) => row['conversion_status'] == 'calculated',
+      ),
+      isTrue,
+    );
+    final contextCatalog = data['biomarker_catalog']! as List<Object?>;
+    expect(
+      contextCatalog.whereType<Map>().any(
+        (row) =>
+            row['canonical_name'] ==
+            CalculatedBiomarkerService.homa1CanonicalName,
+      ),
+      isTrue,
+    );
+  });
 
   test('another profile\'s supplements stay out of the context', () async {
     final database = AppDatabase(

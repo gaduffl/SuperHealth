@@ -15,6 +15,7 @@ import 'package:super_health/ai/lab_planner_service.dart';
 import 'package:super_health/ai/lab_price_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 import 'package:super_health/app/app_controller.dart';
+import 'package:super_health/biomarkers/calculated_biomarker_service.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
@@ -233,6 +234,174 @@ void main() {
       client.requests[0].contextFileSha256,
     );
   });
+
+  test(
+    'external prompt exports every drafting input and the JSON schema',
+    () async {
+      final fixture = await _Fixture.create(withBiomarker: true);
+      addTearDown(fixture.dispose);
+      final service = _planner(fixture, _Client(_validLabResponse));
+
+      final exported = await service.buildExternalPrompt(
+        profileId: fixture.profile.id,
+        priorities: 'Fatigue',
+      );
+
+      expect(exported.text, contains('--- BEGIN SYSTEM PROMPT ---'));
+      expect(exported.text, contains('--- BEGIN USER PROMPT ---'));
+      expect(
+        exported.text,
+        contains('--- BEGIN COMPLETE HEALTH CONTEXT JSON ---'),
+      );
+      expect(exported.text, contains(exported.context.json));
+      expect(
+        exported.text,
+        contains('--- BEGIN REQUIRED JSON OUTPUT SCHEMA ---'),
+      );
+      expect(exported.text, contains('"context_receipt"'));
+      expect(exported.text, contains('"biomarker_id"'));
+      expect(exported.text, contains('Fatigue'));
+    },
+  );
+
+  test(
+    'external response imports with an explicit unreviewed status',
+    () async {
+      final fixture = await _Fixture.create(withBiomarker: true);
+      addTearDown(fixture.dispose);
+      final service = _planner(fixture, _Client(_validLabResponse));
+      final exported = await service.buildExternalPrompt(
+        profileId: fixture.profile.id,
+      );
+
+      final result = await service.importExternalPlan(
+        profileId: fixture.profile.id,
+        responseText: jsonEncode(
+          _externalLabBody(exported.context, const [
+            ('core', 'bio-1', 'ApoB'),
+            ('advanced', 'bio-2', 'Lp(a)'),
+            ('comprehensive', 'bio-3', 'HbA1c'),
+          ]),
+        ),
+      );
+
+      expect(result.canSave, isTrue);
+      expect(result.plan.status, 'external');
+      expect(result.plan.provider, 'External LLM');
+      expect(result.plan.verificationSummary, contains('No independent LLM'));
+      await fixture.repository.saveLabPlan(result.plan);
+      final reloaded = (await fixture.repository.labPlans(
+        fixture.profile.id,
+      )).single;
+      expect(reloaded.status, 'external');
+      expect(reloaded.verificationSummary, contains('No independent LLM'));
+    },
+  );
+
+  test('lab plans reject calculated biomarkers as orderable tests', () async {
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    final service = _planner(fixture, _Client(_validLabResponse));
+    final exported = await service.buildExternalPrompt(
+      profileId: fixture.profile.id,
+    );
+
+    await expectLater(
+      service.importExternalPlan(
+        profileId: fixture.profile.id,
+        responseText: jsonEncode(
+          _externalLabBody(exported.context, const [
+            (
+              'core',
+              CalculatedBiomarkerService.homa1FallbackId,
+              CalculatedBiomarkerService.homa1DisplayName,
+            ),
+            ('advanced', 'bio-2', 'Lp(a)'),
+            ('comprehensive', 'bio-3', 'HbA1c'),
+          ]),
+        ),
+      ),
+      throwsA(
+        isA<LabPlanFormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('not an orderable laboratory test'),
+        ),
+      ),
+    );
+  });
+
+  test(
+    'mandatory overdue biomarkers are enforced after external generation',
+    () async {
+      final fixture = await _Fixture.create(withBiomarker: true);
+      addTearDown(fixture.dispose);
+      final now = DateTime.now();
+      await fixture.repository.saveBiomarker(
+        Biomarker(
+          id: 'bio-4',
+          canonicalName: 'ferritin',
+          displayName: 'Ferritin',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      const listId = 'annual-list';
+      await fixture.repository.saveBiomarkerList(
+        BiomarkerList(
+          id: listId,
+          profileId: fixture.profile.id,
+          name: 'Annual',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await fixture.repository.saveBiomarkerListItem(
+        BiomarkerListItem(
+          id: 'due-lpa',
+          listId: listId,
+          biomarkerId: 'bio-2',
+          dueIntervalDays: 365,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      final service = _planner(fixture, _Client(_validLabResponse));
+      final exported = await service.buildExternalPrompt(
+        profileId: fixture.profile.id,
+      );
+      final response = jsonEncode(
+        _externalLabBody(exported.context, const [
+          ('core', 'bio-1', 'ApoB'),
+          ('advanced', 'bio-4', 'Ferritin'),
+          ('comprehensive', 'bio-3', 'HbA1c'),
+        ]),
+      );
+
+      await expectLater(
+        service.importExternalPlan(
+          profileId: fixture.profile.id,
+          responseText: response,
+        ),
+        throwsA(
+          isA<LabPlanFormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('Lp(a)'),
+          ),
+        ),
+      );
+      final allowed = await service.importExternalPlan(
+        profileId: fixture.profile.id,
+        responseText: response,
+        includeOverdueBiomarkers: false,
+      );
+      expect(
+        allowed.plan.items.map((item) => item.biomarkerId),
+        isNot(contains('bio-2')),
+      );
+    },
+  );
 
   test(
     'lab planner retains a rejected draft but does not approve saving',
@@ -732,6 +901,38 @@ Map<String, Object?> _verificationBody(
   'blocking_issues': blockingIssues,
   'warnings': warnings,
   'context_receipt': {..._receipt(request), ...receiptPatch},
+};
+
+Map<String, Object?> _externalLabBody(
+  HealthContextEnvelope context,
+  List<(String, String, String)> tierItems,
+) => {
+  'title': 'External plan',
+  'planned_for': null,
+  'warnings': <String>[],
+  'context_receipt': {
+    'sha256': context.sha256,
+    'file_sha256': context.fileSha256,
+    'record_count': context.recordCount,
+    'reviewed_sections': context.sectionNames,
+  },
+  'tiers': [
+    for (final (tier, id, name) in tierItems)
+      {
+        'tier': tier,
+        'tradeoff_versus_next': tier == 'comprehensive' ? '' : 'Can wait.',
+        'items': [
+          {
+            'biomarker_id': id,
+            'biomarker_name': name,
+            'priority': 1,
+            'rationale': 'Useful for this profile.',
+            'evidence_class': 'guideline',
+            'preparation': '',
+          },
+        ],
+      },
+  ],
 };
 
 (String, String) _tierBiomarker(String tier) => switch (tier) {

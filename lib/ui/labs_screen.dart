@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -33,6 +34,18 @@ import 'temporary_biomarker_resolution_screen.dart';
 
 String _labsText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
+
+class _LabPlannerOptions {
+  const _LabPlannerOptions({
+    required this.targetDate,
+    required this.priorities,
+    required this.includeOverdueBiomarkers,
+  });
+
+  final DateTime? targetDate;
+  final String priorities;
+  final bool includeOverdueBiomarkers;
+}
 
 /// Translates a Today tile's deep link into the catalog's status filter.
 ///
@@ -199,7 +212,10 @@ class _LabsScreenState extends State<LabsScreen> {
                       'Add measurement',
                       'Messwert hinzufügen',
                     ),
-                    onTap: controller.biomarkers.isEmpty
+                    onTap:
+                        !controller.biomarkers.any(
+                          (biomarker) => !biomarker.isCalculated,
+                        )
                         ? null
                         : () => _addMeasurement(controller),
                   ),
@@ -300,7 +316,12 @@ class _LabsScreenState extends State<LabsScreen> {
   }
 
   Future<void> _addMeasurement(AppController controller) async {
-    final biomarker = await _chooseBiomarker(context, controller.biomarkers);
+    final biomarker = await _chooseBiomarker(
+      context,
+      controller.biomarkers
+          .where((biomarker) => !biomarker.isCalculated)
+          .toList(growable: false),
+    );
     if (biomarker != null && mounted) {
       await showAddMeasurementDialog(context, controller, biomarker);
     }
@@ -519,6 +540,9 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     final controller = context.watch<AppController>();
     final now = DateTime.now();
     final activeProfile = controller.activeProfile;
+    final hasOrderableBiomarkers = controller.biomarkers.any(
+      (biomarker) => !biomarker.isCalculated,
+    );
     final latestByBiomarker = <String, Measurement>{};
     for (final measurement in controller.measurements) {
       final existing = latestByBiomarker[measurement.biomarkerId];
@@ -579,14 +603,50 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                     // icons here were a second, worse door to the same rooms.
                     const SizedBox(width: 6),
                     FilledButton.icon(
-                      onPressed:
-                          controller.busy || controller.biomarkers.isEmpty
+                      onPressed: controller.busy || !hasOrderableBiomarkers
                           ? null
                           : () => _generate(context, controller),
                       icon: const Icon(Icons.auto_awesome),
                       label: Text(_labsText(context, 'Plan', 'Planen')),
                     ),
                   ],
+                ),
+              ),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: controller.busy || !hasOrderableBiomarkers
+                            ? null
+                            : () => _exportPlannerPrompt(context, controller),
+                        icon: const Icon(Icons.file_download_outlined),
+                        label: Text(
+                          _labsText(
+                            context,
+                            'Export planner prompt',
+                            'Planner-Prompt exportieren',
+                          ),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: controller.busy || !hasOrderableBiomarkers
+                            ? null
+                            : () => _importExternalPlan(context, controller),
+                        icon: const Icon(Icons.file_upload_outlined),
+                        label: Text(
+                          _labsText(
+                            context,
+                            'Import External Lab Plan',
+                            'Externen Laborplan importieren',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               if (controller.labPlanStage != null)
@@ -597,7 +657,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   activity: controller.labPlanActivity,
                   activityAt: controller.labPlanActivityAt,
                 ),
-              if (controller.biomarkers.isEmpty)
+              if (!hasOrderableBiomarkers)
                 EmptyState(
                   icon: Icons.science_outlined,
                   title: _labsText(
@@ -1055,15 +1115,51 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
   }
 
   Future<void> _generate(BuildContext context, AppController controller) async {
+    final options = await _plannerOptions(
+      context,
+      title: _labsText(context, 'Plan a lab visit', 'Laborbesuch planen'),
+      actionLabel: _labsText(context, 'Generate draft', 'Entwurf erstellen'),
+      actionIcon: Icons.auto_awesome,
+    );
+    if (options == null || !context.mounted) return;
+    try {
+      await controller.generateLabPlan(
+        targetDate: options.targetDate,
+        priorities: options.priorities,
+        includeOverdueBiomarkers: options.includeOverdueBiomarkers,
+        notice: LongTaskNotice(
+          title: _labsText(
+            context,
+            'Planning your lab visit',
+            'Laborbesuch wird geplant',
+          ),
+          text: _labsText(
+            context,
+            'This takes a few minutes.',
+            'Das dauert einige Minuten.',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
+  }
+
+  Future<_LabPlannerOptions?> _plannerOptions(
+    BuildContext context, {
+    required String title,
+    required String actionLabel,
+    required IconData actionIcon,
+    bool exporting = false,
+  }) async {
     final priorities = TextEditingController();
     DateTime? targetDate;
+    var includeOverdueBiomarkers = true;
     final approved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text(
-            _labsText(context, 'Plan a lab visit', 'Laborbesuch planen'),
-          ),
+          title: Text(title),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1108,6 +1204,26 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   if (selected != null) setState(() => targetDate = selected);
                 },
               ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: includeOverdueBiomarkers,
+                title: Text(
+                  _labsText(
+                    context,
+                    'Always include overdue list biomarkers',
+                    'Überfällige Listen-Biomarker immer aufnehmen',
+                  ),
+                ),
+                subtitle: Text(
+                  _labsText(
+                    context,
+                    'When enabled, the response is rejected if even one currently overdue list item is missing.',
+                    'Wenn aktiv, wird die Antwort abgelehnt, sobald auch nur ein aktuell überfälliger Listeneintrag fehlt.',
+                  ),
+                ),
+                onChanged: (value) =>
+                    setState(() => includeOverdueBiomarkers = value),
+              ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.lock_outline),
@@ -1121,8 +1237,12 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                 subtitle: Text(
                   _labsText(
                     context,
-                    'No silent truncation; only the configured provider receives it.',
-                    'Keine stille Kürzung; nur der konfigurierte Anbieter erhält den Kontext.',
+                    exporting
+                        ? 'The text file contains sensitive health data. You choose where to send it.'
+                        : 'No silent truncation; only the configured provider receives it.',
+                    exporting
+                        ? 'Die Textdatei enthält sensible Gesundheitsdaten. Du entscheidest, wohin du sie sendest.'
+                        : 'Keine stille Kürzung; nur der konfigurierte Anbieter erhält den Kontext.',
                   ),
                 ),
               ),
@@ -1135,38 +1255,158 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
             ),
             FilledButton.icon(
               onPressed: () => Navigator.pop(dialogContext, true),
-              icon: const Icon(Icons.auto_awesome),
+              icon: Icon(actionIcon),
+              label: Text(actionLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+    final result = approved == true
+        ? _LabPlannerOptions(
+            targetDate: targetDate,
+            priorities: priorities.text,
+            includeOverdueBiomarkers: includeOverdueBiomarkers,
+          )
+        : null;
+    priorities.dispose();
+    return result;
+  }
+
+  Future<void> _exportPlannerPrompt(
+    BuildContext context,
+    AppController controller,
+  ) async {
+    final options = await _plannerOptions(
+      context,
+      title: _labsText(
+        context,
+        'Export lab planner prompt',
+        'Laborplaner-Prompt exportieren',
+      ),
+      actionLabel: _labsText(context, 'Build text file', 'Textdatei erstellen'),
+      actionIcon: Icons.file_download_outlined,
+      exporting: true,
+    );
+    if (options == null || !context.mounted) return;
+    try {
+      final file = await controller.exportLabPlannerPrompt(
+        targetDate: options.targetDate,
+        priorities: options.priorities,
+        includeOverdueBiomarkers: options.includeOverdueBiomarkers,
+      );
+      if (!context.mounted) return;
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: _labsText(
+          context,
+          'Save ${file.fileName}',
+          '${file.fileName} speichern',
+        ),
+        fileName: file.fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['txt'],
+        bytes: file.bytes,
+      );
+      if (path != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _labsText(
+                context,
+                'Planner prompt saved.',
+                'Planner-Prompt gespeichert.',
+              ),
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
+  }
+
+  Future<void> _importExternalPlan(
+    BuildContext context,
+    AppController controller,
+  ) async {
+    var includeOverdueBiomarkers = true;
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(
+            _labsText(
+              context,
+              'Import External Lab Plan',
+              'Externen Laborplan importieren',
+            ),
+          ),
+          content: SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: includeOverdueBiomarkers,
+            title: Text(
+              _labsText(
+                context,
+                'Require every overdue list biomarker',
+                'Alle überfälligen Listen-Biomarker verlangen',
+              ),
+            ),
+            subtitle: Text(
+              _labsText(
+                context,
+                'Use the same setting that was selected when the prompt was exported.',
+                'Verwende dieselbe Einstellung wie beim Export des Prompts.',
+              ),
+            ),
+            onChanged: (value) =>
+                setState(() => includeOverdueBiomarkers = value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(_labsText(context, 'Cancel', 'Abbrechen')),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              icon: const Icon(Icons.file_open_outlined),
               label: Text(
-                _labsText(context, 'Generate draft', 'Entwurf erstellen'),
+                _labsText(context, 'Choose response', 'Antwort wählen'),
               ),
             ),
           ],
         ),
       ),
     );
-    if (approved == true && context.mounted) {
-      try {
-        await controller.generateLabPlan(
-          targetDate: targetDate,
-          priorities: priorities.text,
-          notice: LongTaskNotice(
-            title: _labsText(
-              context,
-              'Planning your lab visit',
-              'Laborbesuch wird geplant',
-            ),
-            text: _labsText(
-              context,
-              'This takes a few minutes.',
-              'Das dauert einige Minuten.',
+    if (approved != true || !context.mounted) return;
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json', 'txt'],
+        withData: true,
+      );
+      final file = picked?.files.single;
+      final bytes = file?.bytes;
+      if (bytes == null) return;
+      await controller.importExternalLabPlan(
+        responseText: utf8.decode(bytes),
+        includeOverdueBiomarkers: includeOverdueBiomarkers,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _labsText(
+                context,
+                'External plan imported as an unsaved draft.',
+                'Externer Plan als ungespeicherter Entwurf importiert.',
+              ),
             ),
           ),
         );
-      } on Object catch (error) {
-        if (context.mounted) await showAppError(context, error);
       }
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
     }
-    priorities.dispose();
   }
 
   /// [saved] is false for the unsaved draft, whose tests cannot be ticked yet
@@ -1291,6 +1531,10 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     AppController controller,
     LabPlan plan,
   ) async {
+    // The export menu can stay open while checkbox writes finish. Resolve the
+    // plan again at the last possible moment so the counts and the PDF use the
+    // persisted ticks, not the object captured when the menu was opened.
+    final currentPlan = _latestSavedPlan(controller, plan);
     final tier = await showDialog<LabTier>(
       context: context,
       builder: (context) => SimpleDialog(
@@ -1299,8 +1543,8 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
           for (final tier in LabTier.values)
             Builder(
               builder: (context) {
-                final all = plan.itemsThrough(tier);
-                final selected = plan.selectedItemsThrough(tier).length;
+                final all = currentPlan.itemsThrough(tier);
+                final selected = currentPlan.selectedItemsThrough(tier).length;
                 return ListTile(
                   // A tier with nothing ticked would export an empty page, so
                   // it is offered as unavailable rather than as a choice that
@@ -1329,7 +1573,11 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     );
     if (tier == null || !context.mounted) return;
     try {
-      final file = await controller.exportService.buildTierRequest(plan, tier);
+      final latestPlan = _latestSavedPlan(controller, currentPlan);
+      final file = await controller.exportService.buildTierRequest(
+        latestPlan,
+        tier,
+      );
       if (!context.mounted) return;
       final path = await FilePicker.platform.saveFile(
         dialogTitle: _labsText(
@@ -1348,8 +1596,8 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
             content: Text(
               _labsText(
                 context,
-                'Saved ${plan.selectedItemsThrough(tier).length} test(s) for the doctor.',
-                '${plan.selectedItemsThrough(tier).length} Test(s) für die Praxis gespeichert.',
+                'Saved ${latestPlan.selectedItemsThrough(tier).length} test(s) for the doctor.',
+                '${latestPlan.selectedItemsThrough(tier).length} Test(s) für die Praxis gespeichert.',
               ),
             ),
           ),
@@ -1358,6 +1606,13 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     } on Object catch (error) {
       if (context.mounted) await showAppError(context, error);
     }
+  }
+
+  LabPlan _latestSavedPlan(AppController controller, LabPlan fallback) {
+    for (final plan in controller.labPlans) {
+      if (plan.id == fallback.id) return plan;
+    }
+    return fallback;
   }
 
   String _shortTierLabel(BuildContext context, LabTier tier) => switch (tier) {
@@ -2708,73 +2963,15 @@ class _DraftPlanCard extends StatelessWidget {
               ),
             ],
           ),
-          if (generation.warnings.isNotEmpty)
-            ...generation.warnings.map(
-              (warning) => ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.warning_amber_outlined),
-                title: Text(warning),
-              ),
-            ),
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(
-              generation.verification.approved
-                  ? Icons.verified_outlined
-                  : Icons.gpp_bad_outlined,
-            ),
-            title: Text(
-              generation.verification.approved
-                  ? _labsText(
-                      context,
-                      'Independent verification passed',
-                      'Unabhängige Prüfung bestanden',
-                    )
-                  : _labsText(
-                      context,
-                      'Independent verification rejected this draft',
-                      'Unabhängige Prüfung hat diesen Entwurf abgelehnt',
-                    ),
-            ),
-            subtitle: Text(generation.verification.summary),
+          _PlanNotes(
+            status: generation.plan.status,
+            approved: generation.verification.approved,
+            summary: generation.verification.summary,
+            warnings: generation.warnings,
+            blockingIssues: generation.verification.blockingIssues,
+            citations: generation.citations,
           ),
-          for (final issue in generation.verification.blockingIssues)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.block_outlined),
-              title: Text(issue),
-            ),
           _PlanTiers(plan: generation.plan),
-          if (generation.citations.isNotEmpty)
-            Wrap(
-              spacing: 6,
-              children: [
-                for (
-                  var index = 0;
-                  index < generation.citations.length;
-                  index++
-                )
-                  Builder(
-                    builder: (context) {
-                      final uri = _safeWebUri(generation.citations[index]);
-                      return ActionChip(
-                        avatar: const Icon(Icons.open_in_new, size: 16),
-                        label: Text(
-                          _labsText(
-                            context,
-                            'Source ${index + 1}',
-                            'Quelle ${index + 1}',
-                          ),
-                        ),
-                        onPressed: uri == null ? null : () => launchUrl(uri),
-                      );
-                    },
-                  ),
-              ],
-            ),
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -2835,63 +3032,127 @@ class _SavedPlanCard extends StatelessWidget {
         ],
       ),
       children: [
-        if (plan.status == 'verified')
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.verified_outlined),
-            title: Text(
-              _labsText(
-                context,
-                'Independent verification passed',
-                'Unabhängige Prüfung bestanden',
-              ),
-            ),
-            subtitle: Text(plan.verificationSummary),
-          ),
-        for (final warning in plan.verificationWarnings)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.warning_amber_outlined),
-            title: Text(warning),
-          ),
-        if (plan.verificationCitations.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Wrap(
-              spacing: 6,
-              children: [
-                for (
-                  var index = 0;
-                  index < plan.verificationCitations.length;
-                  index++
-                )
-                  Builder(
-                    builder: (context) {
-                      final uri = _safeWebUri(
-                        plan.verificationCitations[index],
-                      );
-                      return ActionChip(
-                        avatar: const Icon(Icons.open_in_new, size: 16),
-                        label: Text(
-                          _labsText(
-                            context,
-                            'Source ${index + 1}',
-                            'Quelle ${index + 1}',
-                          ),
-                        ),
-                        onPressed: uri == null ? null : () => launchUrl(uri),
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
+        _PlanNotes(
+          status: plan.status,
+          approved: plan.status == 'verified',
+          summary: plan.verificationSummary,
+          warnings: plan.verificationWarnings,
+          blockingIssues: const [],
+          citations: plan.verificationCitations,
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           child: _PlanTiers(plan: plan, onToggle: onToggle),
         ),
       ],
     ),
+  );
+}
+
+/// The plan's caveats and review provenance, kept at the beginning but out of
+/// the way until the reader asks for them.
+class _PlanNotes extends StatelessWidget {
+  const _PlanNotes({
+    required this.status,
+    required this.approved,
+    required this.summary,
+    required this.warnings,
+    required this.blockingIssues,
+    required this.citations,
+  });
+
+  final String status;
+  final bool approved;
+  final String summary;
+  final List<String> warnings;
+  final List<String> blockingIssues;
+  final List<String> citations;
+
+  @override
+  Widget build(BuildContext context) => ExpansionTile(
+    initiallyExpanded: false,
+    tilePadding: EdgeInsets.zero,
+    title: Text(_labsText(context, 'Plan notes', 'Hinweise zum Plan')),
+    subtitle: Text(
+      _labsText(
+        context,
+        '${warnings.length + blockingIssues.length} warning(s) · tap to open',
+        '${warnings.length + blockingIssues.length} Hinweis(e) · zum Öffnen tippen',
+      ),
+    ),
+    children: [
+      ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        leading: Icon(
+          status == 'external'
+              ? Icons.file_upload_outlined
+              : approved
+              ? Icons.verified_outlined
+              : Icons.gpp_bad_outlined,
+        ),
+        title: Text(
+          status == 'external'
+              ? _labsText(
+                  context,
+                  'External LLM import · no independent in-app review',
+                  'Externer LLM-Import · keine unabhängige Prüfung in der App',
+                )
+              : approved
+              ? _labsText(
+                  context,
+                  'Independent verification passed',
+                  'Unabhängige Prüfung bestanden',
+                )
+              : _labsText(
+                  context,
+                  'Independent verification rejected this draft',
+                  'Unabhängige Prüfung hat diesen Entwurf abgelehnt',
+                ),
+        ),
+        subtitle: summary.trim().isEmpty ? null : Text(summary),
+      ),
+      for (final warning in warnings)
+        ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          leading: const Icon(Icons.warning_amber_outlined),
+          title: Text(warning),
+        ),
+      for (final issue in blockingIssues)
+        ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          leading: const Icon(Icons.block_outlined),
+          title: Text(issue),
+        ),
+      if (citations.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          child: Wrap(
+            spacing: 6,
+            children: [
+              for (var index = 0; index < citations.length; index++)
+                Builder(
+                  builder: (context) {
+                    final uri = _safeWebUri(citations[index]);
+                    return ActionChip(
+                      avatar: const Icon(Icons.open_in_new, size: 16),
+                      label: Text(
+                        _labsText(
+                          context,
+                          'Source ${index + 1}',
+                          'Quelle ${index + 1}',
+                        ),
+                      ),
+                      onPressed: uri == null ? null : () => launchUrl(uri),
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
+    ],
   );
 }
 
@@ -2906,6 +3167,9 @@ class _PlanTiers extends StatelessWidget {
     // Packages are read here rather than passed down, because the costing they
     // produce is what every tier line reports.
     final controller = context.watch<AppController>();
+    final dueByBiomarker = {
+      for (final due in controller.dueBiomarkers) due.biomarker.id: due,
+    };
     return Column(
       children: [
         for (final tier in LabTier.values)
@@ -2960,7 +3224,10 @@ class _PlanTiers extends StatelessWidget {
                         CheckboxListTile(
                           dense: true,
                           contentPadding: const EdgeInsets.only(left: 8),
-                          title: Text(item.biomarkerName),
+                          title: _PlanBiomarkerTitle(
+                            item: item,
+                            due: dueByBiomarker[item.biomarkerId],
+                          ),
                           subtitle: Text(
                             [
                               item.evidenceClass.name,
@@ -3032,6 +3299,69 @@ class _PlanTiers extends StatelessWidget {
       'Comprehensive (includes all)',
       'Umfassend (enthält alle)',
     ),
+  };
+}
+
+class _PlanBiomarkerTitle extends StatelessWidget {
+  const _PlanBiomarkerTitle({required this.item, this.due});
+
+  final LabPlanItem item;
+  final DueBiomarker? due;
+
+  @override
+  Widget build(BuildContext context) {
+    final sampleType = biomarkerSampleTypeFor(
+      id: item.biomarkerId,
+      name: item.biomarkerName,
+    );
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(item.biomarkerName),
+        if (due case final current?)
+          Chip(
+            visualDensity: VisualDensity.compact,
+            avatar: const Icon(Icons.event_repeat_outlined, size: 16),
+            label: Text(
+              _labsText(
+                context,
+                'Due · ${listMembershipLabel(AppLocalizations.of(context), current.listNames)}',
+                'Fällig · ${listMembershipLabel(AppLocalizations.of(context), current.listNames)}',
+              ),
+            ),
+          ),
+        if (sampleType != BiomarkerSampleType.blood)
+          Chip(
+            visualDensity: VisualDensity.compact,
+            avatar: const Icon(Icons.science_outlined, size: 16),
+            label: Text(_sampleTypeLabel(context, sampleType)),
+          ),
+      ],
+    );
+  }
+
+  String _sampleTypeLabel(
+    BuildContext context,
+    BiomarkerSampleType sampleType,
+  ) => switch (sampleType) {
+    BiomarkerSampleType.urine => _labsText(
+      context,
+      'Urine sample · not blood',
+      'Urinprobe · kein Blut',
+    ),
+    BiomarkerSampleType.stool => _labsText(
+      context,
+      'Stool sample · not blood',
+      'Stuhlprobe · kein Blut',
+    ),
+    BiomarkerSampleType.saliva => _labsText(
+      context,
+      'Saliva sample · not blood',
+      'Speichelprobe · kein Blut',
+    ),
+    BiomarkerSampleType.blood => '',
   };
 }
 
@@ -3646,6 +3976,12 @@ class _BiomarkerTile extends StatelessWidget {
       subtitle: Text(
         [
           if (biomarker.category.isNotEmpty) biomarker.category,
+          if (biomarker.isCalculated)
+            _labsText(
+              context,
+              'Calculated automatically',
+              'Automatisch berechnet',
+            ),
           if (latest != null)
             '${latest!.value} ${latest!.unit} · ${DateFormat.yMMMd().format(latest!.takenAt)}'
           else
@@ -3664,7 +4000,9 @@ class _BiomarkerTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(
-            !biomarker.hasPrice
+            biomarker.isCalculated
+                ? _labsText(context, 'Calculated', 'Berechnet')
+                : !biomarker.hasPrice
                 ? _labsText(context, 'No price', 'Kein Preis')
                 : '${biomarker.priceEur!.toStringAsFixed(2)} €',
           ),

@@ -1273,6 +1273,11 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> updateBiomarker(Biomarker biomarker) async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Built-in calculated biomarker definitions cannot be edited.',
+      );
+    }
     await repository.saveBiomarker(
       Biomarker(
         id: biomarker.id,
@@ -1286,6 +1291,8 @@ class AppController extends ChangeNotifier {
         description: biomarker.description.trim(),
         synonyms: biomarker.synonyms,
         isTemporary: biomarker.isTemporary,
+        isCalculated: biomarker.isCalculated,
+        calculationFormula: biomarker.calculationFormula,
         createdAt: biomarker.createdAt,
         updatedAt: DateTime.now(),
         deleted: biomarker.deleted,
@@ -1295,6 +1302,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> deleteBiomarker(Biomarker biomarker) async {
+    if (biomarker.isCalculated) {
+      throw StateError('Built-in calculated biomarkers cannot be deleted.');
+    }
     if (measurements.any((item) => item.biomarkerId == biomarker.id)) {
       throw StateError(
         'This biomarker has measurements. Reassign or delete those results first.',
@@ -1322,7 +1332,9 @@ class AppController extends ChangeNotifier {
     }
     return _withBusy(
       () => _labPriceService.propose(
-        catalog: biomarkers.where((item) => !item.deleted).toList(),
+        catalog: biomarkers
+            .where((item) => !item.deleted && !item.isCalculated)
+            .toList(),
         packages: biomarkerPackages,
         packageMembers: biomarkerPackageMembers,
         settings: settings,
@@ -1372,7 +1384,7 @@ class AppController extends ChangeNotifier {
             continue;
           }
           final biomarker = byId[proposal.targetId];
-          if (biomarker == null) continue;
+          if (biomarker == null || biomarker.isCalculated) continue;
           await repository.saveBiomarker(
             Biomarker(
               id: biomarker.id,
@@ -1388,6 +1400,8 @@ class AppController extends ChangeNotifier {
               description: biomarker.description,
               synonyms: biomarker.synonyms,
               isTemporary: biomarker.isTemporary,
+              isCalculated: biomarker.isCalculated,
+              calculationFormula: biomarker.calculationFormula,
               createdAt: biomarker.createdAt,
               updatedAt: now,
               deleted: biomarker.deleted,
@@ -1489,6 +1503,11 @@ class AppController extends ChangeNotifier {
     double? refHigh,
     String notes = '',
   }) async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Calculated biomarkers are created from their source results.',
+      );
+    }
     final now = DateTime.now();
     await repository.saveMeasurement(
       Measurement(
@@ -1509,6 +1528,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> updateMeasurement(Measurement measurement) async {
+    if (measurement.isCalculated) {
+      throw StateError('Calculated results cannot be edited directly.');
+    }
     await repository.saveMeasurement(
       Measurement(
         id: measurement.id,
@@ -1534,6 +1556,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> deleteMeasurement(Measurement measurement) async {
+    if (measurement.isCalculated) {
+      throw StateError('Calculated results cannot be deleted directly.');
+    }
     await repository.softDelete('measurements', measurement.id);
     await refreshActiveData();
   }
@@ -1643,6 +1668,11 @@ class AppController extends ChangeNotifier {
     int? dueIntervalDays,
     String notes = '',
   }) async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Calculated biomarkers do not have their own laboratory retest.',
+      );
+    }
     final existing = list.items.firstWhereOrNull(
       (item) => item.biomarkerId == biomarker.id,
     );
@@ -1682,7 +1712,7 @@ class AppController extends ChangeNotifier {
     var present = 0;
     for (final memberId in memberIds) {
       final biomarker = byId[memberId];
-      if (biomarker == null) continue;
+      if (biomarker == null || biomarker.isCalculated) continue;
       // An existing entry keeps its own interval and notes: the owner set
       // those deliberately, and a bulk add is not the place to overwrite them.
       if (list.items.any((item) => item.biomarkerId == memberId)) {
@@ -1719,6 +1749,11 @@ class AppController extends ChangeNotifier {
     required Set<String> listIds,
     int? dueIntervalDays,
   }) => _withBusy(() async {
+    if (biomarker.isCalculated) {
+      throw StateError(
+        'Calculated biomarkers do not have their own laboratory retest.',
+      );
+    }
     if (dueIntervalDays != null && dueIntervalDays <= 0) {
       throw StateError('The retest interval must be a positive number.');
     }
@@ -1957,6 +1992,7 @@ class AppController extends ChangeNotifier {
     required LongTaskNotice notice,
     DateTime? targetDate,
     String priorities = '',
+    bool includeOverdueBiomarkers = true,
   }) async {
     // Its own setting. This used to read advisorSettings, so a planner run
     // silently used whatever the advisor was set to — on the most expensive
@@ -1984,6 +2020,7 @@ class AppController extends ChangeNotifier {
           settings: settings,
           targetDate: targetDate,
           priorities: priorities,
+          includeOverdueBiomarkers: includeOverdueBiomarkers,
           onProgress: (update) {
             labPlanStage = update.stage;
             final activity = update.activity;
@@ -2015,6 +2052,44 @@ class AppController extends ChangeNotifier {
       }
     });
   }
+
+  /// Exports the complete drafting request without making an API call.
+  Future<ExportedFile> exportLabPlannerPrompt({
+    DateTime? targetDate,
+    String priorities = '',
+    bool includeOverdueBiomarkers = true,
+  }) async {
+    final package = await _withBusy(
+      () => _labPlannerService.buildExternalPrompt(
+        profileId: _profileId,
+        targetDate: targetDate,
+        priorities: priorities,
+        includeOverdueBiomarkers: includeOverdueBiomarkers,
+      ),
+    );
+    final stamp = DateTime.now().toIso8601String().split('T').first;
+    return ExportedFile(
+      fileName: 'superhealth-lab-planner-prompt-$stamp.txt',
+      mimeType: 'text/plain',
+      bytes: Uint8List.fromList(utf8.encode(package.text)),
+    );
+  }
+
+  /// Validates an external response and exposes it as an unsaved draft.
+  Future<LabPlanGeneration> importExternalLabPlan({
+    required String responseText,
+    bool includeOverdueBiomarkers = true,
+  }) => _withBusy(() async {
+    final result = await _labPlannerService.importExternalPlan(
+      profileId: _profileId,
+      responseText: responseText,
+      includeOverdueBiomarkers: includeOverdueBiomarkers,
+    );
+    draftLabPlan = result;
+    lastContextBytes = result.context.byteLength;
+    lastContextTokens = result.context.estimatedTokens;
+    return result;
+  });
 
   /// Whether a diagnostic log can be produced at all on this build.
   bool aiLogAvailable(AiLogKind kind) => _traceStore(kind) != null;
@@ -2128,9 +2203,15 @@ class AppController extends ChangeNotifier {
     bool checked,
   ) async {
     if (itemIds.isEmpty) return;
+    // A checkbox callback can outlive the widget that created it. Resolve the
+    // current plan first so two quick edits cannot let the second stale object
+    // undo the first one.
+    final currentPlan =
+        labPlans.firstWhereOrNull((candidate) => candidate.id == plan.id) ??
+        plan;
     final now = DateTime.now();
     final updatedItems = [
-      for (final current in plan.items)
+      for (final current in currentPlan.items)
         itemIds.contains(current.id) && current.checked != checked
             ? LabPlanItem(
                 id: current.id,
@@ -2149,10 +2230,26 @@ class AppController extends ChangeNotifier {
               )
             : current,
     ];
-    await repository.saveLabPlan(
-      plan.copyWith(updatedAt: now, items: updatedItems),
+    final updatedPlan = currentPlan.copyWith(
+      updatedAt: now,
+      items: updatedItems,
     );
-    await refreshActiveData();
+    // Update counts immediately. Otherwise the doctor-export picker can open
+    // in the gap between a visible checkbox tap and the database reload and
+    // report the captured plan's old x-of-x state.
+    labPlans = [
+      for (final candidate in labPlans)
+        if (candidate.id == updatedPlan.id) updatedPlan else candidate,
+    ];
+    notifyListeners();
+    try {
+      await repository.saveLabPlan(updatedPlan);
+      await refreshActiveData();
+    } on Object {
+      // Roll back the optimistic copy to the database's durable truth.
+      await refreshActiveData();
+      rethrow;
+    }
   }
 
   Future<void> deleteLabPlan(LabPlan plan) async {

@@ -122,8 +122,9 @@ Future<void> showBiomarkerPackageDialog(
         final candidates = controller.biomarkers
             .where(
               (item) =>
-                  query.isEmpty ||
-                  item.displayName.toLowerCase().contains(query),
+                  (!item.isCalculated || members.contains(item.id)) &&
+                  (query.isEmpty ||
+                      item.displayName.toLowerCase().contains(query)),
             )
             .toList();
         return AlertDialog(

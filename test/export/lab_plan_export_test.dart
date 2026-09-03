@@ -5,6 +5,30 @@ import 'package:super_health/domain/entities.dart';
 import 'package:super_health/export/lab_plan_export_service.dart';
 
 void main() {
+  test('doctor PDF text normalises unsupported range hyphens', () {
+    expect(labPlanPdfSafeText('24‑48 Stunden'), '24-48 Stunden');
+    expect(labPlanPdfSafeText('10–12 h'), '10-12 h');
+    expect(labPlanPdfSafeText('fasting\u00a0sample'), 'fasting sample');
+  });
+
+  test('legacy non-blood biomarkers have one shared specimen predicate', () {
+    expect(
+      biomarkerSampleTypeFor(id: 'u_alb', name: 'Urin-Albumin'),
+      BiomarkerSampleType.urine,
+    );
+    expect(
+      biomarkerSampleTypeFor(
+        id: 'calprotectin_stuhl',
+        name: 'Calprotectin (Stuhl)',
+      ),
+      BiomarkerSampleType.stool,
+    );
+    expect(
+      biomarkerSampleTypeFor(id: 'apob', name: 'ApoB'),
+      BiomarkerSampleType.blood,
+    );
+  });
+
   test('an exported cheaper tier says what it leaves out and why', () async {
     // An exported Core plan is a shopping list someone hands to a lab. Without
     // this it reads as the whole recommendation, and the reasoning that made
@@ -150,6 +174,38 @@ void main() {
           preparation: 'Fast for 12 hours',
         ),
         LabTier.advanced,
+      );
+
+      expect(file.bytes, isNotEmpty);
+    });
+
+    test('builds with non-blood specimen labels and unicode ranges', () async {
+      final now = DateTime(2026, 1, 1);
+      final plan = LabPlan(
+        id: 'urine-plan',
+        profileId: 'profile',
+        title: 'Urine follow-up',
+        createdAt: now,
+        updatedAt: now,
+        items: [
+          LabPlanItem(
+            id: 'u-alb-item',
+            planId: 'urine-plan',
+            biomarkerId: 'u_alb',
+            biomarkerName: 'Urin-Albumin',
+            tier: LabTier.core,
+            priority: 1,
+            rationale: 'Collect within 24‑48 hours.',
+            evidenceClass: EvidenceClass.guideline,
+            preparation: 'Collect within 24‑48 hours.',
+            checked: true,
+          ),
+        ],
+      );
+
+      final file = await LabPlanExportService().buildTierRequest(
+        plan,
+        LabTier.core,
       );
 
       expect(file.bytes, isNotEmpty);

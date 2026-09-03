@@ -1,7 +1,11 @@
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:convert';
+
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
+
+import '../biomarkers/calculated_biomarker_service.dart';
 
 /// Owns the local, offline-first health ledger.
 ///
@@ -14,7 +18,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 12;
+  static const schemaVersion = 13;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -232,11 +236,14 @@ class AppDatabase {
           description TEXT NOT NULL DEFAULT '',
           synonyms_json TEXT NOT NULL DEFAULT '[]',
           is_temporary INTEGER NOT NULL DEFAULT 0,
+          is_calculated INTEGER NOT NULL DEFAULT 0,
+          calculation_formula TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           deleted INTEGER NOT NULL DEFAULT 0
         )
       ''');
+      await _installHoma1Biomarker(txn);
 
       // Population/lab reference ranges remain shared catalog evidence.
       await txn.execute('''
@@ -692,6 +699,16 @@ class AppDatabase {
         "ALTER TABLE lab_plans ADD COLUMN tier_tradeoffs_json TEXT NOT NULL DEFAULT '{}'",
       );
     }
+    if (oldVersion < 13) {
+      await db.execute(
+        'ALTER TABLE biomarkers '
+        'ADD COLUMN is_calculated INTEGER NOT NULL DEFAULT 0',
+      );
+      await db.execute(
+        'ALTER TABLE biomarkers ADD COLUMN calculation_formula TEXT',
+      );
+      await _installHoma1Biomarker(db);
+    }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;
       // anything older got it from the CREATE above.
@@ -700,6 +717,61 @@ class AppDatabase {
         'REFERENCES supplements(id)',
       );
     }
+  }
+
+  /// Installs the built-in HOMA1 definition and upgrades the old app's
+  /// `homa_ir` row, whose stored formula was the HOMA1 `/ 405` equation.
+  static Future<void> _installHoma1Biomarker(DatabaseExecutor db) async {
+    final current = await db.query(
+      'biomarkers',
+      where: 'canonical_name = ? AND deleted = 0',
+      whereArgs: [CalculatedBiomarkerService.homa1CanonicalName],
+      limit: 1,
+    );
+    final legacy = current.isEmpty
+        ? await db.query(
+            'biomarkers',
+            where: 'canonical_name = ? AND deleted = 0',
+            whereArgs: ['homa_ir'],
+            limit: 1,
+          )
+        : const <Map<String, Object?>>[];
+    final existing = current.isNotEmpty
+        ? current.single
+        : legacy.isNotEmpty
+        ? legacy.single
+        : null;
+    final now = DateTime.now().toUtc().toIso8601String();
+    final values = <String, Object?>{
+      'canonical_name': CalculatedBiomarkerService.homa1CanonicalName,
+      'display_name': CalculatedBiomarkerService.homa1DisplayName,
+      'category': 'metabolic',
+      'default_unit': 'index',
+      'price_eur': null,
+      'lab_name': null,
+      'price_checked_at': null,
+      'description': CalculatedBiomarkerService.homa1Description,
+      'synonyms_json': jsonEncode(CalculatedBiomarkerService.homa1Synonyms),
+      'is_temporary': 0,
+      'is_calculated': 1,
+      'calculation_formula': CalculatedBiomarkerService.homa1Formula,
+      'updated_at': now,
+      'deleted': 0,
+    };
+    if (existing != null) {
+      await db.update(
+        'biomarkers',
+        values,
+        where: 'id = ?',
+        whereArgs: [existing['id']],
+      );
+      return;
+    }
+    await db.insert('biomarkers', {
+      'id': CalculatedBiomarkerService.homa1FallbackId,
+      ...values,
+      'created_at': now,
+    });
   }
 
   Future<void> close() async {

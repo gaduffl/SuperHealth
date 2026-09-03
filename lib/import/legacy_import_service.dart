@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
+import '../biomarkers/calculated_biomarker_service.dart';
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
@@ -426,13 +427,20 @@ class LegacyImportService {
             .whereType<String>()
             .firstWhere((value) => value.isNotEmpty, orElse: () => '');
     if (displayName.isEmpty) return;
-    final canonical = HealthRepository.normalizeName(
+    final importedCanonical = HealthRepository.normalizeName(
       (row['canonical_name'] ??
               row['canonicalName'] ??
               row['id'] ??
               displayName)
           .toString(),
     );
+    // The legacy catalog's `homa_ir` row stored `(glu * ins) / 405`, which is
+    // HOMA1. Rename that known calculated definition instead of carrying the
+    // old ambiguous label forward or claiming that it is HOMA2.
+    final isLegacyHoma1 = importedCanonical == 'homa_ir';
+    final canonical = isLegacyHoma1
+        ? CalculatedBiomarkerService.homa1CanonicalName
+        : importedCanonical;
     final rawPrice = row['price_eur'] ?? row['price'];
     final price = _nonNegativeOptional(
       bundle,
@@ -444,22 +452,35 @@ class LegacyImportService {
       _LegacyBiomarker(
         legacyId: row['id']?.toString() ?? canonical,
         canonicalName: canonical,
-        displayName: displayName,
-        category: row['category']?.toString() ?? '',
-        unit:
-            (row['default_unit'] ?? row['unit_primary'] ?? row['unit'])
-                ?.toString() ??
-            '',
+        displayName: isLegacyHoma1
+            ? CalculatedBiomarkerService.homa1DisplayName
+            : displayName,
+        category: isLegacyHoma1
+            ? 'metabolic'
+            : row['category']?.toString() ?? '',
+        unit: isLegacyHoma1
+            ? 'index'
+            : (row['default_unit'] ?? row['unit_primary'] ?? row['unit'])
+                      ?.toString() ??
+                  '',
         priceEur: price,
-        description: (row['description'] ?? row['notes'])?.toString() ?? '',
-        synonyms: _combinedStringList([
-          row['synonyms'],
-          row['synonyms_json'],
-          row['parser_synonyms'],
-          row['parser_synonyms_json'],
-          row['common_abbr'],
-          row['common_abbr_json'],
-        ]),
+        description: isLegacyHoma1
+            ? CalculatedBiomarkerService.homa1Description
+            : (row['description'] ?? row['notes'])?.toString() ?? '',
+        synonyms: isLegacyHoma1
+            ? CalculatedBiomarkerService.homa1Synonyms
+            : _combinedStringList([
+                row['synonyms'],
+                row['synonyms_json'],
+                row['parser_synonyms'],
+                row['parser_synonyms_json'],
+                row['common_abbr'],
+                row['common_abbr_json'],
+              ]),
+        isCalculated: isLegacyHoma1,
+        calculationFormula: isLegacyHoma1
+            ? CalculatedBiomarkerService.homa1Formula
+            : null,
       ),
     );
   }
@@ -1309,6 +1330,8 @@ class LegacyImportService {
             priceEur: item.priceEur,
             description: item.description,
             synonyms: item.synonyms,
+            isCalculated: item.isCalculated,
+            calculationFormula: item.calculationFormula,
             createdAt: now,
             updatedAt: now,
           ).toMap(),
@@ -2099,6 +2122,8 @@ class _LegacyBiomarker {
     required this.priceEur,
     required this.description,
     required this.synonyms,
+    required this.isCalculated,
+    required this.calculationFormula,
   });
 
   final String legacyId;
@@ -2109,4 +2134,6 @@ class _LegacyBiomarker {
   final double? priceEur;
   final String description;
   final List<String> synonyms;
+  final bool isCalculated;
+  final String? calculationFormula;
 }

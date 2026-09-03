@@ -764,6 +764,40 @@ class BiomarkerPackageItem {
 /// the planner total a tier as if those tests were free.
 bool hasLabPrice(double? priceEur) => priceEur != null && priceEur > 0;
 
+enum BiomarkerSampleType { blood, urine, stool, saliva }
+
+/// Best available specimen classification for the imported legacy catalog.
+///
+/// That catalog did not carry a specimen column. Its non-blood markers do,
+/// however, have stable ids and explicit German/English specimen names. Keep
+/// the inference in one public predicate so the plan UI and exports cannot
+/// silently disagree about which tests need something other than blood.
+BiomarkerSampleType biomarkerSampleTypeFor({
+  required String id,
+  required String name,
+}) {
+  final normalizedId = id.trim().toLowerCase();
+  final normalizedName = name.trim().toLowerCase();
+  if (normalizedId == 'acr' ||
+      normalizedId.startsWith('u_') ||
+      normalizedName.contains('urin') ||
+      normalizedName.contains('urine')) {
+    return BiomarkerSampleType.urine;
+  }
+  if (normalizedId == 'calprotectin_stuhl' ||
+      normalizedName.contains('stuhl') ||
+      normalizedName.contains('stool') ||
+      normalizedName.contains('fecal') ||
+      normalizedName.contains('faecal')) {
+    return BiomarkerSampleType.stool;
+  }
+  if (normalizedName.contains('speichel') ||
+      normalizedName.contains('saliva')) {
+    return BiomarkerSampleType.saliva;
+  }
+  return BiomarkerSampleType.blood;
+}
+
 class Biomarker {
   const Biomarker({
     required this.id,
@@ -779,6 +813,8 @@ class Biomarker {
     this.description = '',
     this.synonyms = const [],
     this.isTemporary = false,
+    this.isCalculated = false,
+    this.calculationFormula,
     this.deleted = false,
   });
 
@@ -796,6 +832,8 @@ class Biomarker {
   final String description;
   final List<String> synonyms;
   final bool isTemporary;
+  final bool isCalculated;
+  final String? calculationFormula;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
@@ -812,6 +850,8 @@ class Biomarker {
     'description': description,
     'synonyms_json': jsonEncode(synonyms),
     'is_temporary': isTemporary ? 1 : 0,
+    'is_calculated': isCalculated ? 1 : 0,
+    'calculation_formula': calculationFormula,
     'created_at': _iso(createdAt),
     'updated_at': _iso(updatedAt),
     'deleted': deleted ? 1 : 0,
@@ -831,6 +871,8 @@ class Biomarker {
     description: map['description']?.toString() ?? '',
     synonyms: _strings(map['synonyms_json']),
     isTemporary: _boolFromDb(map['is_temporary']),
+    isCalculated: _boolFromDb(map['is_calculated']),
+    calculationFormula: map['calculation_formula']?.toString(),
     createdAt: _date(map['created_at']),
     updatedAt: _date(map['updated_at']),
     deleted: _boolFromDb(map['deleted']),
@@ -1102,6 +1144,10 @@ class Measurement {
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
+
+  /// True only for a deterministic view over other stored measurements.
+  /// Calculated rows are not source evidence and must not be edited directly.
+  bool get isCalculated => conversionStatus == 'calculated';
 
   Map<String, Object?> toMap() => {
     'id': id,

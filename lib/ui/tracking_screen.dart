@@ -81,6 +81,7 @@ class _TrackingScreenState extends State<TrackingScreen>
   var _historyVisible = 50;
   var _planMonths = 3;
   var _onlyLowStock = false;
+  var _householdMonthlyCost = true;
   String? _historyPinsProfileId;
   var _historyPinsLoading = false;
   Set<String> _historyPins = <String>{};
@@ -645,9 +646,12 @@ class _TrackingScreenState extends State<TrackingScreen>
     final projections = _onlyLowStock
         ? allProjections.where((item) => item.low).toList()
         : allProjections;
+    final costSchedules = _householdMonthlyCost
+        ? controller.householdSchedules
+        : controller.schedules;
     final costByProduct = _insights.monthlyCostByProduct(
       supplements: controller.supplements,
-      householdSchedules: controller.householdSchedules,
+      householdSchedules: costSchedules,
     );
     final monthlyCost = costByProduct.fold<double>(
       0,
@@ -696,17 +700,44 @@ class _TrackingScreenState extends State<TrackingScreen>
                   label: strings.plannedMonthlyCost,
                   value: strings.formatEur(monthlyCost, decimalDigits: 0),
                   icon: Icons.euro_outlined,
-                  detail: strings.knownPackagePrices,
+                  detail: _householdMonthlyCost
+                      ? strings.pick('Household', 'Haushalt')
+                      : strings.pick('Personal', 'Persönlich'),
                 ),
               ),
             ],
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  strings.pick('Personal', 'Persönlich'),
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+                Switch.adaptive(
+                  value: _householdMonthlyCost,
+                  onChanged: (value) =>
+                      setState(() => _householdMonthlyCost = value),
+                ),
+                Text(
+                  strings.pick('Household', 'Haushalt'),
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ],
+            ),
           ),
           if (costByProduct.isNotEmpty)
             ChartCard(
               title: strings.plannedMonthlyCost,
               subtitle: strings.pick(
-                'Per product, from package prices and the active plan.',
-                'Pro Produkt, aus Packungspreisen und dem aktiven Plan.',
+                _householdMonthlyCost
+                    ? 'Per product, from package prices and all household plans.'
+                    : 'Per product, from package prices and the active profile plan.',
+                _householdMonthlyCost
+                    ? 'Pro Produkt, aus Packungspreisen und allen Haushaltsplänen.'
+                    : 'Pro Produkt, aus Packungspreisen und dem Plan des aktiven Profils.',
               ),
               child: Column(
                 children: [

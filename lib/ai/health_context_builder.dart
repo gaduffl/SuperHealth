@@ -757,7 +757,10 @@ class HealthContextBuilder {
       }
     }
     final grouped = <String, List<Map<String, Object?>>>{};
-    for (final row in _mapRows(data['measurements'])) {
+    for (final row in [
+      ..._mapRows(data['measurements']),
+      ..._mapRows(data['calculated_measurements']),
+    ]) {
       final id = row['biomarker_id']?.toString() ?? 'unknown';
       grouped.putIfAbsent(id, () => []).add(row);
     }
@@ -800,7 +803,8 @@ class HealthContextBuilder {
                 .toList()
               ..sort(),
         'comparison_ready': rows.every((row) => row['canonical_value'] != null),
-        'latest_record_ref': 'measurements:${latest['id']}',
+        'latest_record_ref':
+            '${latest['conversion_status'] == 'calculated' ? 'calculated_measurements' : 'measurements'}:${latest['id']}',
       });
     }
     result.sort((a, b) => '${a['name']}'.compareTo('${b['name']}'));
