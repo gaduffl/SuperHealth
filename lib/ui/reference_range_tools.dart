@@ -438,7 +438,7 @@ Future<void> _importRanges(
     final approved = await _showImportPreview(context, preview);
     if (!approved || !context.mounted) return;
     final now = DateTime.now();
-    await controller.repository.saveBiomarkerRanges([
+    await controller.saveBiomarkerRanges([
       for (final item in preview.records)
         BiomarkerReferenceRange(
           id: controller.repository.newId(),
@@ -459,7 +459,6 @@ Future<void> _importRanges(
           updatedAt: now,
         ),
     ]);
-    await controller.refreshActiveData();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

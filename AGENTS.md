@@ -172,6 +172,14 @@ confirmation before they touch the database or disk.
 so light, dark, high-contrast, and deuteranomaly palettes all work unchanged.
 Charts carry a `semanticLabel`.
 
+**Controller writes refresh only the data they can change.**
+`refreshActiveData()` is the full-load boundary for startup, profile switches,
+imports, restores, and sync. A normal mutation in `AppController` calls
+`_refreshActiveData` with the affected slices, including dependent state such
+as inventory after an intake or due biomarkers after a measurement. When two
+derived views need the same source rows, load those rows once and pass them to
+the repository's pure derivation helpers rather than querying them again.
+
 **A feature reachable only by an icon is a feature nobody finds.** Tooltips need
 a long-press on touch, so an icon-only `IconButton` carries no label at all on a
 phone. The lab-report PDF import spent months looking deleted for exactly this

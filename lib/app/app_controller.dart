@@ -40,6 +40,28 @@ import '../workspace/safe_workspace_service.dart';
 import 'appearance_settings.dart';
 import 'initial_setup_progress.dart';
 
+enum _ActiveDataSlice {
+  supplements,
+  schedules,
+  intakes,
+  inventory,
+  eventDefinitions,
+  events,
+  biomarkers,
+  biomarkerRanges,
+  profileTargets,
+  measurements,
+  documents,
+  namedRecords,
+  biomarkerLists,
+  dueBiomarkers,
+  labPlans,
+  advisorConversations,
+  householdSchedules,
+  trendDoseLinks,
+  biomarkerPackages,
+}
+
 class AppController extends ChangeNotifier {
   AppController({
     required AppDatabase database,
@@ -636,61 +658,195 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refreshActiveData() async {
+    await _refreshActiveData(_ActiveDataSlice.values.toSet());
+  }
+
+  Future<void> _refreshActiveData(Set<_ActiveDataSlice> slices) async {
     final profile = activeProfile;
     if (profile == null) return;
-    final values = await Future.wait<Object>([
-      repository.supplements(profile.id),
-      repository.schedules(profile.id),
-      repository.intakes(profile.id),
-      repository.inventoryMovements(),
-      repository.stockLevels(),
-      repository.eventDefinitions(profile.id),
-      repository.events(profile.id),
-      repository.biomarkers(),
-      repository.biomarkerRanges(),
-      repository.profileTargets(profile.id),
-      repository.measurements(profile.id),
-      repository.documents(profile.id),
-      repository.namedRecords(profile.id),
-      repository.biomarkerLists(profile.id),
-      repository.dueBiomarkers(profile.id),
-      repository.labPlans(profile.id),
-      repository.advisorConversations(profile.id),
-      repository.householdSchedules(),
-      repository.trendDoseLinks(profile.id),
-      repository.biomarkerPackages(),
-      repository.biomarkerPackageMembers(),
-    ]);
-    supplements = values[0] as List<Supplement>;
-    schedules = values[1] as List<SupplementSchedule>;
-    intakes = values[2] as List<SupplementIntake>;
-    inventoryMovements = values[3] as List<InventoryMovement>;
-    stockLevels = values[4] as Map<String, double>;
-    eventDefinitions = values[5] as List<HealthEventDefinition>;
-    events = values[6] as List<HealthEvent>;
-    biomarkers = values[7] as List<Biomarker>;
-    biomarkerRanges = values[8] as List<BiomarkerReferenceRange>;
-    profileTargets = values[9] as List<ProfileBiomarkerTarget>;
-    measurements = values[10] as List<Measurement>;
-    documents = values[11] as List<HealthDocument>;
-    namedRecords = values[12] as List<NamedHealthRecord>;
-    biomarkerLists = values[13] as List<BiomarkerList>;
-    dueBiomarkers = values[14] as List<DueBiomarker>;
-    labPlans = values[15] as List<LabPlan>;
-    advisorConversations = values[16] as List<AdvisorConversation>;
-    householdSchedules = values[17] as List<SupplementSchedule>;
-    trendDoseLinks = values[18] as List<TrendDoseLink>;
-    biomarkerPackages = values[19] as List<BiomarkerPackage>;
-    biomarkerPackageMembers = values[20] as Map<String, Set<String>>;
+    List<Supplement>? nextSupplements;
+    List<SupplementSchedule>? nextSchedules;
+    List<SupplementIntake>? nextIntakes;
+    List<InventoryMovement>? nextInventoryMovements;
+    Map<String, double>? nextStockLevels;
+    List<HealthEventDefinition>? nextEventDefinitions;
+    List<HealthEvent>? nextEvents;
+    List<Biomarker>? nextBiomarkers;
+    List<BiomarkerReferenceRange>? nextBiomarkerRanges;
+    List<ProfileBiomarkerTarget>? nextProfileTargets;
+    List<Measurement>? nextMeasurements;
+    List<HealthDocument>? nextDocuments;
+    List<NamedHealthRecord>? nextNamedRecords;
+    List<BiomarkerList>? nextBiomarkerLists;
+    List<LabPlan>? nextLabPlans;
+    List<AdvisorConversation>? nextAdvisorConversations;
+    List<SupplementSchedule>? nextHouseholdSchedules;
+    List<TrendDoseLink>? nextTrendDoseLinks;
+    List<BiomarkerPackage>? nextBiomarkerPackages;
+    Map<String, Set<String>>? nextBiomarkerPackageMembers;
+    final loads = <Future<void>>[];
+
+    void load<T>(
+      _ActiveDataSlice slice,
+      Future<T> Function() read,
+      void Function(T value) store,
+    ) {
+      if (slices.contains(slice)) loads.add(read().then(store));
+    }
+
+    load(
+      _ActiveDataSlice.supplements,
+      () => repository.supplements(profile.id),
+      (value) => nextSupplements = value,
+    );
+    load(
+      _ActiveDataSlice.schedules,
+      () => repository.schedules(profile.id),
+      (value) => nextSchedules = value,
+    );
+    load(
+      _ActiveDataSlice.intakes,
+      () => repository.intakes(profile.id),
+      (value) => nextIntakes = value,
+    );
+    if (slices.contains(_ActiveDataSlice.inventory)) {
+      loads.add(
+        repository.inventoryMovements().then((value) {
+          nextInventoryMovements = value;
+        }),
+      );
+      loads.add(
+        repository.stockLevels().then((value) {
+          nextStockLevels = value;
+        }),
+      );
+    }
+    load(
+      _ActiveDataSlice.eventDefinitions,
+      () => repository.eventDefinitions(profile.id),
+      (value) => nextEventDefinitions = value,
+    );
+    load(
+      _ActiveDataSlice.events,
+      () => repository.events(profile.id),
+      (value) => nextEvents = value,
+    );
+    load(
+      _ActiveDataSlice.biomarkers,
+      repository.biomarkers,
+      (value) => nextBiomarkers = value,
+    );
+    load(
+      _ActiveDataSlice.biomarkerRanges,
+      repository.biomarkerRanges,
+      (value) => nextBiomarkerRanges = value,
+    );
+    load(
+      _ActiveDataSlice.profileTargets,
+      () => repository.profileTargets(profile.id),
+      (value) => nextProfileTargets = value,
+    );
+    List<Measurement>? nextReportedMeasurements;
+    load(
+      _ActiveDataSlice.measurements,
+      () => repository.reportedMeasurements(profile.id),
+      (value) => nextReportedMeasurements = value,
+    );
+    load(
+      _ActiveDataSlice.documents,
+      () => repository.documents(profile.id),
+      (value) => nextDocuments = value,
+    );
+    load(
+      _ActiveDataSlice.namedRecords,
+      () => repository.namedRecords(profile.id),
+      (value) => nextNamedRecords = value,
+    );
+    load(
+      _ActiveDataSlice.biomarkerLists,
+      () => repository.biomarkerLists(profile.id),
+      (value) => nextBiomarkerLists = value,
+    );
+    load(
+      _ActiveDataSlice.labPlans,
+      () => repository.labPlans(profile.id),
+      (value) => nextLabPlans = value,
+    );
+    load(
+      _ActiveDataSlice.advisorConversations,
+      () => repository.advisorConversations(profile.id),
+      (value) => nextAdvisorConversations = value,
+    );
+    load(
+      _ActiveDataSlice.householdSchedules,
+      repository.householdSchedules,
+      (value) => nextHouseholdSchedules = value,
+    );
+    load(
+      _ActiveDataSlice.trendDoseLinks,
+      () => repository.trendDoseLinks(profile.id),
+      (value) => nextTrendDoseLinks = value,
+    );
+    if (slices.contains(_ActiveDataSlice.biomarkerPackages)) {
+      loads.add(
+        repository.biomarkerPackages().then((value) {
+          nextBiomarkerPackages = value;
+        }),
+      );
+      loads.add(
+        repository.biomarkerPackageMembers().then((value) {
+          nextBiomarkerPackageMembers = value;
+        }),
+      );
+    }
+    await Future.wait(loads);
+
+    if (nextReportedMeasurements != null) {
+      nextMeasurements = repository.measurementsFrom(
+        reported: nextReportedMeasurements!,
+        biomarkers: nextBiomarkers ?? biomarkers,
+      );
+    }
+
+    supplements = nextSupplements ?? supplements;
+    schedules = nextSchedules ?? schedules;
+    intakes = nextIntakes ?? intakes;
+    inventoryMovements = nextInventoryMovements ?? inventoryMovements;
+    stockLevels = nextStockLevels ?? stockLevels;
+    eventDefinitions = nextEventDefinitions ?? eventDefinitions;
+    events = nextEvents ?? events;
+    biomarkers = nextBiomarkers ?? biomarkers;
+    biomarkerRanges = nextBiomarkerRanges ?? biomarkerRanges;
+    profileTargets = nextProfileTargets ?? profileTargets;
+    measurements = nextMeasurements ?? measurements;
+    documents = nextDocuments ?? documents;
+    namedRecords = nextNamedRecords ?? namedRecords;
+    biomarkerLists = nextBiomarkerLists ?? biomarkerLists;
+    labPlans = nextLabPlans ?? labPlans;
+    advisorConversations = nextAdvisorConversations ?? advisorConversations;
+    householdSchedules = nextHouseholdSchedules ?? householdSchedules;
+    trendDoseLinks = nextTrendDoseLinks ?? trendDoseLinks;
+    biomarkerPackages = nextBiomarkerPackages ?? biomarkerPackages;
+    biomarkerPackageMembers =
+        nextBiomarkerPackageMembers ?? biomarkerPackageMembers;
+    if (slices.contains(_ActiveDataSlice.dueBiomarkers)) {
+      dueBiomarkers = repository.dueBiomarkersFrom(
+        lists: biomarkerLists,
+        biomarkers: biomarkers,
+        measurements: measurements,
+      );
+    }
     // Resolved before the messages are read, because which conversation to
     // read *is* the question — which is why this one query is sequential
     // rather than part of the batch above.
-    _activeConversationId ??=
-        advisorConversations.firstOrNull?.id ?? defaultConversationId;
-    advisorMessages = await repository.messages(
-      profile.id,
-      activeConversationId,
-    );
+    if (slices.contains(_ActiveDataSlice.advisorConversations)) {
+      _activeConversationId ??=
+          advisorConversations.firstOrNull?.id ?? defaultConversationId;
+      advisorMessages = await repository.messages(
+        profile.id,
+        activeConversationId,
+      );
+    }
     notifyListeners();
   }
 
@@ -765,7 +921,7 @@ class AppController extends ChangeNotifier {
         ),
       );
     }
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.trendDoseLinks});
   }
 
   Future<void> addSupplement({
@@ -816,7 +972,10 @@ class AppController extends ChangeNotifier {
         ),
       );
     }
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.supplements,
+      _ActiveDataSlice.inventory,
+    });
     await _reconcileReminders();
   }
 
@@ -845,7 +1004,7 @@ class AppController extends ChangeNotifier {
         deleted: supplement.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.supplements});
     await _reconcileReminders();
   }
 
@@ -870,13 +1029,18 @@ class AppController extends ChangeNotifier {
         updatedAt: now,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.inventory});
     await _reconcileReminders();
   }
 
   Future<void> deleteSupplement(Supplement supplement) async {
     await repository.deleteSupplementWithSchedules(supplement.id);
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.supplements,
+      _ActiveDataSlice.schedules,
+      _ActiveDataSlice.householdSchedules,
+      _ActiveDataSlice.inventory,
+    });
     await _reconcileReminders();
   }
 
@@ -917,7 +1081,10 @@ class AppController extends ChangeNotifier {
         updatedAt: now,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.schedules,
+      _ActiveDataSlice.householdSchedules,
+    });
     await _reconcileReminders();
   }
 
@@ -941,7 +1108,10 @@ class AppController extends ChangeNotifier {
         deleted: schedule.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.schedules,
+      _ActiveDataSlice.householdSchedules,
+    });
     await _reconcileReminders();
   }
 
@@ -978,7 +1148,10 @@ class AppController extends ChangeNotifier {
             ),
           );
         }
-        await refreshActiveData();
+        await _refreshActiveData({
+          _ActiveDataSlice.schedules,
+          _ActiveDataSlice.householdSchedules,
+        });
         await _reconcileReminders();
         return (
           enabled: pending.length,
@@ -1005,7 +1178,10 @@ class AppController extends ChangeNotifier {
 
   Future<void> deleteSchedule(SupplementSchedule schedule) async {
     await repository.softDelete('supplement_schedules', schedule.id);
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.schedules,
+      _ActiveDataSlice.householdSchedules,
+    });
     await _reconcileReminders();
   }
 
@@ -1039,7 +1215,10 @@ class AppController extends ChangeNotifier {
           ? null
           : _stockUnitsForDose(supplement, dose, unit),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.intakes,
+      _ActiveDataSlice.inventory,
+    });
     await _reconcileStockAlerts();
   }
 
@@ -1067,7 +1246,10 @@ class AppController extends ChangeNotifier {
           ? null
           : _stockUnitsForDose(supplement, intake.dose, intake.unit),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.intakes,
+      _ActiveDataSlice.inventory,
+    });
     await _reconcileStockAlerts();
   }
 
@@ -1142,7 +1324,7 @@ class AppController extends ChangeNotifier {
         updatedAt: now,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.events});
   }
 
   Future<void> updateEvent(HealthEvent event) async {
@@ -1166,12 +1348,12 @@ class AppController extends ChangeNotifier {
         deleted: event.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.events});
   }
 
   Future<void> deleteEvent(HealthEvent event) async {
     await repository.softDelete('health_events', event.id);
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.events});
   }
 
   Future<void> saveEventDefinition(HealthEventDefinition definition) async {
@@ -1196,7 +1378,7 @@ class AppController extends ChangeNotifier {
         deleted: definition.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.eventDefinitions});
   }
 
   /// Reinterprets every existing entry for [definition] under a new value
@@ -1240,7 +1422,10 @@ class AppController extends ChangeNotifier {
         ),
       );
     }
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.eventDefinitions,
+      _ActiveDataSlice.events,
+    });
   }
 
   Future<void> addBiomarker({
@@ -1269,7 +1454,11 @@ class AppController extends ChangeNotifier {
         updatedAt: now,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<void> updateBiomarker(Biomarker biomarker) async {
@@ -1298,7 +1487,11 @@ class AppController extends ChangeNotifier {
         deleted: biomarker.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<void> deleteBiomarker(Biomarker biomarker) async {
@@ -1311,7 +1504,36 @@ class AppController extends ChangeNotifier {
       );
     }
     await repository.softDelete('biomarkers', biomarker.id);
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.dueBiomarkers,
+    });
+  }
+
+  Future<TemporaryBiomarkerResolution> mergeTemporaryBiomarker({
+    required String temporaryBiomarkerId,
+    required String canonicalBiomarkerId,
+  }) async {
+    final result = await repository.mergeTemporaryBiomarker(
+      temporaryBiomarkerId: temporaryBiomarkerId,
+      canonicalBiomarkerId: canonicalBiomarkerId,
+    );
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.biomarkerRanges,
+      _ActiveDataSlice.profileTargets,
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.biomarkerLists,
+      _ActiveDataSlice.dueBiomarkers,
+      _ActiveDataSlice.labPlans,
+    });
+    return result;
+  }
+
+  Future<void> makeTemporaryBiomarkerPermanent(String biomarkerId) async {
+    await repository.makeTemporaryBiomarkerPermanent(biomarkerId);
+    await _refreshActiveData({_ActiveDataSlice.biomarkers});
   }
 
   /// Reads a price page so the owner can see what will be sent before it is.
@@ -1409,7 +1631,10 @@ class AppController extends ChangeNotifier {
           );
           applied++;
         }
-        await refreshActiveData();
+        await _refreshActiveData({
+          _ActiveDataSlice.biomarkers,
+          _ActiveDataSlice.biomarkerPackages,
+        });
         return applied;
       });
 
@@ -1426,7 +1651,7 @@ class AppController extends ChangeNotifier {
     Set<String> biomarkerIds,
   ) async {
     await repository.saveBiomarkerPackage(package, biomarkerIds);
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.biomarkerPackages});
   }
 
   /// What the active profile can see. Screens ask this rather than testing
@@ -1458,12 +1683,24 @@ class AppController extends ChangeNotifier {
 
   Future<void> deleteBiomarkerPackage(BiomarkerPackage package) async {
     await repository.softDelete('biomarker_packages', package.id);
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.biomarkerPackages});
   }
 
   Future<void> saveBiomarkerRange(BiomarkerReferenceRange range) async {
     await repository.saveBiomarkerRange(range);
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.biomarkerRanges});
+  }
+
+  Future<void> saveBiomarkerRanges(
+    Iterable<BiomarkerReferenceRange> ranges,
+  ) async {
+    await repository.saveBiomarkerRanges(ranges);
+    await _refreshActiveData({_ActiveDataSlice.biomarkerRanges});
+  }
+
+  Future<void> deleteBiomarkerRange(BiomarkerReferenceRange range) async {
+    await repository.softDelete('biomarker_ranges', range.id);
+    await _refreshActiveData({_ActiveDataSlice.biomarkerRanges});
   }
 
   Future<void> saveProfileTarget(ProfileBiomarkerTarget target) async {
@@ -1486,12 +1723,12 @@ class AppController extends ChangeNotifier {
         updatedAt: DateTime.now(),
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.profileTargets});
   }
 
   Future<void> deleteProfileTarget(ProfileBiomarkerTarget target) async {
     await repository.softDelete('profile_biomarker_targets', target.id);
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.profileTargets});
   }
 
   Future<void> addMeasurement({
@@ -1524,7 +1761,10 @@ class AppController extends ChangeNotifier {
         updatedAt: now,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<void> updateMeasurement(Measurement measurement) async {
@@ -1552,7 +1792,10 @@ class AppController extends ChangeNotifier {
         deleted: measurement.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<void> deleteMeasurement(Measurement measurement) async {
@@ -1560,7 +1803,10 @@ class AppController extends ChangeNotifier {
       throw StateError('Calculated results cannot be deleted directly.');
     }
     await repository.softDelete('measurements', measurement.id);
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<void> addNamedRecord({
@@ -1596,7 +1842,7 @@ class AppController extends ChangeNotifier {
         updatedAt: now,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.namedRecords});
   }
 
   Future<void> updateNamedRecord(NamedHealthRecord record) async {
@@ -1620,12 +1866,12 @@ class AppController extends ChangeNotifier {
         deleted: record.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.namedRecords});
   }
 
   Future<void> deleteNamedRecord(NamedHealthRecord record) async {
     await repository.softDelete('named_health_records', record.id);
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.namedRecords});
   }
 
   Future<BiomarkerList> createBiomarkerList({
@@ -1642,7 +1888,10 @@ class AppController extends ChangeNotifier {
       updatedAt: now,
     );
     await repository.saveBiomarkerList(list);
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerLists,
+      _ActiveDataSlice.dueBiomarkers,
+    });
     return list;
   }
 
@@ -1659,7 +1908,10 @@ class AppController extends ChangeNotifier {
         deleted: list.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerLists,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<void> setBiomarkerListItem({
@@ -1688,7 +1940,10 @@ class AppController extends ChangeNotifier {
         updatedAt: now,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerLists,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   /// Adds every member of [package] to [list], skipping the ones already in it.
@@ -1731,7 +1986,10 @@ class AppController extends ChangeNotifier {
       );
       added++;
     }
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerLists,
+      _ActiveDataSlice.dueBiomarkers,
+    });
     return (added: added, alreadyPresent: present);
   });
 
@@ -1782,13 +2040,21 @@ class AppController extends ChangeNotifier {
         removed++;
       }
     }
-    if (added > 0 || removed > 0) await refreshActiveData();
+    if (added > 0 || removed > 0) {
+      await _refreshActiveData({
+        _ActiveDataSlice.biomarkerLists,
+        _ActiveDataSlice.dueBiomarkers,
+      });
+    }
     return (added: added, removed: removed);
   });
 
   Future<void> removeBiomarkerListItem(BiomarkerListItem item) async {
     await repository.softDelete('biomarker_list_items', item.id);
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerLists,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<void> deleteBiomarkerList(BiomarkerList list) async {
@@ -1796,7 +2062,10 @@ class AppController extends ChangeNotifier {
     for (final item in list.items) {
       await repository.softDelete('biomarker_list_items', item.id);
     }
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerLists,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   /// Reads a pasted product label into ingredient rows for review.
@@ -2183,7 +2452,7 @@ class AppController extends ChangeNotifier {
     }
     await repository.saveLabPlan(draft.plan);
     draftLabPlan = null;
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.labPlans});
   }
 
   Future<void> setLabPlanItemChecked(
@@ -2244,10 +2513,10 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       await repository.saveLabPlan(updatedPlan);
-      await refreshActiveData();
+      await _refreshActiveData({_ActiveDataSlice.labPlans});
     } on Object {
       // Roll back the optimistic copy to the database's durable truth.
-      await refreshActiveData();
+      await _refreshActiveData({_ActiveDataSlice.labPlans});
       rethrow;
     }
   }
@@ -2257,7 +2526,7 @@ class AppController extends ChangeNotifier {
     for (final item in plan.items) {
       await repository.softDelete('lab_plan_items', item.id);
     }
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.labPlans});
   }
 
   Future<ParsedLabReport> parseLabPdf({
@@ -2295,7 +2564,12 @@ class AppController extends ChangeNotifier {
         userConfirmed: true,
       );
       pendingLabReport = null;
-      await refreshActiveData();
+      await _refreshActiveData({
+        _ActiveDataSlice.biomarkers,
+        _ActiveDataSlice.measurements,
+        _ActiveDataSlice.documents,
+        _ActiveDataSlice.dueBiomarkers,
+      });
       return result;
     });
   }
@@ -2324,12 +2598,16 @@ class AppController extends ChangeNotifier {
         deleted: document.deleted,
       ),
     );
-    await refreshActiveData();
+    await _refreshActiveData({_ActiveDataSlice.documents});
   }
 
   Future<void> deleteDocument(HealthDocument document) async {
     await repository.deleteDocumentWithMeasurements(document.id);
-    await refreshActiveData();
+    await _refreshActiveData({
+      _ActiveDataSlice.measurements,
+      _ActiveDataSlice.documents,
+      _ActiveDataSlice.dueBiomarkers,
+    });
   }
 
   Future<LegacyImportPreview> previewImport(
