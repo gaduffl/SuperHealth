@@ -88,9 +88,7 @@ void main() {
   test('logging an intake reloads only intake and inventory state', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    final profile = await fixture.repository.createProfile(
-      displayName: 'Alex',
-    );
+    final profile = await fixture.repository.createProfile(displayName: 'Alex');
     final now = DateTime(2026, 7, 24);
     final supplement = Supplement(
       id: 'supplement',
@@ -241,9 +239,7 @@ class _CountingHealthRepository extends HealthRepository {
   }
 
   @override
-  Future<List<InventoryMovement>> inventoryMovements({
-    String? supplementId,
-  }) {
+  Future<List<InventoryMovement>> inventoryMovements({String? supplementId}) {
     inventoryMovementReads++;
     return super.inventoryMovements(supplementId: supplementId);
   }

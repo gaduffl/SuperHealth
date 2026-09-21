@@ -710,12 +710,16 @@ class AppController extends ChangeNotifier {
       (value) => nextIntakes = value,
     );
     if (slices.contains(_ActiveDataSlice.inventory)) {
-      loads.add(repository.inventoryMovements().then((value) {
-        nextInventoryMovements = value;
-      }));
-      loads.add(repository.stockLevels().then((value) {
-        nextStockLevels = value;
-      }));
+      loads.add(
+        repository.inventoryMovements().then((value) {
+          nextInventoryMovements = value;
+        }),
+      );
+      loads.add(
+        repository.stockLevels().then((value) {
+          nextStockLevels = value;
+        }),
+      );
     }
     load(
       _ActiveDataSlice.eventDefinitions,
@@ -784,12 +788,16 @@ class AppController extends ChangeNotifier {
       (value) => nextTrendDoseLinks = value,
     );
     if (slices.contains(_ActiveDataSlice.biomarkerPackages)) {
-      loads.add(repository.biomarkerPackages().then((value) {
-        nextBiomarkerPackages = value;
-      }));
-      loads.add(repository.biomarkerPackageMembers().then((value) {
-        nextBiomarkerPackageMembers = value;
-      }));
+      loads.add(
+        repository.biomarkerPackages().then((value) {
+          nextBiomarkerPackages = value;
+        }),
+      );
+      loads.add(
+        repository.biomarkerPackageMembers().then((value) {
+          nextBiomarkerPackageMembers = value;
+        }),
+      );
     }
     await Future.wait(loads);
 
