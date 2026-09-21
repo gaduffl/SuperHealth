@@ -207,11 +207,10 @@ class TemporaryBiomarkerResolutionScreen extends StatelessWidget {
     search.dispose();
     if (chosenId == null || !context.mounted) return;
     try {
-      final result = await controller.repository.mergeTemporaryBiomarker(
+      final result = await controller.mergeTemporaryBiomarker(
         temporaryBiomarkerId: temporary.id,
         canonicalBiomarkerId: chosenId,
       );
-      await controller.refreshActiveData();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -255,8 +254,7 @@ class TemporaryBiomarkerResolutionScreen extends StatelessWidget {
     );
     if (!confirmed || !context.mounted) return;
     try {
-      await controller.repository.makeTemporaryBiomarkerPermanent(biomarker.id);
-      await controller.refreshActiveData();
+      await controller.makeTemporaryBiomarkerPermanent(biomarker.id);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

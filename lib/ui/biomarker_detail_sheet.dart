@@ -651,11 +651,7 @@ class _BiomarkerDetail extends StatelessWidget {
                         destructive: true,
                       );
                       if (confirmed) {
-                        await controller.repository.softDelete(
-                          'biomarker_ranges',
-                          range.id,
-                        );
-                        await controller.refreshActiveData();
+                        await controller.deleteBiomarkerRange(range);
                       }
                     }
                   },

@@ -1361,6 +1361,17 @@ class HealthRepository {
   }
 
   Future<List<Measurement>> measurements(String profileId) async {
+    final values = await Future.wait<Object>([
+      reportedMeasurements(profileId),
+      biomarkers(),
+    ]);
+    return measurementsFrom(
+      reported: values[0] as List<Measurement>,
+      biomarkers: values[1] as List<Biomarker>,
+    );
+  }
+
+  Future<List<Measurement>> reportedMeasurements(String profileId) async {
     final db = await _database.database;
     final rows = await db.query(
       'measurements',
@@ -1368,9 +1379,15 @@ class HealthRepository {
       whereArgs: [profileId],
       orderBy: 'taken_at DESC',
     );
-    final reported = rows.map(Measurement.fromMap).toList();
+    return rows.map(Measurement.fromMap).toList();
+  }
+
+  List<Measurement> measurementsFrom({
+    required List<Measurement> reported,
+    required List<Biomarker> biomarkers,
+  }) {
     final calculated = _calculatedBiomarkers.derive(
-      biomarkers: await biomarkers(),
+      biomarkers: biomarkers,
       measurements: reported,
     );
     return [...reported, ...calculated]
@@ -1604,13 +1621,34 @@ class HealthRepository {
   }
 
   Future<List<DueBiomarker>> dueBiomarkers(String profileId) async {
-    final lists = await biomarkerLists(profileId);
-    final catalog = {for (final item in await biomarkers()) item.id: item};
+    final values = await Future.wait<Object>([
+      biomarkerLists(profileId),
+      biomarkers(),
+      reportedMeasurements(profileId),
+    ]);
+    final catalog = values[1] as List<Biomarker>;
+    return dueBiomarkersFrom(
+      lists: values[0] as List<BiomarkerList>,
+      biomarkers: catalog,
+      measurements: measurementsFrom(
+        reported: values[2] as List<Measurement>,
+        biomarkers: catalog,
+      ),
+    );
+  }
+
+  List<DueBiomarker> dueBiomarkersFrom({
+    required List<BiomarkerList> lists,
+    required List<Biomarker> biomarkers,
+    required List<Measurement> measurements,
+    DateTime? now,
+  }) {
+    final catalog = {for (final item in biomarkers) item.id: item};
     final latest = <String, DateTime>{};
-    for (final measurement in await measurements(profileId)) {
+    for (final measurement in measurements) {
       latest.putIfAbsent(measurement.biomarkerId, () => measurement.takenAt);
     }
-    final now = DateTime.now();
+    final currentTime = now ?? DateTime.now();
     // Collapsed per biomarker: a marker on three lists is still one blood
     // draw, so it must count and read as one due item.
     final byBiomarker = <String, DueBiomarker>{};
@@ -1629,7 +1667,7 @@ class HealthRepository {
         final dueDate =
             measured?.add(Duration(days: interval)) ??
             DateTime.fromMillisecondsSinceEpoch(0);
-        if (dueDate.isAfter(now)) continue;
+        if (dueDate.isAfter(currentTime)) continue;
         listNames.putIfAbsent(biomarker.id, () => <String>{}).add(list.name);
         final existing = byBiomarker[biomarker.id];
         // Keep the most demanding list's schedule: the earliest due date, and

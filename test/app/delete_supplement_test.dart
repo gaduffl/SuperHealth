@@ -84,6 +84,48 @@ void main() {
       ]);
     },
   );
+
+  test('logging an intake reloads only intake and inventory state', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    final profile = await fixture.repository.createProfile(
+      displayName: 'Alex',
+    );
+    final now = DateTime(2026, 7, 24);
+    final supplement = Supplement(
+      id: 'supplement',
+      name: 'Magnesium',
+      stockUnit: 'unit',
+      createdAt: now,
+      updatedAt: now,
+    );
+    await fixture.repository.saveSupplement(supplement);
+    fixture.controller
+      ..profiles = [profile]
+      ..activeProfile = profile;
+    await fixture.controller.refreshActiveData();
+    expect(fixture.repository.biomarkerReads, 1);
+    fixture.repository.resetReadCounts();
+    final biomarkersBefore = fixture.controller.biomarkers;
+    final documentsBefore = fixture.controller.documents;
+
+    await fixture.controller.logIntake(
+      supplement: supplement,
+      dose: 1,
+      unit: 'unit',
+      takenAt: now,
+    );
+
+    expect(fixture.repository.intakeReads, 1);
+    expect(fixture.repository.inventoryMovementReads, 1);
+    expect(fixture.repository.stockLevelReads, 1);
+    expect(fixture.repository.biomarkerReads, 0);
+    expect(fixture.repository.documentReads, 0);
+    expect(identical(fixture.controller.biomarkers, biomarkersBefore), isTrue);
+    expect(identical(fixture.controller.documents, documentsBefore), isTrue);
+    expect(fixture.controller.intakes, hasLength(1));
+    expect(fixture.controller.stockLevels[supplement.id], -1);
+  });
 }
 
 SupplementSchedule _schedule(
@@ -113,7 +155,7 @@ class _Fixture {
   });
 
   final AppDatabase database;
-  final HealthRepository repository;
+  final _CountingHealthRepository repository;
   final AppController controller;
 
   static Future<_Fixture> create() async {
@@ -121,7 +163,7 @@ class _Fixture {
       factory: databaseFactoryFfi,
       databasePath: inMemoryDatabasePath,
     );
-    final repository = HealthRepository(database);
+    final repository = _CountingHealthRepository(database);
     final snapshot = SnapshotService(database, repository);
     final oneDrive = OneDriveService(snapshot);
     final keyStore = ApiKeyStore();
@@ -168,5 +210,59 @@ class _Fixture {
   Future<void> dispose() async {
     controller.dispose();
     await database.close();
+  }
+}
+
+class _CountingHealthRepository extends HealthRepository {
+  _CountingHealthRepository(super.database);
+
+  int intakeReads = 0;
+  int inventoryMovementReads = 0;
+  int stockLevelReads = 0;
+  int biomarkerReads = 0;
+  int documentReads = 0;
+
+  void resetReadCounts() {
+    intakeReads = 0;
+    inventoryMovementReads = 0;
+    stockLevelReads = 0;
+    biomarkerReads = 0;
+    documentReads = 0;
+  }
+
+  @override
+  Future<List<SupplementIntake>> intakes(
+    String profileId, {
+    DateTime? from,
+    DateTime? to,
+  }) {
+    intakeReads++;
+    return super.intakes(profileId, from: from, to: to);
+  }
+
+  @override
+  Future<List<InventoryMovement>> inventoryMovements({
+    String? supplementId,
+  }) {
+    inventoryMovementReads++;
+    return super.inventoryMovements(supplementId: supplementId);
+  }
+
+  @override
+  Future<Map<String, double>> stockLevels() {
+    stockLevelReads++;
+    return super.stockLevels();
+  }
+
+  @override
+  Future<List<Biomarker>> biomarkers() {
+    biomarkerReads++;
+    return super.biomarkers();
+  }
+
+  @override
+  Future<List<HealthDocument>> documents(String profileId) {
+    documentReads++;
+    return super.documents(profileId);
   }
 }
