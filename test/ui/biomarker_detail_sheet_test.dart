@@ -24,6 +24,7 @@ import 'package:super_health/import/legacy_import_service.dart';
 import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
 import 'package:super_health/ui/biomarker_detail_sheet.dart';
+import 'package:super_health/ui/charts.dart';
 import 'package:super_health/workspace/safe_workspace_service.dart';
 
 void main() {
@@ -142,6 +143,31 @@ void main() {
     await _openSheet(tester, controller);
 
     expect(find.text('Source report is no longer available'), findsOneWidget);
+  });
+
+  testWidgets('the detail trend uses tooltips with reading and report notes', (
+    tester,
+  ) async {
+    final controller = _seededController(
+      measurements: [
+        _reading(
+          id: 'm1',
+          takenAt: DateTime(2026, 1, 2),
+          notes: 'Not fasting',
+          documentId: 'doc',
+        ),
+        _reading(id: 'm2', takenAt: DateTime(2026, 2, 2), value: 90),
+      ],
+      documents: [_report(reportComment: 'Sample slightly haemolysed')],
+    );
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    final chart = tester.widget<TrendChart>(find.byType(TrendChart));
+    expect(
+      chart.noteLabel?.call(DateTime(2026, 1, 2)),
+      'Not fasting · Sample slightly haemolysed',
+    );
   });
 
   testWidgets('a reading with no report shows no source line', (tester) async {
@@ -415,12 +441,17 @@ Measurement _reading({
   updatedAt: takenAt,
 );
 
-HealthDocument _report({String id = 'doc', String? localPath}) =>
+HealthDocument _report({
+  String id = 'doc',
+  String? localPath,
+  String reportComment = '',
+}) =>
     HealthDocument(
       id: id,
       profileId: 'profile',
       fileName: 'labor-2026-01.pdf',
       localPath: localPath,
+      reportComment: reportComment,
       createdAt: DateTime(2026, 1, 1),
       updatedAt: DateTime(2026, 1, 1),
     );

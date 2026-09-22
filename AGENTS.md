@@ -150,7 +150,9 @@ timestamp, not list index, because measurements arrive at irregular intervals
 and equal spacing would make a six-month gap read like a six-day one.
 Biomarker point tooltips carry both the measurement note and the linked lab
 document's report comment, deduplicated when several same-day results share a
-document.
+document. Use the shared `TrendChart` and `biomarkerTrendNoteOn` in both the
+catalog cards and the single-biomarker sheet; a separate painter silently loses
+touch behavior and lets the two views drift apart.
 
 **Correlations must degrade safely.** Events with no resolvable definition keep
 the legacy fallback so old data keeps behaving exactly as it did. Preserve that

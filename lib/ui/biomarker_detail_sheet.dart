@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
@@ -11,6 +9,8 @@ import '../biomarkers/biomarker_status_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import 'biomarker_lists_sheet.dart';
+import 'biomarker_trend_notes.dart';
+import 'charts.dart';
 import 'common.dart';
 import 'dialogs.dart';
 import 'lab_report_screen.dart';
@@ -516,26 +516,31 @@ class _BiomarkerDetail extends StatelessWidget {
                             style: Theme.of(context).textTheme.labelMedium,
                           ),
                         ),
-                        SizedBox(
-                          height: 220,
-                          child: CustomPaint(
-                            painter: _TrendPainter(
-                              values: daily,
-                              lineColor: Theme.of(context).colorScheme.primary,
-                              gridColor: Theme.of(
-                                context,
-                              ).colorScheme.outlineVariant,
-                              textColor: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                              refLow: trendBand?.low,
-                              refHigh: trendBand?.high,
-                              bandColor: Theme.of(
-                                context,
-                              ).colorScheme.secondaryContainer,
-                            ),
-                            size: Size.infinite,
+                        TrendChart(
+                          key: ValueKey('biomarker-detail-trend-${biomarker.id}'),
+                          points: [
+                            for (final value in daily)
+                              (day: value.date, value: value.value),
+                          ],
+                          dayLabel: (day) => DateFormat('MM/yy').format(day),
+                          semanticLabel: _detailText(
+                            context,
+                            '${biomarker.displayName} measurement trend in $trendUnit',
+                            'Messwertverlauf für ${biomarker.displayName} in $trendUnit',
                           ),
+                          color: Theme.of(context).colorScheme.primary,
+                          rangeLow: trendBand?.low,
+                          rangeHigh: trendBand?.high,
+                          rangeColor: Theme.of(
+                            context,
+                          ).colorScheme.secondaryContainer,
+                          noteLabel: (day) => biomarkerTrendNoteOn(
+                            measurements: controller.measurements,
+                            documents: controller.documents,
+                            biomarkerId: biomarker.id,
+                            day: day,
+                          ),
+                          height: 220,
                         ),
                       ],
                     ),
@@ -1027,129 +1032,4 @@ class _DailyValue {
 
   final DateTime date;
   final double value;
-}
-
-class _TrendPainter extends CustomPainter {
-  _TrendPainter({
-    required this.values,
-    required this.lineColor,
-    required this.gridColor,
-    required this.textColor,
-    required this.bandColor,
-    this.refLow,
-    this.refHigh,
-  });
-
-  final List<_DailyValue> values;
-  final Color lineColor;
-  final Color gridColor;
-  final Color textColor;
-  final Color bandColor;
-  final double? refLow;
-  final double? refHigh;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const left = 46.0;
-    const right = 8.0;
-    const top = 8.0;
-    const bottom = 28.0;
-    final chart = Rect.fromLTRB(
-      left,
-      top,
-      size.width - right,
-      size.height - bottom,
-    );
-    var minY = values.map((item) => item.value).reduce(math.min);
-    var maxY = values.map((item) => item.value).reduce(math.max);
-    if (refLow != null) minY = math.min(minY, refLow!);
-    if (refHigh != null) maxY = math.max(maxY, refHigh!);
-    final padding = (maxY - minY).abs() * 0.12;
-    minY -= padding == 0 ? 1 : padding;
-    maxY += padding == 0 ? 1 : padding;
-
-    double y(double value) =>
-        chart.bottom - ((value - minY) / (maxY - minY)) * chart.height;
-    double x(int index) =>
-        chart.left + index / (values.length - 1) * chart.width;
-
-    if (refLow != null || refHigh != null) {
-      final bandTop = y(refHigh ?? maxY).clamp(chart.top, chart.bottom);
-      final bandBottom = y(refLow ?? minY).clamp(chart.top, chart.bottom);
-      canvas.drawRect(
-        Rect.fromLTRB(chart.left, bandTop, chart.right, bandBottom),
-        Paint()..color = bandColor.withValues(alpha: 0.45),
-      );
-    }
-    final gridPaint = Paint()
-      ..color = gridColor
-      ..strokeWidth = 1;
-    for (var index = 0; index <= 4; index++) {
-      final gridY = chart.top + chart.height * index / 4;
-      canvas.drawLine(
-        Offset(chart.left, gridY),
-        Offset(chart.right, gridY),
-        gridPaint,
-      );
-      final label = (maxY - (maxY - minY) * index / 4).toStringAsFixed(1);
-      _text(canvas, label, Offset(0, gridY - 6), 10);
-    }
-
-    final path = Path()..moveTo(x(0), y(values.first.value));
-    for (var index = 1; index < values.length; index++) {
-      path.lineTo(x(index), y(values[index].value));
-    }
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = lineColor
-        ..strokeWidth = 2.5
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
-    for (var index = 0; index < values.length; index++) {
-      canvas.drawCircle(
-        Offset(x(index), y(values[index].value)),
-        4,
-        Paint()..color = lineColor,
-      );
-    }
-    _text(
-      canvas,
-      DateFormat('MM/yy').format(values.first.date),
-      Offset(chart.left, chart.bottom + 7),
-      10,
-    );
-    final lastLabel = DateFormat('MM/yy').format(values.last.date);
-    final painter = TextPainter(
-      text: TextSpan(
-        text: lastLabel,
-        style: TextStyle(color: textColor, fontSize: 10),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    painter.paint(
-      canvas,
-      Offset(chart.right - painter.width, chart.bottom + 7),
-    );
-  }
-
-  void _text(Canvas canvas, String value, Offset offset, double size) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: value,
-        style: TextStyle(color: textColor, fontSize: size),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    painter.paint(canvas, offset);
-  }
-
-  @override
-  bool shouldRepaint(covariant _TrendPainter oldDelegate) =>
-      oldDelegate.values != values ||
-      oldDelegate.lineColor != lineColor ||
-      oldDelegate.refLow != refLow ||
-      oldDelegate.refHigh != refHigh;
 }
