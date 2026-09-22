@@ -606,18 +606,6 @@ class _OverviewTiles extends StatelessWidget {
         )
         .where((item) => item.low)
         .length;
-    final journalDays = controller.events
-        .where((event) => !event.deleted)
-        .map(
-          (event) => DateTime(
-            event.observedAt.year,
-            event.observedAt.month,
-            event.observedAt.day,
-          ),
-        )
-        .toSet()
-        .length;
-
     final tiles = <Widget>[
       StatTile(
         label: strings.todayDoses,
@@ -648,15 +636,6 @@ class _OverviewTiles extends StatelessWidget {
         tone: lowStock == 0 ? null : colors.error,
         onTap: () =>
             navigation.go(AppSection.stock, filter: SectionFilter.lowStock),
-      ),
-      StatTile(
-        label: strings.labPlans,
-        value: '${controller.labPlans.length}',
-        icon: Icons.checklist_outlined,
-        detail: controller.labPlans.isEmpty
-            ? strings.createFirstPlan
-            : strings.savedChecklists,
-        onTap: () => navigation.go(AppSection.labs),
       ),
       StatTile(
         label: strings.latestBelow,
@@ -695,13 +674,6 @@ class _OverviewTiles extends StatelessWidget {
           AppSection.biomarkers,
           filter: SectionFilter.withoutUsableRange,
         ),
-      ),
-      StatTile(
-        label: strings.journal,
-        value: '$journalDays',
-        icon: Icons.event_note_outlined,
-        detail: strings.pick('Days recorded', 'Erfasste Tage'),
-        onTap: () => navigation.go(AppSection.journal),
       ),
     ];
 
