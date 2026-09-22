@@ -2845,8 +2845,7 @@ String? _remarkOn(AppController controller, Biomarker biomarker, DateTime day) {
     }
     final note = measurement.notes.trim();
     if (note.isNotEmpty && !notes.contains(note)) notes.add(note);
-    final documentNote = documentsById[measurement.documentId]
-        ?.reportComment
+    final documentNote = documentsById[measurement.documentId]?.reportComment
         .trim();
     if (documentNote != null &&
         documentNote.isNotEmpty &&
