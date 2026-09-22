@@ -2832,6 +2832,9 @@ _dashboardTrendData({
 /// would simply vanish.
 String? _remarkOn(AppController controller, Biomarker biomarker, DateTime day) {
   final notes = <String>[];
+  final documentsById = {
+    for (final document in controller.documents) document.id: document,
+  };
   for (final measurement in controller.measurements) {
     if (measurement.biomarkerId != biomarker.id) continue;
     final taken = measurement.takenAt;
@@ -2842,6 +2845,14 @@ String? _remarkOn(AppController controller, Biomarker biomarker, DateTime day) {
     }
     final note = measurement.notes.trim();
     if (note.isNotEmpty && !notes.contains(note)) notes.add(note);
+    final documentNote = documentsById[measurement.documentId]
+        ?.reportComment
+        .trim();
+    if (documentNote != null &&
+        documentNote.isNotEmpty &&
+        !notes.contains(documentNote)) {
+      notes.add(documentNote);
+    }
   }
   return notes.isEmpty ? null : notes.join(' · ');
 }

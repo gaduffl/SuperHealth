@@ -148,6 +148,9 @@ follows.
 **Charts are plotted against real dates.** `TrendChart` positions points by
 timestamp, not list index, because measurements arrive at irregular intervals
 and equal spacing would make a six-month gap read like a six-day one.
+Biomarker point tooltips carry both the measurement note and the linked lab
+document's report comment, deduplicated when several same-day results share a
+document.
 
 **Correlations must degrade safely.** Events with no resolvable definition keep
 the legacy fallback so old data keeps behaving exactly as it did. Preserve that
