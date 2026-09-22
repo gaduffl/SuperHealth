@@ -12,7 +12,9 @@ String? biomarkerTrendNoteOn({
   required DateTime day,
 }) {
   final notes = <String>[];
-  final documentsById = {for (final document in documents) document.id: document};
+  final documentsById = {
+    for (final document in documents) document.id: document,
+  };
   for (final measurement in measurements) {
     if (measurement.biomarkerId != biomarkerId) continue;
     final taken = measurement.takenAt;

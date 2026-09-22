@@ -517,7 +517,9 @@ class _BiomarkerDetail extends StatelessWidget {
                           ),
                         ),
                         TrendChart(
-                          key: ValueKey('biomarker-detail-trend-${biomarker.id}'),
+                          key: ValueKey(
+                            'biomarker-detail-trend-${biomarker.id}',
+                          ),
                           points: [
                             for (final value in daily)
                               (day: value.date, value: value.value),

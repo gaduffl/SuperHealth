@@ -153,10 +153,18 @@ void main() {
         _reading(
           id: 'm1',
           takenAt: DateTime(2026, 1, 2),
+          canonicalValue: 95,
+          canonicalUnit: 'mg/dL',
           notes: 'Not fasting',
           documentId: 'doc',
         ),
-        _reading(id: 'm2', takenAt: DateTime(2026, 2, 2), value: 90),
+        _reading(
+          id: 'm2',
+          takenAt: DateTime(2026, 2, 2),
+          value: 90,
+          canonicalValue: 90,
+          canonicalUnit: 'mg/dL',
+        ),
       ],
       documents: [_report(reportComment: 'Sample slightly haemolysed')],
     );
@@ -424,6 +432,8 @@ Measurement _reading({
   required String id,
   required DateTime takenAt,
   double value = 95,
+  double? canonicalValue,
+  String? canonicalUnit,
   String notes = '',
   String? documentId,
   int? page,
@@ -434,6 +444,8 @@ Measurement _reading({
   takenAt: takenAt,
   value: value,
   unit: 'mg/dL',
+  canonicalValue: canonicalValue,
+  canonicalUnit: canonicalUnit,
   notes: notes,
   documentId: documentId,
   page: page,
@@ -445,13 +457,12 @@ HealthDocument _report({
   String id = 'doc',
   String? localPath,
   String reportComment = '',
-}) =>
-    HealthDocument(
-      id: id,
-      profileId: 'profile',
-      fileName: 'labor-2026-01.pdf',
-      localPath: localPath,
-      reportComment: reportComment,
-      createdAt: DateTime(2026, 1, 1),
-      updatedAt: DateTime(2026, 1, 1),
-    );
+}) => HealthDocument(
+  id: id,
+  profileId: 'profile',
+  fileName: 'labor-2026-01.pdf',
+  localPath: localPath,
+  reportComment: reportComment,
+  createdAt: DateTime(2026, 1, 1),
+  updatedAt: DateTime(2026, 1, 1),
+);
