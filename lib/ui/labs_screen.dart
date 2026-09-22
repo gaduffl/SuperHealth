@@ -23,6 +23,7 @@ import '../export/lab_plan_export_service.dart';
 import 'biomarker_category_localization.dart';
 import 'biomarker_detail_sheet.dart';
 import 'biomarker_lists_sheet.dart';
+import 'biomarker_trend_notes.dart';
 import 'charts.dart';
 import 'common.dart';
 import 'biomarker_package_screen.dart';
@@ -2740,7 +2741,12 @@ class _BiomarkerDashboardSection extends StatelessWidget {
               rangeLow: trend.rangeLow,
               rangeHigh: trend.rangeHigh,
               rangeColor: Theme.of(context).colorScheme.secondaryContainer,
-              noteLabel: (day) => _remarkOn(controller, biomarker, day),
+              noteLabel: (day) => biomarkerTrendNoteOn(
+                measurements: controller.measurements,
+                documents: controller.documents,
+                biomarkerId: biomarker.id,
+                day: day,
+              ),
               doseSeries: underlay.series,
               height: 150,
             ),
@@ -2822,38 +2828,6 @@ _dashboardTrendData({
     rangeLow: range?.low,
     rangeHigh: range?.high,
   );
-}
-
-/// The remarks recorded for [biomarker] on [day], joined when a day holds more
-/// than one reading.
-///
-/// The chart plots a day, not a measurement, so two results on the same date
-/// share one point and would otherwise have to share one remark — the second
-/// would simply vanish.
-String? _remarkOn(AppController controller, Biomarker biomarker, DateTime day) {
-  final notes = <String>[];
-  final documentsById = {
-    for (final document in controller.documents) document.id: document,
-  };
-  for (final measurement in controller.measurements) {
-    if (measurement.biomarkerId != biomarker.id) continue;
-    final taken = measurement.takenAt;
-    if (taken.year != day.year ||
-        taken.month != day.month ||
-        taken.day != day.day) {
-      continue;
-    }
-    final note = measurement.notes.trim();
-    if (note.isNotEmpty && !notes.contains(note)) notes.add(note);
-    final documentNote = documentsById[measurement.documentId]?.reportComment
-        .trim();
-    if (documentNote != null &&
-        documentNote.isNotEmpty &&
-        !notes.contains(documentNote)) {
-      notes.add(documentNote);
-    }
-  }
-  return notes.isEmpty ? null : notes.join(' · ');
 }
 
 Color _biomarkerOptimalColor(BuildContext context) =>
