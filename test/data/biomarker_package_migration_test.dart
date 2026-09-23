@@ -26,6 +26,8 @@ void main() {
             // Only what this migration touches. A fixture that creates every
             // table would hide an ALTER against one it forgot.
             await db.execute(legacyBiomarkersTable);
+            await db.execute(legacyBiomarkerListsTable);
+            await db.execute(legacyBiomarkerListItemsTable);
             // v11 alters profiles, so a fixture without it fails here while
             // working fine against a real database of this version.
             await db.execute('''

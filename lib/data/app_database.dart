@@ -18,7 +18,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 13;
+  static const schemaVersion = 14;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -366,6 +366,7 @@ class AppDatabase {
           profile_id TEXT NOT NULL REFERENCES profiles(id),
           name TEXT NOT NULL,
           description TEXT NOT NULL DEFAULT '',
+          due_interval_days INTEGER,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           deleted INTEGER NOT NULL DEFAULT 0
@@ -709,12 +710,61 @@ class AppDatabase {
       );
       await _installHoma1Biomarker(db);
     }
+    if (oldVersion < 14) {
+      await db.execute(
+        'ALTER TABLE biomarker_lists ADD COLUMN due_interval_days INTEGER',
+      );
+      await _backfillListIntervals(db);
+    }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;
       // anything older got it from the CREATE above.
       await db.execute(
         'ALTER TABLE trend_dose_links ADD COLUMN supplement_id TEXT '
         'REFERENCES supplements(id)',
+      );
+    }
+  }
+
+  /// Gives every existing list the schedule its items already share.
+  ///
+  /// The old app scheduled a list and let an entry override it; the import
+  /// flattened that into a copy per item, and items added since through a
+  /// package got no interval at all and were never due. The most common item
+  /// interval is the list's schedule in all but name (a tie takes the shorter,
+  /// more cautious one). Items that merely repeat it are cleared so they follow
+  /// the list from now on; a different interval stays as the item's own.
+  static Future<void> _backfillListIntervals(DatabaseExecutor db) async {
+    final rows = await db.query(
+      'biomarker_list_items',
+      columns: ['list_id', 'due_interval_days'],
+      where: 'deleted = 0 AND due_interval_days > 0',
+    );
+    final counts = <String, Map<int, int>>{};
+    for (final row in rows) {
+      final interval = (row['due_interval_days'] as num).toInt();
+      final perList = counts.putIfAbsent('${row['list_id']}', () => {});
+      perList[interval] = (perList[interval] ?? 0) + 1;
+    }
+    for (final entry in counts.entries) {
+      final chosen = entry.value.entries.reduce(
+        (best, next) =>
+            next.value > best.value ||
+                (next.value == best.value && next.key < best.key)
+            ? next
+            : best,
+      );
+      await db.update(
+        'biomarker_lists',
+        {'due_interval_days': chosen.key},
+        where: 'id = ?',
+        whereArgs: [entry.key],
+      );
+      await db.update(
+        'biomarker_list_items',
+        {'due_interval_days': null},
+        where: 'list_id = ? AND due_interval_days = ?',
+        whereArgs: [entry.key, chosen.key],
       );
     }
   }

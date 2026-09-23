@@ -1377,6 +1377,7 @@ class BiomarkerList {
     required this.createdAt,
     required this.updatedAt,
     this.description = '',
+    this.dueIntervalDays,
     this.items = const [],
     this.deleted = false,
   });
@@ -1385,16 +1386,38 @@ class BiomarkerList {
   final String profileId;
   final String name;
   final String description;
+
+  /// The list's own retest schedule, followed by every item that does not set
+  /// one. Null means the list is a plain checklist with no due alerts.
+  final int? dueIntervalDays;
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<BiomarkerListItem> items;
   final bool deleted;
+
+  /// The interval that actually applies to [item] on this list.
+  ///
+  /// An item without its own interval follows the list. Before lists carried
+  /// one, such an item was silently never due — a marker added from a package
+  /// sat on an annual list for years without ever reaching a lab plan.
+  int? intervalFor(BiomarkerListItem item) =>
+      item.dueIntervalDays ?? dueIntervalDays;
+
+  /// When [item] is next due given its last measurement, or null when nothing
+  /// schedules it. A marker never measured is due immediately.
+  DateTime? dueDateFor(BiomarkerListItem item, DateTime? lastMeasuredAt) {
+    final interval = intervalFor(item);
+    if (interval == null || interval <= 0) return null;
+    return lastMeasuredAt?.add(Duration(days: interval)) ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+  }
 
   Map<String, Object?> toMap() => {
     'id': id,
     'profile_id': profileId,
     'name': name,
     'description': description,
+    'due_interval_days': dueIntervalDays,
     'created_at': _iso(createdAt),
     'updated_at': _iso(updatedAt),
     'deleted': deleted ? 1 : 0,
@@ -1408,6 +1431,7 @@ class BiomarkerList {
     profileId: '${map['profile_id']}',
     name: '${map['name']}',
     description: map['description']?.toString() ?? '',
+    dueIntervalDays: (map['due_interval_days'] as num?)?.toInt(),
     createdAt: _date(map['created_at']),
     updatedAt: _date(map['updated_at']),
     items: items,

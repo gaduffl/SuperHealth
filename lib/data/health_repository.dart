@@ -1590,6 +1590,7 @@ class HealthRepository {
   }
 
   Future<void> saveBiomarkerList(BiomarkerList list) async {
+    _validateBiomarkerList(list);
     for (final item in list.items) {
       _validateBiomarkerListItem(item);
     }
@@ -1655,19 +1656,12 @@ class HealthRepository {
     final listNames = <String, Set<String>>{};
     for (final list in lists) {
       for (final item in list.items) {
-        final interval = item.dueIntervalDays;
         final biomarker = catalog[item.biomarkerId];
-        if (interval == null ||
-            interval <= 0 ||
-            biomarker == null ||
-            biomarker.isCalculated) {
-          continue;
-        }
+        if (biomarker == null || biomarker.isCalculated) continue;
         final measured = latest[item.biomarkerId];
-        final dueDate =
-            measured?.add(Duration(days: interval)) ??
-            DateTime.fromMillisecondsSinceEpoch(0);
-        if (dueDate.isAfter(currentTime)) continue;
+        final dueDate = list.dueDateFor(item, measured);
+        if (dueDate == null || dueDate.isAfter(currentTime)) continue;
+        final interval = list.intervalFor(item)!;
         listNames.putIfAbsent(biomarker.id, () => <String>{}).add(list.name);
         final existing = byBiomarker[biomarker.id];
         // Keep the most demanding list's schedule: the earliest due date, and
@@ -2072,6 +2066,8 @@ class HealthRepository {
             'paused',
           });
           _validateNamedRecord(NamedHealthRecord.fromMap(row));
+        case 'biomarker_lists':
+          _validateBiomarkerList(BiomarkerList.fromMap(row, const []));
         case 'biomarker_list_items':
           _validateBiomarkerListItem(BiomarkerListItem.fromMap(row));
         case 'lab_plan_items':
@@ -2092,8 +2088,6 @@ class HealthRepository {
             'saved',
             'imported',
           });
-        case 'biomarker_lists':
-          break;
         case 'lab_plans':
           _validateEnum(table, 'status', row['status'], const {
             'draft',
@@ -2377,6 +2371,14 @@ class HealthRepository {
     _requireOptionalPositive(record.dose, 'Health record dose');
     if (record.priority != null && record.priority! < 0) {
       throw ArgumentError('Health record priority must not be negative.');
+    }
+  }
+
+  void _validateBiomarkerList(BiomarkerList list) {
+    if (!list.deleted &&
+        list.dueIntervalDays != null &&
+        list.dueIntervalDays! <= 0) {
+      throw ArgumentError('List interval must be a positive number of days.');
     }
   }
 

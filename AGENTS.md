@@ -764,6 +764,14 @@ already knows. `biomarker_list_items.biomarker_id` stays `NOT NULL` for that
 reason. Adding a package never overwrites an entry already on the list; the
 interval and notes on it were set deliberately.
 
+**An item without an interval follows its list; it is not unscheduled.** A
+list carries its own `due_interval_days` and `BiomarkerList.intervalFor` is the
+only place the two combine — read it rather than `item.dueIntervalDays`, which
+is null for most items. Only a list *and* item both without one make an entry
+that is never due, and the lists sheet says so on the row. Before v14 the list
+had no interval, so every package member was silently never due and an overdue
+PSA never reached the planner's mandatory set.
+
 **A bundle is costed instead of its parts, never as well as them.**
 `LabPlanPricing` picks packages greedily by saving and removes their covered
 tests from the pool, so overlapping bundles (kleines ⊂ großes Blutbild) cannot

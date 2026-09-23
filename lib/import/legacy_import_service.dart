@@ -1706,6 +1706,7 @@ class LegacyImportService {
           name: (list['display_name'] ?? list['name'] ?? 'Imported checklist')
               .toString(),
           description: (list['notes'] ?? '').toString(),
+          dueIntervalDays: dueIntervalDays,
           createdAt: DateTime.tryParse('${list['created_at']}') ?? now,
           updatedAt: DateTime.tryParse('${list['updated_at']}') ?? now,
           deleted: list['deleted'] == 1,
@@ -1732,9 +1733,9 @@ class LegacyImportService {
               id: itemId,
               listId: listId,
               biomarkerId: biomarkerId,
-              dueIntervalDays:
-                  _double(entries[index]['due_duration'])?.toInt() ??
-                  dueIntervalDays,
+              // Only an entry's own override is kept on the item; the rest
+              // follow the list, so editing its schedule moves them all.
+              dueIntervalDays: _double(entries[index]['due_duration'])?.toInt(),
               notes: (entries[index]['notes'] ?? '').toString(),
               createdAt:
                   DateTime.tryParse('${entries[index]['created_at']}') ?? now,

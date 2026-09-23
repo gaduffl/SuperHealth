@@ -53,6 +53,8 @@ void main() {
         version: 3,
         onCreate: (db, _) async {
           await db.execute(legacyBiomarkersTable);
+          await db.execute(legacyBiomarkerListsTable);
+          await db.execute(legacyBiomarkerListItemsTable);
           await db.execute('''
             CREATE TABLE profiles (
               id TEXT PRIMARY KEY,

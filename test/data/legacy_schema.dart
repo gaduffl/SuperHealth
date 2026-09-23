@@ -51,3 +51,28 @@ const legacyLabPlansTable = '''
     deleted INTEGER NOT NULL DEFAULT 0
   )
 ''';
+
+const legacyBiomarkerListsTable = '''
+  CREATE TABLE biomarker_lists (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+  )
+''';
+
+const legacyBiomarkerListItemsTable = '''
+  CREATE TABLE biomarker_list_items (
+    id TEXT PRIMARY KEY,
+    list_id TEXT NOT NULL,
+    biomarker_id TEXT NOT NULL,
+    due_interval_days INTEGER,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+  )
+''';
