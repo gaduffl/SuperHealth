@@ -22,6 +22,8 @@ void main() {
           version: 12,
           onCreate: (db, _) async {
             await db.execute(legacyBiomarkersTable);
+            await db.execute(legacyBiomarkerListsTable);
+            await db.execute(legacyBiomarkerListItemsTable);
             await db.insert('biomarkers', {
               'id': 'legacy-homa',
               'canonical_name': 'homa_ir',

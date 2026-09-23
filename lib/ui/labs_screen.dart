@@ -26,6 +26,7 @@ import 'biomarker_lists_sheet.dart';
 import 'biomarker_trend_notes.dart';
 import 'charts.dart';
 import 'common.dart';
+import 'design.dart';
 import 'biomarker_package_screen.dart';
 import 'dialogs.dart';
 import 'lab_price_screen.dart';
@@ -797,7 +798,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                           ),
                           title: Text(due.biomarker.displayName),
                           subtitle: Text(
-                            '${listMembershipLabel(AppLocalizations.of(context), due.listNames)} · ${_labsText(context, 'every ${due.intervalDays} days', 'alle ${due.intervalDays} Tage')} · '
+                            '${listMembershipLabel(AppLocalizations.of(context), due.listNames)} · ${retestIntervalLabel(AppLocalizations.of(context), due.intervalDays)} · '
                             '${due.lastMeasuredAt == null ? _labsText(context, 'never measured', 'noch nie gemessen') : _labsText(context, '${due.daysOverdue} days overdue', '${due.daysOverdue} Tage überfällig')}',
                           ),
                           trailing: const Icon(Icons.chevron_right),
@@ -3154,8 +3155,17 @@ class _PlanTiers extends StatelessWidget {
     final dueByBiomarker = {
       for (final due in controller.dueBiomarkers) due.biomarker.id: due,
     };
+    final planned = {for (final item in plan.items) item.biomarkerId};
+    // A plan is a snapshot; a marker that fell due after it was drafted is
+    // nowhere in it. Said here, because a checklist that looks complete is
+    // exactly how an overdue test goes unordered.
+    final missingDue = [
+      for (final due in controller.dueBiomarkers)
+        if (!planned.contains(due.biomarker.id)) due,
+    ];
     return Column(
       children: [
+        if (missingDue.isNotEmpty) _MissingDueNotice(missing: missingDue),
         for (final tier in LabTier.values)
           Builder(
             builder: (context) {
@@ -3284,6 +3294,43 @@ class _PlanTiers extends StatelessWidget {
       'Umfassend (enthält alle)',
     ),
   };
+}
+
+class _MissingDueNotice extends StatelessWidget {
+  const _MissingDueNotice({required this.missing});
+
+  final List<DueBiomarker> missing;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final names = missing.map((due) => due.biomarker.displayName).join(', ');
+    return SurfaceCard(
+      margin: const EdgeInsets.only(top: 4, bottom: 8),
+      padding: const EdgeInsets.all(12),
+      color: colors.errorContainer,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.event_busy_outlined, color: colors.onErrorContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _labsText(
+                context,
+                'Due now but not in this plan: $names. '
+                    'Add them to the lab order or draft a new plan.',
+                'Jetzt fällig, aber nicht in diesem Plan: $names. '
+                    'Zur Laboranforderung hinzufügen oder einen neuen Plan '
+                    'erstellen.',
+              ),
+              style: TextStyle(color: colors.onErrorContainer),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _PlanBiomarkerTitle extends StatelessWidget {

@@ -229,7 +229,7 @@ void main() {
 
     expect(find.text('Annual baseline'), findsOneWidget);
     expect(find.text('Iron follow-up'), findsOneWidget);
-    expect(find.text('Already on this list · every 365 days'), findsOneWidget);
+    expect(find.text('Already on this list · every year'), findsOneWidget);
     final boxes = tester
         .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
         .toList();

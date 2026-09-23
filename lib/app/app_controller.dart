@@ -1877,6 +1877,7 @@ class AppController extends ChangeNotifier {
   Future<BiomarkerList> createBiomarkerList({
     required String name,
     String description = '',
+    int? dueIntervalDays,
   }) async {
     final now = DateTime.now();
     final list = BiomarkerList(
@@ -1884,6 +1885,7 @@ class AppController extends ChangeNotifier {
       profileId: _profileId,
       name: name.trim(),
       description: description.trim(),
+      dueIntervalDays: dueIntervalDays,
       createdAt: now,
       updatedAt: now,
     );
@@ -1895,16 +1897,40 @@ class AppController extends ChangeNotifier {
     return list;
   }
 
-  Future<void> updateBiomarkerList(BiomarkerList list) async {
+  /// Saves [list]'s own fields.
+  ///
+  /// With [resetItemIntervals], every item's own interval is cleared so the
+  /// whole list follows its schedule — the one-step path for a list whose
+  /// items each carry a copy of the same interval. Otherwise items are left
+  /// untouched, so an unchanged item does not manufacture sync work.
+  Future<void> updateBiomarkerList(
+    BiomarkerList list, {
+    bool resetItemIntervals = false,
+  }) async {
+    final now = DateTime.now();
     await repository.saveBiomarkerList(
       BiomarkerList(
         id: list.id,
         profileId: list.profileId,
         name: list.name.trim(),
         description: list.description.trim(),
+        dueIntervalDays: list.dueIntervalDays,
         createdAt: list.createdAt,
-        updatedAt: DateTime.now(),
-        items: list.items,
+        updatedAt: now,
+        items: resetItemIntervals
+            ? [
+                for (final item in list.items)
+                  if (item.dueIntervalDays != null)
+                    BiomarkerListItem(
+                      id: item.id,
+                      listId: item.listId,
+                      biomarkerId: item.biomarkerId,
+                      notes: item.notes,
+                      createdAt: item.createdAt,
+                      updatedAt: now,
+                    ),
+              ]
+            : const [],
         deleted: list.deleted,
       ),
     );
@@ -2048,6 +2074,11 @@ class AppController extends ChangeNotifier {
     }
     return (added: added, removed: removed);
   });
+
+  /// When [biomarkerId] was last measured, including calculated results.
+  DateTime? lastMeasuredAt(String biomarkerId) => measurements
+      .firstWhereOrNull((item) => item.biomarkerId == biomarkerId)
+      ?.takenAt;
 
   Future<void> removeBiomarkerListItem(BiomarkerListItem item) async {
     await repository.softDelete('biomarker_list_items', item.id);

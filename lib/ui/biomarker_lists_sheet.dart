@@ -22,6 +22,27 @@ Future<void> showBiomarkerListsSheet(
   ),
 );
 
+/// Names a retest interval the way a person would say it.
+///
+/// Stored in days, because that is what due arithmetic needs, but "every 365
+/// days" reads like a machine setting where "every year" reads like a plan.
+String retestIntervalLabel(AppLocalizations strings, int days) {
+  String unit(int count, String one, String many, String einer, String viele) =>
+      count == 1
+      ? strings.pick('Every $one', einer)
+      : strings.pick('Every $count $many', 'Alle $count $viele');
+  if (days % 365 == 0) {
+    return unit(days ~/ 365, 'year', 'years', 'Jährlich', 'Jahre');
+  }
+  if (days % 30 == 0) {
+    return unit(days ~/ 30, 'month', 'months', 'Monatlich', 'Monate');
+  }
+  if (days % 7 == 0) {
+    return unit(days ~/ 7, 'week', 'weeks', 'Wöchentlich', 'Wochen');
+  }
+  return unit(days, 'day', 'days', 'Täglich', 'Tage');
+}
+
 class _BiomarkerListsSheet extends StatelessWidget {
   const _BiomarkerListsSheet({required this.controller});
 
@@ -48,13 +69,17 @@ class _BiomarkerListsSheet extends StatelessWidget {
                     Text(
                       _listsText(
                         context,
-                        'Reusable checklists with profile-specific retest intervals.',
-                        'Wiederverwendbare Checklisten mit profilspezifischen Wiederholungsintervallen.',
+                        'Each list is a retest schedule. Its biomarkers follow '
+                            'the list’s interval unless one has its own.',
+                        'Jede Liste ist ein Wiederholungsplan. Ihre Biomarker '
+                            'folgen dem Intervall der Liste, außer einer hat '
+                            'ein eigenes.',
                       ),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: () => _editList(context),
                 icon: const Icon(Icons.add),
@@ -99,57 +124,118 @@ class _BiomarkerListsSheet extends StatelessWidget {
   }) async {
     final name = TextEditingController(text: existing?.name);
     final description = TextEditingController(text: existing?.description);
+    // A new list is almost always a recall schedule, and one created without
+    // an interval would silently never make anything due.
+    final interval = _IntervalChoice(
+      existing == null ? 365 : existing.dueIntervalDays,
+    );
+    final ownIntervals =
+        existing?.items.where((item) => item.dueIntervalDays != null).length ??
+        0;
+    var resetItemIntervals = false;
     final save = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(
-          existing == null
-              ? _listsText(
-                  context,
-                  'Create biomarker list',
-                  'Biomarkerliste erstellen',
-                )
-              : _listsText(context, 'Edit list', 'Liste bearbeiten'),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: name,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: _listsText(context, 'Name *', 'Name *'),
-              ),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(
+            existing == null
+                ? _listsText(
+                    context,
+                    'Create biomarker list',
+                    'Biomarkerliste erstellen',
+                  )
+                : _listsText(context, 'Edit list', 'Liste bearbeiten'),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: name,
+                  autofocus: existing == null,
+                  decoration: InputDecoration(
+                    labelText: _listsText(context, 'Name *', 'Name *'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: description,
+                  maxLines: 3,
+                  minLines: 1,
+                  decoration: InputDecoration(
+                    labelText: _listsText(
+                      context,
+                      'Description',
+                      'Beschreibung',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _IntervalPicker(
+                  choice: interval,
+                  label: _listsText(
+                    context,
+                    'Retest schedule',
+                    'Wiederholungsplan',
+                  ),
+                  emptyLabel: _listsText(
+                    context,
+                    'No schedule (checklist only)',
+                    'Kein Plan (nur Checkliste)',
+                  ),
+                  helperText: _listsText(
+                    context,
+                    'Biomarkers without their own interval become due on this schedule.',
+                    'Biomarker ohne eigenes Intervall werden nach diesem Plan fällig.',
+                  ),
+                ),
+                if (ownIntervals > 0)
+                  CheckboxListTile(
+                    value: resetItemIntervals,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: Text(
+                      _listsText(
+                        context,
+                        'Apply to every biomarker',
+                        'Auf alle Biomarker anwenden',
+                      ),
+                    ),
+                    subtitle: Text(
+                      _listsText(
+                        context,
+                        'Clears the own interval of $ownIntervals biomarker(s) so they follow the list.',
+                        'Entfernt das eigene Intervall von $ownIntervals Biomarker(n), damit sie der Liste folgen.',
+                      ),
+                    ),
+                    onChanged: (value) =>
+                        setState(() => resetItemIntervals = value ?? false),
+                  ),
+              ],
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: description,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: _listsText(context, 'Description', 'Beschreibung'),
-              ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(_listsText(context, 'Cancel', 'Abbrechen')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(_listsText(context, 'Save', 'Speichern')),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(_listsText(context, 'Cancel', 'Abbrechen')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(_listsText(context, 'Save', 'Speichern')),
-          ),
-        ],
       ),
     );
     if (!context.mounted) return;
     try {
       if (save == true && name.text.trim().isNotEmpty) {
+        interval.requireValid(context);
         if (existing == null) {
           await controller.createBiomarkerList(
             name: name.text,
             description: description.text,
+            dueIntervalDays: interval.days,
           );
         } else {
           await controller.updateBiomarkerList(
@@ -158,10 +244,12 @@ class _BiomarkerListsSheet extends StatelessWidget {
               profileId: existing.profileId,
               name: name.text,
               description: description.text,
+              dueIntervalDays: interval.days,
               createdAt: existing.createdAt,
               updatedAt: DateTime.now(),
               items: existing.items,
             ),
+            resetItemIntervals: resetItemIntervals,
           );
         }
       }
@@ -178,12 +266,19 @@ class _BiomarkerListsSheet extends StatelessWidget {
     BiomarkerList list, {
     BiomarkerListItem? existing,
   }) async {
-    final selectableBiomarkers = controller.biomarkers
-        .where(
-          (biomarker) =>
-              !biomarker.isCalculated || biomarker.id == existing?.biomarkerId,
-        )
-        .toList(growable: false);
+    final selectableBiomarkers =
+        controller.biomarkers
+            .where(
+              (biomarker) =>
+                  !biomarker.isCalculated ||
+                  biomarker.id == existing?.biomarkerId,
+            )
+            .toList()
+          ..sort(
+            (a, b) => a.displayName.toLowerCase().compareTo(
+              b.displayName.toLowerCase(),
+            ),
+          );
     if (selectableBiomarkers.isEmpty) return;
     var biomarkerId = existing?.biomarkerId;
     biomarkerId ??= selectableBiomarkers
@@ -204,10 +299,11 @@ class _BiomarkerListsSheet extends StatelessWidget {
       );
       return;
     }
-    final interval = TextEditingController(
-      text: existing?.dueIntervalDays?.toString() ?? '365',
-    );
+    // Empty follows the list, so a new item needs no interval of its own.
+    final interval = _IntervalChoice(existing?.dueIntervalDays);
     final notes = TextEditingController(text: existing?.notes);
+    final strings = AppLocalizations.of(context);
+    final listSchedule = list.dueIntervalDays;
     final save = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -221,54 +317,67 @@ class _BiomarkerListsSheet extends StatelessWidget {
                     'Listeneintrag bearbeiten',
                   ),
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: biomarkerId,
-                isExpanded: true,
-                decoration: InputDecoration(
-                  labelText: _listsText(context, 'Biomarker', 'Biomarker'),
-                ),
-                items: [
-                  for (final biomarker in selectableBiomarkers)
-                    if (biomarker.id == existing?.biomarkerId ||
-                        !list.items.any(
-                          (item) => item.biomarkerId == biomarker.id,
-                        ))
-                      DropdownMenuItem(
-                        value: biomarker.id,
-                        child: Text(biomarker.displayName),
-                      ),
-                ],
-                onChanged: (value) => setState(() => biomarkerId = value),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: interval,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: _listsText(
-                    context,
-                    'Retest interval (days)',
-                    'Wiederholungsintervall (Tage)',
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: biomarkerId,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: _listsText(context, 'Biomarker', 'Biomarker'),
                   ),
-                  helperText: _listsText(
+                  items: [
+                    for (final biomarker in selectableBiomarkers)
+                      if (biomarker.id == existing?.biomarkerId ||
+                          !list.items.any(
+                            (item) => item.biomarkerId == biomarker.id,
+                          ))
+                        DropdownMenuItem(
+                          value: biomarker.id,
+                          child: Text(biomarker.displayName),
+                        ),
+                  ],
+                  onChanged: (value) => setState(() => biomarkerId = value),
+                ),
+                const SizedBox(height: 10),
+                _IntervalPicker(
+                  choice: interval,
+                  label: _listsText(
                     context,
-                    'Leave empty to keep the item without due alerts.',
-                    'Leer lassen, um den Eintrag ohne Fälligkeitshinweise zu behalten.',
+                    'Retest interval',
+                    'Wiederholungsintervall',
+                  ),
+                  emptyLabel: listSchedule == null
+                      ? _listsText(
+                          context,
+                          'Follow list (no schedule)',
+                          'Wie die Liste (kein Plan)',
+                        )
+                      : _listsText(
+                          context,
+                          'Follow list (${retestIntervalLabel(strings, listSchedule).toLowerCase()})',
+                          'Wie die Liste (${retestIntervalLabel(strings, listSchedule).toLowerCase()})',
+                        ),
+                  helperText: listSchedule == null
+                      ? _listsText(
+                          context,
+                          'This list has no schedule, so the biomarker is only due with an interval of its own.',
+                          'Diese Liste hat keinen Plan; der Biomarker wird nur mit eigenem Intervall fällig.',
+                        )
+                      : null,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: notes,
+                  maxLines: 2,
+                  minLines: 1,
+                  decoration: InputDecoration(
+                    labelText: _listsText(context, 'Notes', 'Notizen'),
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: notes,
-                maxLines: 2,
-                decoration: InputDecoration(
-                  labelText: _listsText(context, 'Notes', 'Notizen'),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -286,18 +395,7 @@ class _BiomarkerListsSheet extends StatelessWidget {
     if (!context.mounted) return;
     try {
       if (save == true && biomarkerId != null) {
-        final parsed = interval.text.trim().isEmpty
-            ? null
-            : int.tryParse(interval.text.trim());
-        if (parsed != null && parsed <= 0) {
-          throw StateError(
-            _listsText(
-              context,
-              'The retest interval must be a positive number.',
-              'Das Wiederholungsintervall muss positiv sein.',
-            ),
-          );
-        }
+        interval.requireValid(context);
         final biomarker = controller.biomarkers.firstWhere(
           (item) => item.id == biomarkerId,
         );
@@ -311,14 +409,13 @@ class _BiomarkerListsSheet extends StatelessWidget {
         await controller.setBiomarkerListItem(
           list: currentList,
           biomarker: biomarker,
-          dueIntervalDays: parsed,
+          dueIntervalDays: interval.days,
           notes: notes.text,
         );
       }
     } on Object catch (error) {
       if (context.mounted) await showAppError(context, error);
     } finally {
-      interval.dispose();
       notes.dispose();
     }
   }
@@ -398,6 +495,140 @@ class _BiomarkerListsSheet extends StatelessWidget {
   }
 }
 
+/// The interval a picker settled on, read by the dialog that owns it.
+class _IntervalChoice {
+  _IntervalChoice(this.days);
+
+  /// Null means the picker's empty option.
+  int? days;
+  bool valid = true;
+
+  void requireValid(BuildContext context) {
+    if (valid) return;
+    throw StateError(
+      _listsText(
+        context,
+        'The retest interval must be a positive whole number of days.',
+        'Das Wiederholungsintervall muss eine positive ganze Zahl von Tagen sein.',
+      ),
+    );
+  }
+}
+
+/// Common intervals as a choice, with a custom number of days as the escape.
+///
+/// A bare "days" box made every schedule an arithmetic exercise — a year is
+/// 365, six months is what exactly — and made "no schedule" an empty field
+/// that looked like something had been forgotten.
+class _IntervalPicker extends StatefulWidget {
+  const _IntervalPicker({
+    required this.choice,
+    required this.label,
+    required this.emptyLabel,
+    this.helperText,
+  });
+
+  final _IntervalChoice choice;
+  final String label;
+  final String emptyLabel;
+  final String? helperText;
+
+  @override
+  State<_IntervalPicker> createState() => _IntervalPickerState();
+}
+
+class _IntervalPickerState extends State<_IntervalPicker> {
+  static const _presets = [30, 90, 180, 365, 730];
+  // Sentinels rather than null: 0 and negatives are never a stored interval.
+  static const _empty = 0;
+  static const _custom = -1;
+
+  late int _selected;
+  late final TextEditingController _days;
+
+  @override
+  void initState() {
+    super.initState();
+    final days = widget.choice.days;
+    _selected = days == null
+        ? _empty
+        : _presets.contains(days)
+        ? days
+        : _custom;
+    _days = TextEditingController(text: _selected == _custom ? '$days' : '');
+  }
+
+  @override
+  void dispose() {
+    _days.dispose();
+    super.dispose();
+  }
+
+  void _update() {
+    if (_selected == _custom) {
+      final parsed = int.tryParse(_days.text.trim());
+      widget.choice
+        ..days = parsed
+        ..valid = parsed != null && parsed > 0;
+    } else {
+      widget.choice
+        ..days = _selected == _empty ? null : _selected
+        ..valid = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DropdownButtonFormField<int>(
+          initialValue: _selected,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: widget.label,
+            helperText: widget.helperText,
+            helperMaxLines: 3,
+          ),
+          items: [
+            DropdownMenuItem(value: _empty, child: Text(widget.emptyLabel)),
+            for (final days in _presets)
+              DropdownMenuItem(
+                value: days,
+                child: Text(retestIntervalLabel(strings, days)),
+              ),
+            DropdownMenuItem(
+              value: _custom,
+              child: Text(strings.pick('Custom…', 'Eigenes…')),
+            ),
+          ],
+          onChanged: (value) => setState(() {
+            _selected = value ?? _empty;
+            _update();
+          }),
+        ),
+        if (_selected == _custom)
+          TextField(
+            controller: _days,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: strings.pick('Interval in days', 'Intervall in Tagen'),
+              errorText: widget.choice.valid || _days.text.isEmpty
+                  ? null
+                  : strings.pick(
+                      'Enter a positive whole number',
+                      'Positive ganze Zahl eingeben',
+                    ),
+            ),
+            onChanged: (_) => setState(_update),
+          ),
+      ],
+    );
+  }
+}
+
 class _ListCard extends StatelessWidget {
   const _ListCard({
     required this.list,
@@ -418,93 +649,164 @@ class _ListCard extends StatelessWidget {
   final ValueChanged<BiomarkerListItem> onEditItem;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: ExpansionTile(
-      leading: const Icon(Icons.checklist_outlined),
-      title: Text(list.name),
-      subtitle: Text(
-        '${_listsText(context, '${list.items.length} biomarkers', '${list.items.length} Biomarker')}'
-        '${list.description.isEmpty ? '' : ' · ${list.description}'}',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: PopupMenuButton<String>(
-        onSelected: (value) => value == 'edit' ? onEdit() : onDelete(),
-        itemBuilder: (context) => [
-          PopupMenuItem(
-            value: 'edit',
-            child: Text(_listsText(context, 'Edit list', 'Liste bearbeiten')),
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final rows = [
+      for (final item in list.items)
+        (
+          item: item,
+          name: _biomarkerName(context, item.biomarkerId),
+          lastMeasured: controller.lastMeasuredAt(item.biomarkerId),
+        ),
+    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final dueCount = rows.where((row) {
+      final due = list.dueDateFor(row.item, row.lastMeasured);
+      return due != null && !due.isAfter(now);
+    }).length;
+    final unscheduled = rows
+        .where((row) => list.intervalFor(row.item) == null)
+        .length;
+    final schedule = list.dueIntervalDays;
+    return Card(
+      child: ExpansionTile(
+        leading: const Icon(Icons.checklist_outlined),
+        title: Text(list.name),
+        subtitle: Text(
+          [
+            schedule == null
+                ? _listsText(context, 'No schedule', 'Kein Plan')
+                : retestIntervalLabel(strings, schedule),
+            _listsText(
+              context,
+              '${rows.length} biomarkers',
+              '${rows.length} Biomarker',
+            ),
+            if (dueCount > 0)
+              _listsText(context, '$dueCount due', '$dueCount fällig'),
+          ].join(' · '),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: PopupMenuButton<String>(
+          tooltip: _listsText(context, 'List actions', 'Listenaktionen'),
+          onSelected: (value) => value == 'edit' ? onEdit() : onDelete(),
+          itemBuilder: (context) => [
+            PopupMenuItem(
+              value: 'edit',
+              child: Text(_listsText(context, 'Edit list', 'Liste bearbeiten')),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              child: Text(_listsText(context, 'Delete list', 'Liste löschen')),
+            ),
+          ],
+        ),
+        children: [
+          if (list.description.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  list.description,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ),
+          // The schedule gets its own labelled row: it used to exist only as a
+          // copy inside every item, with nowhere to see or change it for the
+          // list as a whole.
+          ListTile(
+            leading: Icon(
+              Icons.event_repeat_outlined,
+              color: schedule == null ? colors.error : colors.primary,
+            ),
+            title: Text(
+              schedule == null
+                  ? _listsText(
+                      context,
+                      'No retest schedule',
+                      'Kein Wiederholungsplan',
+                    )
+                  : _listsText(
+                      context,
+                      'Retest schedule: ${retestIntervalLabel(strings, schedule).toLowerCase()}',
+                      'Wiederholungsplan: ${retestIntervalLabel(strings, schedule).toLowerCase()}',
+                    ),
+            ),
+            subtitle: Text(
+              unscheduled > 0
+                  ? _listsText(
+                      context,
+                      '$unscheduled biomarker(s) never become due until the list or the biomarker has an interval.',
+                      '$unscheduled Biomarker werden nie fällig, bis die Liste oder der Biomarker ein Intervall hat.',
+                    )
+                  : _listsText(
+                      context,
+                      'Biomarkers without their own interval follow this.',
+                      'Biomarker ohne eigenes Intervall folgen diesem Plan.',
+                    ),
+              style: unscheduled > 0 ? TextStyle(color: colors.error) : null,
+            ),
+            trailing: TextButton(
+              onPressed: onEdit,
+              child: Text(_listsText(context, 'Change', 'Ändern')),
+            ),
           ),
-          PopupMenuItem(
-            value: 'delete',
-            child: Text(_listsText(context, 'Delete list', 'Liste löschen')),
+          const Divider(height: 1),
+          for (final row in rows)
+            _ItemTile(
+              list: list,
+              item: row.item,
+              name: row.name,
+              lastMeasured: row.lastMeasured,
+              now: now,
+              onTap: () => onEditItem(row.item),
+              onRemove: () => controller.removeBiomarkerListItem(row.item),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  TextButton.icon(
+                    onPressed: onAddItem,
+                    icon: const Icon(Icons.add),
+                    label: Text(
+                      _listsText(
+                        context,
+                        'Add biomarker',
+                        'Biomarker hinzufügen',
+                      ),
+                    ),
+                  ),
+                  // A package is expanded into its members rather than stored
+                  // as one entry: "due" is a per-marker question, and each
+                  // member follows the list unless given its own interval.
+                  if (controller.biomarkerPackages.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: onAddPackage,
+                      icon: const Icon(Icons.inventory_2_outlined),
+                      label: Text(
+                        _listsText(
+                          context,
+                          'Add a package',
+                          'Paket hinzufügen',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
-      children: [
-        for (final item in list.items)
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.science_outlined),
-            title: Text(_biomarkerName(context, item.biomarkerId)),
-            subtitle: Text(
-              [
-                if (item.dueIntervalDays != null)
-                  _listsText(
-                    context,
-                    'Every ${item.dueIntervalDays} days',
-                    'Alle ${item.dueIntervalDays} Tage',
-                  ),
-                if (item.notes.isNotEmpty) item.notes,
-              ].join(' · '),
-            ),
-            onTap: () => onEditItem(item),
-            trailing: IconButton(
-              tooltip: _listsText(
-                context,
-                'Remove from list',
-                'Aus Liste entfernen',
-              ),
-              icon: const Icon(Icons.remove_circle_outline),
-              onPressed: () => controller.removeBiomarkerListItem(item),
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Wrap(
-              spacing: 8,
-              children: [
-                TextButton.icon(
-                  onPressed: onAddItem,
-                  icon: const Icon(Icons.add),
-                  label: Text(
-                    _listsText(
-                      context,
-                      'Add biomarker',
-                      'Biomarker hinzufügen',
-                    ),
-                  ),
-                ),
-                // A package is expanded into its members rather than stored as
-                // one entry: "due" is a per-marker question, and each member
-                // keeps its own interval afterwards.
-                if (controller.biomarkerPackages.isNotEmpty)
-                  TextButton.icon(
-                    onPressed: onAddPackage,
-                    icon: const Icon(Icons.inventory_2_outlined),
-                    label: Text(
-                      _listsText(context, 'Add a package', 'Paket hinzufügen'),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
+    );
+  }
 
   String _biomarkerName(BuildContext context, String id) {
     for (final biomarker in controller.biomarkers) {
@@ -514,6 +816,101 @@ class _ListCard extends StatelessWidget {
       context,
       'Missing catalog item',
       'Fehlender Katalogeintrag',
+    );
+  }
+}
+
+/// One biomarker on a list: where its schedule comes from and when it is due.
+class _ItemTile extends StatelessWidget {
+  const _ItemTile({
+    required this.list,
+    required this.item,
+    required this.name,
+    required this.lastMeasured,
+    required this.now,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  final BiomarkerList list;
+  final BiomarkerListItem item;
+  final String name;
+  final DateTime? lastMeasured;
+  final DateTime now;
+  final VoidCallback onTap;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
+    final interval = list.intervalFor(item);
+    final dueDate = list.dueDateFor(item, lastMeasured);
+    final isDue = dueDate != null && !dueDate.isAfter(now);
+    final schedule = interval == null
+        ? _listsText(context, 'No schedule, never due', 'Kein Plan, nie fällig')
+        : item.dueIntervalDays == null
+        ? _listsText(
+            context,
+            '${retestIntervalLabel(strings, interval)} (list)',
+            '${retestIntervalLabel(strings, interval)} (Liste)',
+          )
+        : _listsText(
+            context,
+            '${retestIntervalLabel(strings, interval)} (own)',
+            '${retestIntervalLabel(strings, interval)} (eigenes)',
+          );
+    final measured = lastMeasured;
+    final status = measured == null
+        ? _listsText(context, 'Never measured', 'Noch nie gemessen')
+        : dueDate == null
+        ? _listsText(
+            context,
+            'Last ${strings.formatHistoryDate(measured)}',
+            'Zuletzt ${strings.formatHistoryDate(measured)}',
+          )
+        : isDue
+        ? _listsText(
+            context,
+            'Due since ${strings.formatHistoryDate(dueDate)}',
+            'Fällig seit ${strings.formatHistoryDate(dueDate)}',
+          )
+        : _listsText(
+            context,
+            'Next ${strings.formatHistoryDate(dueDate)}',
+            'Nächste ${strings.formatHistoryDate(dueDate)}',
+          );
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        interval == null
+            ? Icons.event_busy_outlined
+            : isDue
+            ? Icons.error_outline
+            : Icons.event_available_outlined,
+        color: isDue
+            ? colors.error
+            : interval == null
+            ? colors.onSurfaceVariant
+            : colors.primary,
+      ),
+      title: Text(name),
+      subtitle: Text(
+        [schedule, status, if (item.notes.isNotEmpty) item.notes].join(' · '),
+        style: interval == null || isDue
+            ? TextStyle(
+                color: interval == null
+                    ? colors.onSurfaceVariant
+                    : colors.error,
+              )
+            : null,
+      ),
+      onTap: onTap,
+      trailing: IconButton(
+        tooltip: _listsText(context, 'Remove from list', 'Aus Liste entfernen'),
+        icon: const Icon(Icons.remove_circle_outline),
+        onPressed: onRemove,
+      ),
     );
   }
 }
@@ -531,7 +928,7 @@ Future<void> showAddBiomarkerToListDialog(
 ) async {
   if (biomarker.isCalculated) return;
   final selected = _listIdsHolding(controller, biomarker);
-  final interval = TextEditingController(text: '365');
+  final interval = _IntervalChoice(null);
   try {
     final save = await showDialog<bool>(
       context: context,
@@ -603,21 +1000,22 @@ Future<void> showAddBiomarkerToListDialog(
                       ),
                     ),
                   ),
-                  TextField(
-                    controller: interval,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: _listsText(
-                        context,
-                        'Retest interval (days)',
-                        'Wiederholungsintervall (Tage)',
-                      ),
-                      helperText: _listsText(
-                        context,
-                        'Used only where it is newly added. Empty means no due alerts.',
-                        'Gilt nur für neu hinzugefügte Listen. Leer bedeutet keine Fälligkeitshinweise.',
-                      ),
-                      helperMaxLines: 2,
+                  _IntervalPicker(
+                    choice: interval,
+                    label: _listsText(
+                      context,
+                      'Retest interval',
+                      'Wiederholungsintervall',
+                    ),
+                    emptyLabel: _listsText(
+                      context,
+                      'Follow each list’s schedule',
+                      'Plan der jeweiligen Liste',
+                    ),
+                    helperText: _listsText(
+                      context,
+                      'Used only where it is newly added.',
+                      'Gilt nur für neu hinzugefügte Listen.',
                     ),
                   ),
                 ],
@@ -655,38 +1053,17 @@ Future<void> showAddBiomarkerToListDialog(
               if (removed > 0) 'aus $removed entfernt',
             ].join(', '),
     );
-    final raw = interval.text.trim();
-    final parsed = raw.isEmpty ? null : int.tryParse(raw);
-    if (raw.isNotEmpty && parsed == null) {
-      throw StateError(
-        _listsText(
-          context,
-          'The retest interval must be a whole number of days.',
-          'Das Wiederholungsintervall muss eine ganze Zahl von Tagen sein.',
-        ),
-      );
-    }
-    if (parsed != null && parsed <= 0) {
-      throw StateError(
-        _listsText(
-          context,
-          'The retest interval must be a positive number.',
-          'Das Wiederholungsintervall muss positiv sein.',
-        ),
-      );
-    }
+    interval.requireValid(context);
     final result = await controller.setBiomarkerListMemberships(
       biomarker: biomarker,
       listIds: selected,
-      dueIntervalDays: parsed,
+      dueIntervalDays: interval.days,
     );
     messenger.showSnackBar(
       SnackBar(content: Text(message(result.added, result.removed))),
     );
   } on Object catch (error) {
     if (context.mounted) await showAppError(context, error);
-  } finally {
-    interval.dispose();
   }
 }
 
@@ -707,14 +1084,20 @@ String _membershipLabel(
     final count = list.items.length;
     return _listsText(context, '$count test(s)', '$count Test(s)');
   }
-  final days = item.dueIntervalDays;
-  return days == null
-      ? _listsText(context, 'Already on this list', 'Bereits auf dieser Liste')
-      : _listsText(
-          context,
-          'Already on this list · every $days days',
-          'Bereits auf dieser Liste · alle $days Tage',
-        );
+  final days = list.intervalFor(item);
+  if (days == null) {
+    return _listsText(
+      context,
+      'Already on this list · no schedule',
+      'Bereits auf dieser Liste · kein Plan',
+    );
+  }
+  final label = retestIntervalLabel(AppLocalizations.of(context), days);
+  return _listsText(
+    context,
+    'Already on this list · ${label.toLowerCase()}',
+    'Bereits auf dieser Liste · ${label.toLowerCase()}',
+  );
 }
 
 /// Creates a list from inside the add-to-list dialog and ticks it.
@@ -728,6 +1111,7 @@ Future<void> _createListFor(
   void Function(void Function()) setState,
 ) async {
   final name = TextEditingController();
+  final interval = _IntervalChoice(365);
   try {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -739,12 +1123,31 @@ Future<void> _createListFor(
             'Biomarkerliste erstellen',
           ),
         ),
-        content: TextField(
-          controller: name,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: _listsText(context, 'Name *', 'Name *'),
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: name,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: _listsText(context, 'Name *', 'Name *'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _IntervalPicker(
+              choice: interval,
+              label: _listsText(
+                context,
+                'Retest schedule',
+                'Wiederholungsplan',
+              ),
+              emptyLabel: _listsText(
+                context,
+                'No schedule (checklist only)',
+                'Kein Plan (nur Checkliste)',
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -758,8 +1161,14 @@ Future<void> _createListFor(
         ],
       ),
     );
-    if (confirmed != true || name.text.trim().isEmpty) return;
-    final created = await controller.createBiomarkerList(name: name.text);
+    if (confirmed != true || name.text.trim().isEmpty || !context.mounted) {
+      return;
+    }
+    interval.requireValid(context);
+    final created = await controller.createBiomarkerList(
+      name: name.text,
+      dueIntervalDays: interval.days,
+    );
     setState(() => selected.add(created.id));
   } on Object catch (error) {
     if (context.mounted) await showAppError(context, error);

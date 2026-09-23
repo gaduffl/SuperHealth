@@ -207,4 +207,111 @@ void main() {
 
     expect(due.map((item) => item.biomarker.id), ['b12', 'ferritin']);
   });
+
+  group('list schedule', () {
+    Future<String> scheduledList(
+      String profileId, {
+      int? listInterval,
+      int? itemInterval,
+    }) async {
+      final listId = repository.newId();
+      await repository.saveBiomarkerList(
+        BiomarkerList(
+          id: listId,
+          profileId: profileId,
+          name: 'Annual',
+          dueIntervalDays: listInterval,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.saveBiomarkerListItem(
+        BiomarkerListItem(
+          id: repository.newId(),
+          listId: listId,
+          biomarkerId: 'psa',
+          dueIntervalDays: itemInterval,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      return listId;
+    }
+
+    Future<String> measuredPsa({required int daysAgo}) async {
+      final profile = await repository.createProfile(displayName: 'Alex');
+      await repository.saveBiomarker(
+        Biomarker(
+          id: 'psa',
+          canonicalName: 'psa',
+          displayName: 'PSA',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.saveMeasurement(
+        Measurement(
+          id: repository.newId(),
+          profileId: profile.id,
+          biomarkerId: 'psa',
+          takenAt: now.subtract(Duration(days: daysAgo)),
+          value: 0.8,
+          unit: 'ng/mL',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      return profile.id;
+    }
+
+    test('an item without its own interval follows the list', () async {
+      // The case that kept an overdue marker off a lab plan: added from a
+      // package with no interval of its own onto an annual list.
+      final profileId = await measuredPsa(daysAgo: 400);
+      await scheduledList(profileId, listInterval: 365);
+
+      final due = await repository.dueBiomarkers(profileId);
+
+      expect(due.single.biomarker.id, 'psa');
+      expect(due.single.intervalDays, 365);
+      expect(
+        due.single.dueDate,
+        now.subtract(const Duration(days: 400)).add(const Duration(days: 365)),
+      );
+    });
+
+    test('an item interval overrides the list schedule', () async {
+      final profileId = await measuredPsa(daysAgo: 400);
+      await scheduledList(profileId, listInterval: 365, itemInterval: 730);
+
+      expect(await repository.dueBiomarkers(profileId), isEmpty);
+    });
+
+    test(
+      'an item on an unscheduled list with no interval is never due',
+      () async {
+        final profileId = await measuredPsa(daysAgo: 4000);
+        await scheduledList(profileId);
+
+        expect(await repository.dueBiomarkers(profileId), isEmpty);
+      },
+    );
+
+    test('a list interval must be positive', () async {
+      final profile = await repository.createProfile(displayName: 'Alex');
+      expect(
+        () => repository.saveBiomarkerList(
+          BiomarkerList(
+            id: repository.newId(),
+            profileId: profile.id,
+            name: 'Broken',
+            dueIntervalDays: 0,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ),
+        throwsArgumentError,
+      );
+    });
+  });
 }

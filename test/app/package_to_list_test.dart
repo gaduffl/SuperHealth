@@ -101,6 +101,89 @@ void main() {
     expect(again.added, 0);
     expect(again.alreadyPresent, 3);
   });
+
+  test('package members follow the list schedule and applying it to every '
+      'biomarker clears their own intervals', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    final now = DateTime.now();
+    final profile = await fixture.repository.createProfile(displayName: 'A');
+    for (final id in ['psa', 'tsh']) {
+      await fixture.repository.saveBiomarker(
+        Biomarker(
+          id: id,
+          canonicalName: id,
+          displayName: id,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
+    await fixture.repository.saveBiomarkerPackage(
+      BiomarkerPackage(
+        id: 'men',
+        name: 'Men 40+',
+        createdAt: now,
+        updatedAt: now,
+      ),
+      {'psa'},
+    );
+    fixture.controller
+      ..profiles = [profile]
+      ..activeProfile = profile;
+    await fixture.controller.refreshActiveData();
+    await fixture.controller.createBiomarkerList(
+      name: 'Annual',
+      dueIntervalDays: 365,
+    );
+    await fixture.controller.addPackageToBiomarkerList(
+      list: fixture.controller.biomarkerLists.single,
+      package: fixture.controller.biomarkerPackages.single,
+    );
+    await fixture.controller.setBiomarkerListItem(
+      list: fixture.controller.biomarkerLists.single,
+      biomarker: fixture.controller.biomarkers.firstWhere(
+        (item) => item.id == 'tsh',
+      ),
+      dueIntervalDays: 730,
+    );
+
+    // Never measured and following an annual list: due, and therefore
+    // mandatory for the lab planner.
+    expect(
+      fixture.controller.dueBiomarkers.map((due) => due.biomarker.id),
+      containsAll(['psa', 'tsh']),
+    );
+    expect(
+      fixture.controller.dueBiomarkers
+          .firstWhere((due) => due.biomarker.id == 'psa')
+          .intervalDays,
+      365,
+    );
+
+    final list = fixture.controller.biomarkerLists.single;
+    await fixture.controller.updateBiomarkerList(
+      BiomarkerList(
+        id: list.id,
+        profileId: list.profileId,
+        name: list.name,
+        dueIntervalDays: 180,
+        createdAt: list.createdAt,
+        updatedAt: list.updatedAt,
+        items: list.items,
+      ),
+      resetItemIntervals: true,
+    );
+
+    final updated = fixture.controller.biomarkerLists.single;
+    expect(updated.dueIntervalDays, 180);
+    expect(updated.items, hasLength(2));
+    expect(updated.items.map((item) => item.dueIntervalDays), [null, null]);
+    expect(fixture.controller.dueBiomarkers.map((due) => due.intervalDays), [
+      180,
+      180,
+    ]);
+  });
 }
 
 class _Fixture {
