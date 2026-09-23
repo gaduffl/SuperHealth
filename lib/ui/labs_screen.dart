@@ -17,12 +17,13 @@ import '../app/app_localizations.dart';
 import '../app/long_task_guard.dart';
 import '../app/shell_navigation.dart';
 import '../biomarkers/biomarker_status_service.dart';
-import '../biomarkers/unit_conversion_service.dart';
+import '../biomarkers/biomarker_trend.dart';
 import '../domain/entities.dart';
 import '../export/lab_plan_export_service.dart';
 import 'biomarker_category_localization.dart';
 import 'biomarker_detail_sheet.dart';
 import 'biomarker_lists_sheet.dart';
+import 'biomarker_report_sheet.dart';
 import 'biomarker_trend_notes.dart';
 import 'charts.dart';
 import 'common.dart';
@@ -1646,38 +1647,17 @@ enum _ExportChoice {
   };
 }
 
-Map<String, Measurement> _latestMeasurements(
-  Iterable<Measurement> measurements,
-) {
-  final latest = <String, Measurement>{};
-  for (final measurement in measurements) {
-    final existing = latest[measurement.biomarkerId];
-    if (existing == null || measurement.takenAt.isAfter(existing.takenAt)) {
-      latest[measurement.biomarkerId] = measurement;
-    }
-  }
-  return latest;
-}
-
 Map<String, BiomarkerStatus> _biomarkerStatuses({
   required AppController controller,
   required Profile profile,
   required Map<String, Measurement> latestByBiomarker,
-}) {
-  final service = BiomarkerStatusService();
-  final now = DateTime.now();
-  return {
-    for (final biomarker in controller.biomarkers)
-      biomarker.id: service.evaluate(
-        biomarker: biomarker,
-        measurement: latestByBiomarker[biomarker.id],
-        profile: profile,
-        targets: controller.profileTargets,
-        referenceRanges: controller.biomarkerRanges,
-        now: now,
-      ),
-  };
-}
+}) => biomarkerStatusesFor(
+  biomarkers: controller.biomarkers,
+  latestByBiomarker: latestByBiomarker,
+  profile: profile,
+  targets: controller.profileTargets,
+  referenceRanges: controller.biomarkerRanges,
+);
 
 /// Lab-report import, shared by the Labs home and the biomarker workspace.
 ///
@@ -2468,7 +2448,7 @@ class _BiomarkerDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final profile = controller.activeProfile;
-    final latest = _latestMeasurements(controller.measurements);
+    final latest = latestMeasurementsByBiomarker(controller.measurements);
     final statuses = profile == null
         ? const <String, BiomarkerStatus>{}
         : _biomarkerStatuses(
@@ -2479,10 +2459,9 @@ class _BiomarkerDashboardScreen extends StatelessWidget {
     final groups = <String, List<Biomarker>>{};
     for (final biomarker in controller.biomarkers) {
       if (!latest.containsKey(biomarker.id)) continue;
-      final category = biomarker.category.trim().isEmpty
-          ? 'other'
-          : biomarker.category.trim();
-      groups.putIfAbsent(category, () => []).add(biomarker);
+      groups
+          .putIfAbsent(biomarkerDashboardCategory(biomarker), () => [])
+          .add(biomarker);
     }
     final languageCode = Localizations.localeOf(context).languageCode;
     final categories = groups.keys.toList()
@@ -2494,7 +2473,19 @@ class _BiomarkerDashboardScreen extends StatelessWidget {
       );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Dashboard')),
+      appBar: AppBar(
+        title: const Text('Dashboard'),
+        actions: [
+          // Labelled, not a bare icon: this is the path to a doctor's copy,
+          // and an icon-only action is one nobody finds on a phone.
+          if (latest.isNotEmpty)
+            TextButton.icon(
+              onPressed: () => showBiomarkerReportSheet(context, controller),
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              label: Text(_labsText(context, 'PDF', 'PDF')),
+            ),
+        ],
+      ),
       body: PageBody(
         child: RefreshIndicator(
           onRefresh: controller.refreshActiveData,
@@ -2657,7 +2648,7 @@ class _BiomarkerDashboardSection extends StatelessWidget {
     final measurements = controller.measurements
         .where((item) => item.biomarkerId == biomarker.id)
         .toList(growable: false);
-    final trend = _dashboardTrendData(
+    final trend = biomarkerTrendData(
       biomarker: biomarker,
       measurements: measurements,
       status: status,
@@ -2766,69 +2757,6 @@ class _BiomarkerDashboardSection extends StatelessWidget {
       ),
     );
   }
-}
-
-({
-  List<({DateTime day, double value})> points,
-  String unit,
-  double? rangeLow,
-  double? rangeHigh,
-})
-_dashboardTrendData({
-  required Biomarker biomarker,
-  required List<Measurement> measurements,
-  required BiomarkerStatus status,
-}) {
-  final sorted = measurements.toList()
-    ..sort((left, right) => left.takenAt.compareTo(right.takenAt));
-  final latest = sorted.last;
-  final conversions = UnitConversionService();
-  final keys = <String>[
-    biomarker.id,
-    biomarker.canonicalName,
-    biomarker.displayName,
-    ...biomarker.synonyms,
-  ];
-
-  ({List<({DateTime day, double value})> points, String unit}) build(
-    String unit,
-  ) {
-    final normalizedUnit = conversions.normalizeUnit(unit);
-    final points = <({DateTime day, double value})>[];
-    for (final measurement in sorted) {
-      if (!measurement.value.isFinite) continue;
-      final value = conversions.convertValueForBiomarkerKeys(
-        measurement.value,
-        measurement.unit,
-        normalizedUnit,
-        keys,
-      );
-      if (value?.isFinite == true) {
-        points.add((day: measurement.takenAt, value: value!));
-      }
-    }
-    return (points: points, unit: normalizedUnit);
-  }
-
-  ({List<({DateTime day, double value})> points, String unit}) selected;
-  final preferredUnit = status.unit?.trim();
-  if (preferredUnit != null && preferredUnit.isNotEmpty) {
-    final preferred = build(preferredUnit);
-    selected = preferred.points.isNotEmpty ? preferred : build(latest.unit);
-  } else {
-    selected = build(latest.unit);
-  }
-  final range = BiomarkerStatusService().convertUsedBand(
-    status: status,
-    biomarker: biomarker,
-    toUnit: selected.unit,
-  );
-  return (
-    points: selected.points,
-    unit: selected.unit,
-    rangeLow: range?.low,
-    rangeHigh: range?.high,
-  );
 }
 
 Color _biomarkerOptimalColor(BuildContext context) =>
