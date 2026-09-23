@@ -772,6 +772,18 @@ that is never due, and the lists sheet says so on the row. Before v14 the list
 had no interval, so every package member was silently never due and an overdue
 PSA never reached the planner's mandatory set.
 
+**The doctor's PDF plots what the dashboard plots.** `biomarkerTrendData` in
+`lib/biomarkers/biomarker_trend.dart` is the one place that picks a chart's
+unit, converts readings onto it and converts the band; the dashboard and
+`BiomarkerReportExportService` both call it, so a printed page cannot show a
+different scale than the screen it came from. Notes reach the page through
+`annotateBiomarkerExport`: a report comment is a letter shared by every chart
+that report fed, a reading's own note is a per-chart footnote number. A report
+comment is printed only when that report gave a value to an *included* chart,
+because it covers the whole report and can name a category the owner left out.
+The PDF is German and uses the built-in Helvetica, so its text goes through a
+Windows-1252 filter; a glyph outside it is shown as `?` rather than dropped.
+
 **A bundle is costed instead of its parts, never as well as them.**
 `LabPlanPricing` picks packages greedily by saving and removes their covered
 tests from the pool, so overlapping bundles (kleines ⊂ großes Blutbild) cannot
