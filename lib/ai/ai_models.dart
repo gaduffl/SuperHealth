@@ -207,7 +207,7 @@ class TokenUsage {
 /// Versioned from provider documentation. Unknown models intentionally receive
 /// no reasoning/tool controls until their support is known.
 class ProviderCapabilityRegistry {
-  static const version = '2026-07-29';
+  static const version = '2026-09-25';
 
   ModelCapabilities forModel(AiProvider provider, String model) =>
       switch (provider) {
@@ -217,6 +217,27 @@ class ProviderCapabilityRegistry {
       };
 
   ModelCapabilities _openAi(String id) {
+    if (const {'gpt-6-sol', 'gpt-6-luna'}.contains(id)) {
+      return const ModelCapabilities(
+        reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+        webSearch: true,
+        codeExecution: true,
+        losslessContextFile: true,
+        structuredOutput: true,
+        contextWindowTokens: 1050000,
+      );
+    }
+    // Astra documents no `none` effort, unlike the rest of its family.
+    if (id == 'gpt-6-astra') {
+      return const ModelCapabilities(
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+        webSearch: true,
+        codeExecution: true,
+        losslessContextFile: true,
+        structuredOutput: true,
+        contextWindowTokens: 1050000,
+      );
+    }
     if (const {
       'gpt-5.6',
       'gpt-5.6-sol',
