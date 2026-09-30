@@ -13,6 +13,7 @@ import 'biomarker_trend_notes.dart';
 import 'charts.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import 'interaction_findings_view.dart';
 import 'lab_report_screen.dart';
 import 'reference_range_tools.dart';
 
@@ -360,6 +361,13 @@ class _BiomarkerDetail extends StatelessWidget {
               ),
             ],
           ),
+          // Right under the name, before any value is read: a TSH that biotin
+          // may have pushed down has to be known before it is interpreted.
+          for (final finding in controller.findingsForBiomarker(biomarker.id))
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: InteractionFindingCard(finding: finding),
+            ),
           if (biomarker.description.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 10),

@@ -221,10 +221,16 @@ abstract class AiProviderClient {
   /// [onActivity] is called while a streamed response arrives. It is optional
   /// and best effort: a provider with no streaming path in this app simply
   /// never calls it, and a caller that passes nothing loses only commentary.
+  ///
+  /// When [ProviderRequest.tools] is non-empty the client runs the tool loop
+  /// itself — calling [onToolCalls] between rounds — and returns only the
+  /// final answer, because what has to be echoed back between rounds is
+  /// provider-specific and only valid verbatim.
   Future<ProviderResponse> respond(
     String apiKey,
     ProviderRequest request, {
     ProviderActivityCallback? onActivity,
+    AgentToolHandler? onToolCalls,
   });
 
   /// The provider's exact token count for the context payload, or null when
@@ -259,6 +265,25 @@ class AiProviderClientFactory {
     AiProvider.gemini => GeminiClient(_dio, _capabilities),
   };
 }
+
+/// Whether this app runs a client-side tool loop for [provider].
+///
+/// Gemini is left out deliberately, not by oversight: its stateless
+/// function-calling transcript shape is not verified here, and a guessed wire
+/// format would break the advisor outright. A provider without a loop gets
+/// the full evidence package beside the digest instead of tools.
+bool providerSupportsClientTools(AiProvider provider) => switch (provider) {
+  AiProvider.openai || AiProvider.anthropic => true,
+  AiProvider.gemini => false,
+};
+
+/// Rounds of tool calls one answer may take before the model is told to
+/// answer with what it has. One further round is allowed for that answer.
+const maxToolRounds = 10;
+
+const _toolBudgetExhausted =
+    '{"error":"Tool budget for this answer is used up. Answer now with the '
+    'information you already have, and say what you could not check."}';
 
 abstract class _BaseClient implements AiProviderClient {
   _BaseClient(this.dio, this.capabilityRegistry);
@@ -306,6 +331,11 @@ abstract class _BaseClient implements AiProviderClient {
         'Lossless context-file analysis requires code execution.',
       );
     }
+    if (request.tools.isNotEmpty && !providerSupportsClientTools(provider)) {
+      throw AiProviderException(
+        '${provider.name} has no client tool loop in this app.',
+      );
+    }
     if (request.contextFile) {
       final expected = request.contextFileSha256;
       final actual = sha256
@@ -317,6 +347,35 @@ abstract class _BaseClient implements AiProviderClient {
         );
       }
     }
+  }
+
+  /// A tool loop without a handler would stall on the first call.
+  void requireToolHandler(ProviderRequest request, AgentToolHandler? handler) {
+    if (request.tools.isNotEmpty && handler == null) {
+      throw ArgumentError('Tools were offered without a handler to run them.');
+    }
+  }
+
+  /// Runs one round, answering every call even if the handler returned fewer
+  /// results — a call left unanswered is rejected by every provider.
+  Future<List<AgentToolResult>> runToolRound(
+    List<AgentToolCall> calls,
+    int round,
+    AgentToolHandler handler,
+  ) async {
+    final results = round > maxToolRounds
+        ? const <AgentToolResult>[]
+        : await handler(calls, round);
+    final byId = {for (final result in results) result.callId: result};
+    return [
+      for (final call in calls)
+        byId[call.id] ??
+            AgentToolResult(
+              callId: call.id,
+              content: _toolBudgetExhausted,
+              isError: true,
+            ),
+    ];
   }
 
   @override
@@ -516,14 +575,41 @@ class OpenAiClient extends _BaseClient {
     String apiKey,
     ProviderRequest request, {
     ProviderActivityCallback? onActivity,
+    AgentToolHandler? onToolCalls,
   }) async {
     validate(request);
+    requireToolHandler(request, onToolCalls);
     final capabilities = capabilityRegistry.forModel(provider, request.model);
     String? contextFileId;
     try {
       if (request.contextFile) {
         contextFileId = await _uploadContext(apiKey, request.contextJson);
       }
+      final contextText = request.contextFile
+          ? 'The complete health evidence package is available in the '
+                'code-interpreter container. Locate '
+                'superhealth-context.json, use code to load every '
+                'section, verify the exact file SHA-256 '
+                '${request.contextFileSha256}, and follow the coverage '
+                'protocol before answering.'
+          : '<complete_health_context>\n${request.contextJson}'
+                '\n</complete_health_context>';
+      final digest = request.digestText;
+      // The digest leads: it is the part identical across every round of a
+      // turn, and OpenAI caches the longest matching prefix.
+      final firstTurn = digest == null
+          ? contextText
+          : [
+              '<clinical_digest>\n$digest\n</clinical_digest>',
+              if (request.contextFile || request.contextJson.isNotEmpty)
+                contextText,
+            ].join('\n\n');
+      final input = <Object?>[
+        {'role': 'user', 'content': firstTurn},
+        for (final turn in request.history)
+          {'role': turn.role, 'content': turn.content},
+        {'role': 'user', 'content': request.userPrompt},
+      ];
       final body = <String, Object?>{
         'model': request.model,
         'store': false,
@@ -548,23 +634,7 @@ class OpenAiClient extends _BaseClient {
         // The stable context leads and the varying task prompt comes last so
         // OpenAI's automatic prefix caching serves repeated calls over the
         // same evidence package. History rides as native chat turns.
-        'input': [
-          {
-            'role': 'user',
-            'content': request.contextFile
-                ? 'The complete health evidence package is available in the '
-                      'code-interpreter container. Locate '
-                      'superhealth-context.json, use code to load every '
-                      'section, verify the exact file SHA-256 '
-                      '${request.contextFileSha256}, and follow the coverage '
-                      'protocol before answering.'
-                : '<complete_health_context>\n${request.contextJson}'
-                      '\n</complete_health_context>',
-          },
-          for (final turn in request.history)
-            {'role': turn.role, 'content': turn.content},
-          {'role': 'user', 'content': request.userPrompt},
-        ],
+        'input': input,
         'max_output_tokens': request.maxOutputTokens,
       };
       if (request.reasoningLevel != null) {
@@ -582,7 +652,25 @@ class OpenAiClient extends _BaseClient {
           },
         });
       }
+      for (final spec in request.tools) {
+        tools.add({
+          'type': 'function',
+          'name': spec.name,
+          'description': spec.description,
+          'parameters': spec.inputSchema,
+          // Non-strict: strict mode rejects any schema with an optional
+          // property, and a schema error fails the whole call. The toolbox
+          // validates arguments itself and answers bad ones with an error.
+          'strict': false,
+        });
+      }
       if (tools.isNotEmpty) body['tools'] = tools;
+      // With store: false nothing persists between calls, so a reasoning
+      // model's thinking must travel with the transcript as encrypted items,
+      // or every tool round starts its reasoning from scratch.
+      if (request.tools.isNotEmpty && capabilities.reasoningLevels.isNotEmpty) {
+        body['include'] = ['reasoning.encrypted_content'];
+      }
       if (request.requireJson && capabilities.structuredOutput) {
         final schema = request.jsonSchema;
         body['text'] = {
@@ -596,59 +684,49 @@ class OpenAiClient extends _BaseClient {
                 },
         };
       }
-      final raw = await _streamResponse(apiKey, body, onActivity);
-      final status = raw['status']?.toString();
-      if (status == 'failed') {
-        final error = raw['error'];
-        throw AiProviderException(
-          error is Map && error['message'] != null
-              ? 'OpenAI request failed: ${error['message']}'
-              : 'OpenAI request failed.',
-        );
-      }
-      if (status == 'incomplete') {
-        final details = raw['incomplete_details'];
-        final reason = details is Map ? details['reason']?.toString() : null;
-        throw AiProviderException(
-          reason == 'max_output_tokens'
-              ? 'OpenAI stopped at the output token limit, so the answer is '
-                    'incomplete. Retry, or reduce the request scope.'
-              : 'OpenAI returned an incomplete response'
-                    '${reason == null ? '' : ' ($reason)'}.',
-        );
-      }
-      final textParts = <String>[];
-      final refusals = <String>[];
-      final output = raw['output'];
-      if (output is List) {
-        for (final item in output.whereType<Map>()) {
-          if (item['type'] != null && item['type'] != 'message') continue;
-          final content = item['content'];
-          if (content is! List) continue;
-          for (final block in content.whereType<Map>()) {
-            if (block['type'] == 'refusal' && block['refusal'] != null) {
-              refusals.add(block['refusal'].toString());
-            } else if (block['text'] != null) {
-              textParts.add(block['text'].toString());
-            }
-          }
+      var usage = const TokenUsage();
+      final citations = <String>{};
+      var round = 0;
+      while (true) {
+        final raw = await _streamResponse(apiKey, body, onActivity);
+        _throwIfUnfinished(raw);
+        usage = usage + (TokenUsage.fromResponse(raw) ?? const TokenUsage());
+        citations.addAll(collectUrls(raw));
+        final output = raw['output'] is List
+            ? List<Object?>.from(raw['output']! as List)
+            : const <Object?>[];
+        final calls = [
+          for (final item in output.whereType<Map>())
+            if (item['type'] == 'function_call') _toolCall(item),
+        ];
+        if (calls.isEmpty) {
+          return ProviderResponse(
+            text: _outputText(raw),
+            raw: raw,
+            responseId: raw['id']?.toString(),
+            citations: citations.toList(growable: false),
+            aggregateUsage: usage.isEmpty ? null : usage,
+            toolRounds: round,
+          );
+        }
+        round += 1;
+        if (round > maxToolRounds + 1) {
+          throw const AiProviderException(
+            'OpenAI kept calling tools without answering.',
+          );
+        }
+        final results = await runToolRound(calls, round, onToolCalls!);
+        // The model's own items go back verbatim — reasoning, calls, any
+        // preamble — followed by one output per call.
+        input.addAll(output);
+        for (final result in results) {
+          input.add({
+            'type': 'function_call_output',
+            'call_id': result.callId,
+            'output': result.content,
+          });
         }
       }
-      final text = textParts.join('\n').trim();
-      if (text.isEmpty && refusals.isNotEmpty) {
-        throw AiProviderException(
-          'OpenAI declined this request: ${refusals.join(' ')}',
-        );
-      }
-      if (text.isEmpty) {
-        throw const AiProviderException('OpenAI returned no text output.');
-      }
-      return ProviderResponse(
-        text: text,
-        raw: raw,
-        responseId: raw['id']?.toString(),
-        citations: collectUrls(raw),
-      );
     } on DioException catch (error) {
       providerError(
         'OpenAI',
@@ -666,6 +744,95 @@ class OpenAiClient extends _BaseClient {
           // The request result is more important than best-effort cleanup.
         }
       }
+    }
+  }
+
+  void _throwIfUnfinished(Map<String, Object?> raw) {
+    final status = raw['status']?.toString();
+    if (status == 'failed') {
+      final error = raw['error'];
+      throw AiProviderException(
+        error is Map && error['message'] != null
+            ? 'OpenAI request failed: ${error['message']}'
+            : 'OpenAI request failed.',
+      );
+    }
+    if (status == 'incomplete') {
+      final details = raw['incomplete_details'];
+      final reason = details is Map ? details['reason']?.toString() : null;
+      throw AiProviderException(
+        reason == 'max_output_tokens'
+            ? 'OpenAI stopped at the output token limit, so the answer is '
+                  'incomplete. Retry, or reduce the request scope.'
+            : 'OpenAI returned an incomplete response'
+                  '${reason == null ? '' : ' ($reason)'}.',
+      );
+    }
+  }
+
+  String _outputText(Map<String, Object?> raw) {
+    final textParts = <String>[];
+    final refusals = <String>[];
+    final output = raw['output'];
+    if (output is List) {
+      for (final item in output.whereType<Map>()) {
+        if (item['type'] != null && item['type'] != 'message') continue;
+        final content = item['content'];
+        if (content is! List) continue;
+        for (final block in content.whereType<Map>()) {
+          if (block['type'] == 'refusal' && block['refusal'] != null) {
+            refusals.add(block['refusal'].toString());
+          } else if (block['text'] != null) {
+            textParts.add(block['text'].toString());
+          }
+        }
+      }
+    }
+    final text = textParts.join('\n').trim();
+    if (text.isEmpty && refusals.isNotEmpty) {
+      throw AiProviderException(
+        'OpenAI declined this request: ${refusals.join(' ')}',
+      );
+    }
+    if (text.isEmpty) {
+      throw const AiProviderException('OpenAI returned no text output.');
+    }
+    return text;
+  }
+
+  AgentToolCall _toolCall(Map<dynamic, dynamic> item) {
+    final id = item['call_id']?.toString() ?? item['id']?.toString() ?? '';
+    final name = item['name']?.toString() ?? '';
+    final arguments = item['arguments'];
+    if (arguments is Map) {
+      return AgentToolCall(
+        id: id,
+        name: name,
+        input: Map<String, Object?>.from(arguments),
+      );
+    }
+    try {
+      final decoded = jsonDecode(arguments?.toString() ?? '{}');
+      if (decoded is Map) {
+        return AgentToolCall(
+          id: id,
+          name: name,
+          input: Map<String, Object?>.from(decoded),
+        );
+      }
+      return AgentToolCall(
+        id: id,
+        name: name,
+        input: const {},
+        inputError: 'arguments are not a JSON object',
+      );
+    } on FormatException catch (error) {
+      return AgentToolCall(
+        id: id,
+        name: name,
+        input: const {},
+        inputError: error.message,
+      );
     }
   }
 
@@ -817,14 +984,58 @@ class AnthropicClient extends _BaseClient {
     String apiKey,
     ProviderRequest request, {
     ProviderActivityCallback? onActivity,
+    AgentToolHandler? onToolCalls,
   }) async {
     validate(request);
+    requireToolHandler(request, onToolCalls);
     final capabilities = capabilityRegistry.forModel(provider, request.model);
     String? contextFileId;
     try {
       if (request.contextFile) {
         contextFileId = await _uploadContext(apiKey, request.contextJson);
       }
+      final contextBlocks = request.contextFile
+          ? <Map<String, Object?>>[
+              {
+                'type': 'text',
+                'text':
+                    'The complete health evidence package is attached '
+                    'as superhealth-context.json. Use code execution to '
+                    'load every section, verify the exact file SHA-256 '
+                    '${request.contextFileSha256}, and follow the '
+                    'coverage protocol before answering.',
+              },
+              {'type': 'container_upload', 'file_id': contextFileId},
+            ]
+          : <Map<String, Object?>>[
+              {
+                'type': 'text',
+                'text':
+                    '<complete_health_context>\n${request.contextJson}'
+                    '\n</complete_health_context>',
+                'cache_control': {'type': 'ephemeral'},
+              },
+            ];
+      final digest = request.digestText;
+      final messages = <Object?>[
+        {
+          'role': 'user',
+          'content': digest == null
+              ? contextBlocks
+              : [
+                  {
+                    'type': 'text',
+                    'text': '<clinical_digest>\n$digest\n</clinical_digest>',
+                    'cache_control': {'type': 'ephemeral'},
+                  },
+                  if (request.contextFile || request.contextJson.isNotEmpty)
+                    ...contextBlocks,
+                ],
+        },
+        for (final turn in request.history)
+          {'role': turn.role, 'content': turn.content},
+        {'role': 'user', 'content': request.userPrompt},
+      ];
       final body = <String, Object?>{
         'model': request.model,
         'max_tokens': request.maxOutputTokens,
@@ -840,36 +1051,7 @@ class AnthropicClient extends _BaseClient {
             'cache_control': {'type': 'ephemeral'},
           },
         ],
-        'messages': [
-          {
-            'role': 'user',
-            'content': request.contextFile
-                ? [
-                    {
-                      'type': 'text',
-                      'text':
-                          'The complete health evidence package is attached '
-                          'as superhealth-context.json. Use code execution to '
-                          'load every section, verify the exact file SHA-256 '
-                          '${request.contextFileSha256}, and follow the '
-                          'coverage protocol before answering.',
-                    },
-                    {'type': 'container_upload', 'file_id': contextFileId},
-                  ]
-                : [
-                    {
-                      'type': 'text',
-                      'text':
-                          '<complete_health_context>\n${request.contextJson}'
-                          '\n</complete_health_context>',
-                      'cache_control': {'type': 'ephemeral'},
-                    },
-                  ],
-          },
-          for (final turn in request.history)
-            {'role': turn.role, 'content': turn.content},
-          {'role': 'user', 'content': request.userPrompt},
-        ],
+        'messages': messages,
       };
       // Adaptive thinking is sent whenever the model documents it. On Opus
       // 4.7/4.8 omitting the parameter silently disables thinking; on newer
@@ -914,6 +1096,13 @@ class AnthropicClient extends _BaseClient {
           'name': 'code_execution',
         });
       }
+      for (final spec in request.tools) {
+        tools.add({
+          'name': spec.name,
+          'description': spec.description,
+          'input_schema': spec.inputSchema,
+        });
+      }
       if (tools.isNotEmpty) body['tools'] = tools;
       final betas = [
         if (request.contextFile) _filesBeta,
@@ -922,58 +1111,109 @@ class AnthropicClient extends _BaseClient {
       final options = _options(apiKey, betas: betas);
 
       final reporter = ActivityReporter(onActivity);
-      var raw = await _streamMessage(body, options, reporter);
-      final textParts = <String>[..._textBlocks(raw)];
-      final citations = <String>{...collectUrls(raw)};
-      // A server-tool loop that hits its iteration limit pauses the turn.
-      // Resume by echoing the assistant content; the reply continues where
-      // the paused turn stopped, so text accumulates across resumes.
+      var usage = const TokenUsage();
+      final citations = <String>{};
+      // Text of the current round only. Anything written before a tool call
+      // is preamble ("let me check…"), not the answer.
+      var textParts = <String>[];
       var resumes = 0;
-      while (raw['stop_reason'] == 'pause_turn' &&
-          resumes < _maxPauseTurnResumes) {
-        resumes += 1;
-        final messages = List<Object?>.from(body['messages']! as List)
-          ..add({'role': 'assistant', 'content': raw['content']});
-        body['messages'] = messages;
-        raw = await _streamMessage(body, options, reporter);
+      var round = 0;
+      // The block carrying the moving cache breakpoint: at most one, so the
+      // request never exceeds the four breakpoints the API allows.
+      Map<String, Object?>? rolling;
+      while (true) {
+        final raw = await _streamMessage(body, options, reporter);
+        usage = usage + (TokenUsage.fromResponse(raw) ?? const TokenUsage());
         textParts.addAll(_textBlocks(raw));
         citations.addAll(collectUrls(raw));
-      }
-      final stopReason = raw['stop_reason']?.toString();
-      if (stopReason == 'pause_turn') {
-        throw const AiProviderException(
-          'Anthropic paused the tool loop repeatedly without finishing. '
-          'Try again, or disable web search for this request.',
+        final stopReason = raw['stop_reason']?.toString();
+        // A server-tool loop that hits its iteration limit pauses the turn.
+        // Resume by echoing the assistant content; the reply continues where
+        // the paused turn stopped, so text accumulates across resumes.
+        if (stopReason == 'pause_turn') {
+          if (resumes >= _maxPauseTurnResumes) {
+            throw const AiProviderException(
+              'Anthropic paused the tool loop repeatedly without finishing. '
+              'Try again, or disable web search for this request.',
+            );
+          }
+          resumes += 1;
+          messages.add({'role': 'assistant', 'content': raw['content']});
+          continue;
+        }
+        if (stopReason == 'tool_use') {
+          final calls = [
+            for (final block
+                in (raw['content'] as List? ?? const []).whereType<Map>())
+              if (block['type'] == 'tool_use')
+                AgentToolCall(
+                  id: block['id']?.toString() ?? '',
+                  name: block['name']?.toString() ?? '',
+                  input: block['input'] is Map
+                      ? Map<String, Object?>.from(block['input'] as Map)
+                      : const {},
+                ),
+          ];
+          if (calls.isNotEmpty) {
+            round += 1;
+            if (round > maxToolRounds + 1) {
+              throw const AiProviderException(
+                'Anthropic kept calling tools without answering.',
+              );
+            }
+            final results = await runToolRound(calls, round, onToolCalls!);
+            // Echoed verbatim: thinking blocks carry signatures the API
+            // checks, and a tool_use without its exact block is rejected.
+            messages.add({'role': 'assistant', 'content': raw['content']});
+            final resultBlocks = [
+              for (final result in results)
+                <String, Object?>{
+                  'type': 'tool_result',
+                  'tool_use_id': result.callId,
+                  'content': result.content,
+                  if (result.isError) 'is_error': true,
+                },
+            ];
+            rolling?.remove('cache_control');
+            resultBlocks.last['cache_control'] = {'type': 'ephemeral'};
+            rolling = resultBlocks.last;
+            messages.add({'role': 'user', 'content': resultBlocks});
+            textParts = [];
+            resumes = 0;
+            continue;
+          }
+        }
+        if (stopReason == 'refusal') {
+          final details = raw['stop_details'];
+          final explanation = details is Map
+              ? details['explanation']?.toString()
+              : null;
+          throw AiProviderException(
+            explanation == null || explanation.isEmpty
+                ? 'Anthropic declined this request for safety reasons.'
+                : 'Anthropic declined this request for safety reasons: '
+                      '$explanation',
+          );
+        }
+        final text = textParts.join('\n').trim();
+        if (stopReason == 'max_tokens') {
+          throw const AiProviderException(
+            'Anthropic stopped at the output token limit, so the answer is '
+            'incomplete. Retry, or reduce the request scope.',
+          );
+        }
+        if (text.isEmpty) {
+          throw const AiProviderException('Anthropic returned no text output.');
+        }
+        return ProviderResponse(
+          text: text,
+          raw: raw,
+          responseId: raw['id']?.toString(),
+          citations: citations.toList(growable: false),
+          aggregateUsage: usage.isEmpty ? null : usage,
+          toolRounds: round,
         );
       }
-      if (stopReason == 'refusal') {
-        final details = raw['stop_details'];
-        final explanation = details is Map
-            ? details['explanation']?.toString()
-            : null;
-        throw AiProviderException(
-          explanation == null || explanation.isEmpty
-              ? 'Anthropic declined this request for safety reasons.'
-              : 'Anthropic declined this request for safety reasons: '
-                    '$explanation',
-        );
-      }
-      final text = textParts.join('\n').trim();
-      if (stopReason == 'max_tokens') {
-        throw const AiProviderException(
-          'Anthropic stopped at the output token limit, so the answer is '
-          'incomplete. Retry, or reduce the request scope.',
-        );
-      }
-      if (text.isEmpty) {
-        throw const AiProviderException('Anthropic returned no text output.');
-      }
-      return ProviderResponse(
-        text: text,
-        raw: raw,
-        responseId: raw['id']?.toString(),
-        citations: citations.toList(growable: false),
-      );
     } on DioException catch (error) {
       providerError(
         'Anthropic',
@@ -1230,7 +1470,9 @@ class GeminiClient extends _BaseClient {
     String apiKey,
     ProviderRequest request, {
     ProviderActivityCallback? onActivity,
+    AgentToolHandler? onToolCalls,
   }) async {
+    // Tools are refused in `validate`: see [providerSupportsClientTools].
     validate(request);
     // This client has no documented native multi-turn wire shape in the app,
     // so history is serialized between the stable context and the task
@@ -1247,6 +1489,7 @@ class GeminiClient extends _BaseClient {
       'store': false,
       'system_instruction': request.systemPrompt,
       'input':
+          '${request.digestText == null ? '' : '<clinical_digest>\n${request.digestText}\n</clinical_digest>\n\n'}'
           '<complete_health_context>\n${request.contextJson}'
           '\n</complete_health_context>$historyAppendix'
           '\n\n${request.userPrompt}',

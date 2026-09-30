@@ -9,7 +9,8 @@ SuperHealth uses a local-first Flutter architecture with explicit trust boundari
 The advisor and parser never receive `AppDatabase`, a SQLite connection, or `HealthRepository` write methods:
 
 - `HealthContextBuilder` serializes a complete active-profile snapshot.
-- Provider clients receive only that JSON string, prompts, and selected settings.
+- `AgentSnapshot` parses the unwindowed snapshot on the device; the advisor's digest summarises it and its read-only tools answer from it.
+- Provider clients receive only serialized text — the digest, tool results, the evidence package when one is sent — plus prompts and selected settings.
 - `DocumentParsingService` produces an in-memory review model. Database and PDF persistence happen only after the user confirms the review screen.
 - `SafeWorkspaceService` stages path-safe file proposals in memory. It checks the reviewed prior hash before applying an approved change.
 
@@ -30,6 +31,17 @@ API keys and OneDrive tokens live in Android secure storage and are outside ever
 OpenAI uses the Responses API, Anthropic uses Messages, and Gemini uses Interactions. Models are fetched from each provider at runtime. A versioned capability registry exposes only documented reasoning levels and hosted tools; unknown models receive no speculative switches.
 
 The main advisor may use provider-hosted web search and isolated code execution. Provider sandbox files are not treated as app files. Persistent file changes use the `superhealth-file-proposal` protocol and require a second, app-side approval.
+
+## The advisor
+
+A turn has four layers, each answering a different way a connection could be missed:
+
+1. **Deterministic findings.** `InteractionFindingsEngine` evaluates the curated table in `lib/domain/interaction_rules.dart` against the whole record: every current substance (ingredient level, with the empty-snapshot fallback to the product's ingredients), every recorded medication, every symptom and tag, and every stored measurement with what was taken in the window before its draw. Thresholds convert through `SubstanceConversions`; a dose that cannot be converted is unknown, never zero. The same findings appear on the Labs hub, on each affected biomarker's sheet, as a banner on the advisor screen, in the lab planner's prompts, and as preparation notes written into planned tests.
+2. **A complete, compact digest.** `ClinicalDigest` lists every entity in the record and abbreviates only detail; it names the tool that returns each abbreviated part. It is what the model always sees, instead of the ~310k-token evidence package.
+3. **Read-only tools.** `AdvisorToolbox` answers from `AgentSnapshot`: a biomarker's full history, a lab report, a product's record, individual doses, what was taken before a moment, symptom entries, full-text search and the test catalog. OpenAI and Anthropic clients run the tool loop themselves, echoing each provider's own items verbatim between rounds. Gemini, whose stateless function-calling shape is not verified here, gets no tools and receives the full evidence package instead.
+4. **An enforced review.** The reply opens with a verdict — relevant, uncertain, not relevant — on every current substance, medicine and finding. Code checks every id; anything missing gets one follow-up, and anything still missing is shown as not assessed. The review is stored with the answer and rendered collapsed beneath it.
+
+A whole-record review adds the full evidence package to all four layers for one question. Turns hold the long-task guard and report their stage, the tools being consulted, and live output.
 
 `SupplementLabelService` reads a pasted product label with the same configured parsing model. It sends only the packaging text — never the health context envelope — and does the division by serving size locally rather than asking the model for it, so an arithmetic slip cannot silently store a dose several times too high. The result populates the editable ingredient rows; persistence still requires the user to save the product.
 

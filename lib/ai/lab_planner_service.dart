@@ -2,13 +2,18 @@
 
 import 'dart:convert';
 
+import '../analysis/exposure_analysis.dart';
+import '../analysis/interaction_findings.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
+import '../domain/interaction_rules.dart';
 import 'advisor_service.dart';
+import 'agent_snapshot.dart';
 import 'ai_models.dart';
 import 'ai_settings.dart';
 import 'answer_text.dart';
 import 'api_key_store.dart';
+import 'clinical_digest.dart';
 import 'health_context_builder.dart';
 import 'ai_trace.dart';
 import 'provider_clients.dart';
@@ -31,6 +36,53 @@ class LabPlanGeneration {
   /// A rejected draft is intentionally kept inspectable, but it must never be
   /// persisted as a lab plan.
   bool get canSave => verification.approved;
+
+  LabPlanGeneration copyWith({LabPlan? plan}) => LabPlanGeneration(
+    plan: plan ?? this.plan,
+    context: context,
+    warnings: warnings,
+    citations: citations,
+    verification: verification,
+  );
+}
+
+/// Writes each applicable finding's preparation into the planned tests it
+/// affects, unless the model's own preparation already says it.
+///
+/// Code, not the model, has the last word here: "pause biotin 72 hours before
+/// the TSH draw" is exactly the line a model forgets when the plan has forty
+/// items, and it is fully determined by the record and the rule table.
+LabPlan withFindingPreparation(
+  LabPlan plan,
+  List<InteractionFinding> findings,
+) {
+  final notes = <String, Set<PreparationNote>>{};
+  for (final finding in findings) {
+    final note = finding.rule.preparation;
+    if (note == null || finding.scope != FindingScope.current) continue;
+    for (final biomarkerId in finding.affectedBiomarkerIds) {
+      notes.putIfAbsent(biomarkerId, () => {}).add(note);
+    }
+  }
+  if (notes.isEmpty) return plan;
+  return plan.copyWith(
+    items: [
+      for (final item in plan.items)
+        if (notes[item.biomarkerId] case final applicable?)
+          item.copyWith(
+            preparation: [
+              if (item.preparation.trim().isNotEmpty) item.preparation.trim(),
+              for (final note in applicable)
+                if (!note.isCoveredBy(item.preparation))
+                  // Plans are written in German, like every other field of
+                  // the plan the model fills.
+                  note.text.de,
+            ].join(' '),
+          )
+        else
+          item,
+    ],
+  );
 }
 
 /// A self-contained prompt that can be sent to an external LLM.
@@ -193,6 +245,8 @@ class LabPlannerService {
     required HealthContextBuilder contextBuilder,
     ProviderCapabilityRegistry? capabilities,
     AiTrace? trace,
+    HealthSnapshotLoader? agentSnapshotLoader,
+    DateTime Function()? clock,
   }) : _repository = repository,
        _keyStore = keyStore,
        _clientFactory = clientFactory,
@@ -200,7 +254,14 @@ class LabPlannerService {
        _capabilities = capabilities ?? ProviderCapabilityRegistry(),
        // A trace that writes nowhere, so every call site below can record
        // unconditionally instead of guarding each one.
-       _trace = trace ?? AiTrace(write: (_) async {});
+       _trace = trace ?? AiTrace(write: (_) async {}),
+       _loadAgentSnapshot =
+           agentSnapshotLoader ??
+           ((profileId) => repository.completeProfileSnapshot(
+             profileId,
+             scope: HealthContextScope.agent,
+           )),
+       _clock = clock ?? DateTime.now;
 
   final HealthRepository _repository;
   final ApiKeyStore _keyStore;
@@ -208,6 +269,30 @@ class LabPlannerService {
   final HealthContextBuilder _contextBuilder;
   final ProviderCapabilityRegistry _capabilities;
   final AiTrace _trace;
+  final HealthSnapshotLoader _loadAgentSnapshot;
+  final DateTime Function() _clock;
+
+  /// The curated interaction rules evaluated against the whole record, the
+  /// same way the advisor evaluates them.
+  Future<List<InteractionFinding>> _findings(String profileId) async {
+    final snapshot = AgentSnapshot.fromSnapshot(
+      await _loadAgentSnapshot(profileId),
+      profileId: profileId,
+    );
+    final exposure = ExposureAnalysis.build(
+      supplements: snapshot.supplements,
+      schedules: snapshot.schedules,
+      intakes: snapshot.intakes,
+      records: snapshot.records,
+      now: _clock(),
+    );
+    return const InteractionFindingsEngine().evaluate(
+      exposure: exposure,
+      biomarkers: snapshot.biomarkers,
+      measurements: snapshot.measurements,
+      events: snapshot.events,
+    );
+  }
 
   static const _schemaInstructions = '''
 Return exactly one JSON object and no markdown. Use this shape:
@@ -417,6 +502,7 @@ warnings.
       priorities: priorities,
       dueBiomarkers: dueBiomarkers,
       includeOverdueBiomarkers: includeOverdueBiomarkers,
+      findings: await _findings(profileId),
     );
     final schema = const JsonEncoder.withIndent(
       '  ',
@@ -478,12 +564,16 @@ $schema
         'context-receipt, and due-biomarker checks. No independent LLM review '
         'was run inside SuperHealth.';
     final now = DateTime.now();
-    final plan = candidate.plan.copyWith(
-      status: 'external',
-      verificationSummary: summary,
-      verificationWarnings: candidate.warnings,
-      verifiedAt: now,
-    );
+    final plan =
+        withFindingPreparation(
+          candidate.plan,
+          await _findings(profileId),
+        ).copyWith(
+          status: 'external',
+          verificationSummary: summary,
+          verificationWarnings: candidate.warnings,
+          verifiedAt: now,
+        );
     return LabPlanGeneration(
       plan: plan,
       context: context,
@@ -507,6 +597,7 @@ $schema
     required String priorities,
     required List<DueBiomarker> dueBiomarkers,
     required bool includeOverdueBiomarkers,
+    required List<InteractionFinding> findings,
   }) {
     final dateText =
         targetDate?.toIso8601String().split('T').first ?? 'not set';
@@ -517,12 +608,34 @@ User priorities: ${priorities.trim().isEmpty ? 'Use the stored goals and health 
 
 ${_dueBiomarkerInstruction(dueBiomarkers, includeOverdueBiomarkers)}
 
+${_findingsInstruction(findings)}
+
 Required context receipt: sha256=${context.sha256}; file_sha256=${context.fileSha256}; record_count=${context.recordCount}; reviewed_sections must contain every key in the package manifest sections. Use the attention index only to navigate, then verify the plan against the complete raw ledger.
 
 ${context.coverageInstruction}
 
 $_schemaInstructions
 ''';
+  }
+
+  /// The deterministic findings, as data the plan must account for.
+  ///
+  /// They are facts about this record — "biotin 10 mg daily, TSH affected" —
+  /// computed from a curated table, so the planner builds on them instead of
+  /// having to notice them in a package of hundreds of thousands of tokens.
+  String _findingsInstruction(List<InteractionFinding> findings) {
+    if (findings.isEmpty) {
+      return 'Deterministic interaction findings: none apply to this record.';
+    }
+    return '''
+Deterministic interaction findings, computed by the app from this record against
+a curated interaction table. They are facts, not guesses. Where one affects a test
+you plan, say what to do in that item's preparation, and add a warning when it
+changes what a result will mean. The table is not exhaustive; judge everything
+else yourself.
+<<<FINDINGS
+${jsonEncode([for (final finding in findings) ClinicalDigestBuilder.findingJson(finding)])}
+FINDINGS''';
   }
 
   String _dueBiomarkerInstruction(
@@ -639,6 +752,13 @@ $_schemaInstructions
     }
     final context = await _contextBuilder.build(profileId);
     final dueBiomarkers = await _repository.dueBiomarkers(profileId);
+    final findings = await _findings(profileId);
+    await _trace.event('findings_evaluated', {
+      'findings': findings.length,
+      'with_preparation': findings
+          .where((finding) => finding.rule.preparation != null)
+          .length,
+    });
     final requiredBiomarkerIds = includeOverdueBiomarkers
         ? {for (final due in dueBiomarkers) due.biomarker.id}
         : const <String>{};
@@ -666,6 +786,7 @@ $_schemaInstructions
       priorities: priorities,
       dueBiomarkers: dueBiomarkers,
       includeOverdueBiomarkers: includeOverdueBiomarkers,
+      findings: findings,
     );
     final client = _clientFactory.create(settings.provider);
     await _trace.event('counting_context_tokens');
@@ -755,6 +876,7 @@ $_schemaInstructions
                 'contain every manifest section.\n\n'
                 '${context.coverageInstruction}\n\n'
                 '${_dueBiomarkerInstruction(dueBiomarkers, includeOverdueBiomarkers)}\n\n'
+                '${_findingsInstruction(findings)}\n\n'
                 '$_schemaInstructions',
             contextJson: context.json,
             reasoningLevel: settings.reasoningLevel,
@@ -794,12 +916,18 @@ $_schemaInstructions
         'items': candidate.plan.items.length,
       });
     }
+    // Before verification, so the independent review sees — and can object
+    // to — exactly the preparation the reader will be given.
+    final prepared = candidate.copyWith(
+      plan: withFindingPreparation(candidate.plan, findings),
+    );
     // Verification is deliberately outside the candidate repair path. A bad
     // verifier response fails closed; it must never be mistaken for a plan or
     // silently trigger a rewritten clinical recommendation.
     await report(LabPlanStage.verifying);
     final generation = await _verify(
-      candidate,
+      prepared,
+      findings: findings,
       onProgress: emit,
       key: key,
       settings: settings,
@@ -864,6 +992,7 @@ $_schemaInstructions
 
   Future<LabPlanGeneration> _verify(
     LabPlanGeneration candidate, {
+    required List<InteractionFinding> findings,
     required LabPlanProgress onProgress,
     required String key,
     required AiTaskSettings settings,
@@ -889,6 +1018,10 @@ Do a fresh review against the entire supplied health context. Do not assume the
 first model reviewed anything correctly.
 
 ${verificationInstructionBlock(priorities)}
+
+${_findingsInstruction(findings)}
+A planned test that one of these findings affects must carry its preparation.
+
 Candidate plan JSON:
 <<<CANDIDATE_PLAN_JSON
 $candidateJson

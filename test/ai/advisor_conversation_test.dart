@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -34,19 +33,23 @@ void main() {
     expect(await fixture.storedMessages(), hasLength(4));
   });
 
-  test('the assistant turn replayed is the stripped one', () async {
-    // The receipt is stripped before the answer is stored. If the raw text
-    // went into history, every later turn would carry a second
-    // `<context_coverage>` block and fail its own "exactly one" check.
-    final fixture = await _Fixture.create();
+  test('the assistant turn replayed carries neither its review block nor '
+      'its stored review', () async {
+    // The review is for the reader. Replaying it would hand the model its old
+    // verdicts to copy instead of judging the new question.
+    final fixture = await _Fixture.create(withSupplement: true);
     addTearDown(fixture.dispose);
 
     await fixture.ask('First.');
+    final stored = (await fixture.storedMessages()).last.content;
+    expect(stored, contains('superhealth-review'));
+    expect(stored, isNot(contains('<exposure_review>')));
+
     await fixture.ask('Second.');
 
     final replayed = fixture.client.requests.last.history.last;
     expect(replayed.role, 'assistant');
-    expect(replayed.content, isNot(contains('context_coverage')));
+    expect(replayed.content, 'Answer.');
   });
 
   test('a failed turn leaves nothing behind in the conversation', () async {
@@ -124,17 +127,18 @@ void main() {
     ]);
   });
 
-  test('a repair keeps the tools the first call had', () async {
+  test('a review follow-up keeps the tools and the cache route of the '
+      'first call', () async {
     // Tool definitions are part of the cached prefix and sit ahead of the
-    // input. Dropping web search on the repair moved the prefix at position
-    // zero: a real run wrote 313k tokens, then read back nothing on a repair
-    // issued seconds later with the same key and the same context.
-    final fixture = await _Fixture.create();
+    // input. Dropping web search on a repair once moved the prefix at
+    // position zero: a real run wrote 313k tokens, then read back nothing on
+    // a repair issued seconds later with the same key and the same context.
+    final fixture = await _Fixture.create(withSupplement: true);
     addTearDown(fixture.dispose);
-    fixture.client.dropReceiptOnce = true;
+    fixture.client.dropReviewOnce = true;
 
     await fixture.ask(
-      'A question that gets a malformed answer first.',
+      'A question that gets an unreviewed answer first.',
       settings: const AiTaskSettings(
         provider: AiProvider.openai,
         model: 'gpt-5.6',
@@ -144,12 +148,19 @@ void main() {
 
     expect(fixture.client.requests, hasLength(2));
     final first = fixture.client.requests.first;
-    final repair = fixture.client.requests.last;
-    expect(repair.webSearch, first.webSearch);
-    expect(repair.codeExecution, first.codeExecution);
-    // And it still routes to the same cache entry.
-    expect(repair.promptCacheKey, first.promptCacheKey);
-    expect(repair.contextJson, first.contextJson);
+    final followUp = fixture.client.requests.last;
+    expect(followUp.webSearch, first.webSearch);
+    expect(followUp.codeExecution, first.codeExecution);
+    expect(
+      followUp.tools.map((tool) => tool.name),
+      first.tools.map((tool) => tool.name),
+    );
+    expect(followUp.promptCacheKey, first.promptCacheKey);
+    expect(followUp.digestText, first.digestText);
+    expect(followUp.contextJson, first.contextJson);
+    // The unreviewed reply rides in history, so the model revises it.
+    expect(followUp.history.last.content, 'An answer without its review.');
+    expect(followUp.userPrompt, contains('Missing:'));
   });
 
   test('the trace records what a turn cost and whether it cached', () async {
@@ -169,7 +180,7 @@ void main() {
     ];
     final names = events.map((event) => event['event']).toList();
     expect(names.first, 'run_start');
-    expect(names, contains('context_built'));
+    expect(names, contains('digest_built'));
     expect(names, contains('history_loaded'));
     expect(names, contains('delivery_chosen'));
     expect(names, contains('response_received'));
@@ -226,13 +237,43 @@ class _Fixture {
   final AdvisorService service;
   final _Client client;
 
-  static Future<_Fixture> create({AiTrace? trace}) async {
+  static Future<_Fixture> create({
+    AiTrace? trace,
+    bool withSupplement = false,
+  }) async {
     final database = AppDatabase(
       factory: databaseFactoryFfi,
       databasePath: inMemoryDatabasePath,
     );
     final repository = HealthRepository(database);
     final profile = await repository.createProfile(displayName: 'Alex');
+    if (withSupplement) {
+      // Something taken recently, so the review checklist is not empty.
+      final now = DateTime.now();
+      await repository.saveSupplement(
+        Supplement(
+          id: 'mag',
+          name: 'Magnesium',
+          ingredients: const [
+            {'name': 'Magnesium', 'amount': 300, 'unit': 'mg'},
+          ],
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.saveIntake(
+        SupplementIntake(
+          id: 'mag-dose',
+          profileId: profile.id,
+          supplementId: 'mag',
+          takenAt: now.subtract(const Duration(hours: 1)),
+          dose: 1,
+          unit: 'capsule',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
     final client = _Client();
     return _Fixture(
       database: database,
@@ -280,12 +321,27 @@ class _Factory extends AiProviderClientFactory {
   AiProviderClient create(AiProvider provider) => client;
 }
 
+/// A reply that judges every checklist item, as a compliant model would.
+String _reviewed(ProviderRequest request, String answer) {
+  final digest = jsonDecode(request.digestText!) as Map<String, Object?>;
+  final ids = [
+    for (final item in digest['review_checklist']! as List) (item as Map)['id'],
+  ];
+  if (ids.isEmpty) return answer;
+  final review = jsonEncode({
+    'relevant': const <Object?>[],
+    'uncertain': const <Object?>[],
+    'not_relevant': ids,
+  });
+  return '<exposure_review>$review</exposure_review>\n$answer';
+}
+
 class _Client implements AiProviderClient {
   final List<ProviderRequest> requests = [];
   bool failNext = false;
 
-  /// Answers the first call without a coverage receipt, forcing one repair.
-  bool dropReceiptOnce = false;
+  /// Answers the first call without a review block, forcing one follow-up.
+  bool dropReviewOnce = false;
 
   @override
   AiProvider get provider => AiProvider.openai;
@@ -305,28 +361,19 @@ class _Client implements AiProviderClient {
     String apiKey,
     ProviderRequest request, {
     ProviderActivityCallback? onActivity,
+    AgentToolHandler? onToolCalls,
   }) async {
     requests.add(request);
     if (failNext) throw StateError('provider unavailable');
-    if (dropReceiptOnce) {
-      dropReceiptOnce = false;
-      return const ProviderResponse(text: 'No receipt here.', raw: {});
+    if (dropReviewOnce) {
+      dropReviewOnce = false;
+      return const ProviderResponse(
+        text: 'An answer without its review.',
+        raw: {},
+      );
     }
-    final package = jsonDecode(request.contextJson) as Map<String, Object?>;
-    final manifest = package['manifest']! as Map<String, Object?>;
-    final sections = manifest['sections']! as Map<String, Object?>;
-    final receipt = {
-      'sha256': manifest['context_sha256'],
-      'file_sha256': sha256
-          .convert(utf8.encode(request.contextJson))
-          .toString(),
-      'record_count': manifest['record_count'],
-      'reviewed_sections': sections.keys.toList(),
-    };
     return ProviderResponse(
-      text:
-          '<context_coverage>${jsonEncode(receipt)}</context_coverage>\n'
-          'Answer.',
+      text: _reviewed(request, 'Answer.'),
       raw: const {
         'usage': {
           'input_tokens': 1000,

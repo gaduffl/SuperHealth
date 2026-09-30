@@ -19,6 +19,7 @@ import '../app/shell_navigation.dart';
 import '../biomarkers/biomarker_status_service.dart';
 import '../biomarkers/biomarker_trend.dart';
 import '../domain/entities.dart';
+import '../domain/interaction_rules.dart';
 import '../export/lab_plan_export_service.dart';
 import 'biomarker_category_localization.dart';
 import 'biomarker_detail_sheet.dart';
@@ -30,6 +31,7 @@ import 'common.dart';
 import 'design.dart';
 import 'biomarker_package_screen.dart';
 import 'dialogs.dart';
+import 'interaction_findings_view.dart';
 import 'lab_price_screen.dart';
 import 'lab_report_screen.dart';
 import 'dose_underlay.dart';
@@ -443,6 +445,37 @@ class _WorkspaceHub extends StatelessWidget {
               ),
               tone: Theme.of(context).colorScheme.error,
               onTap: () => onOpen(_WorkspaceSection.due),
+            ),
+          // The deterministic checks, beside the planner they matter for:
+          // "pause biotin before the draw" is lab-visit preparation. Shown
+          // only when a check applies, like the retest tile above.
+          if (controller.interactionFindings case final findings
+              when findings.isNotEmpty)
+            _HubTile(
+              icon: Icons.fact_check_outlined,
+              title: _labsText(
+                context,
+                'Interaction checks',
+                'Wechselwirkungsprüfung',
+              ),
+              detail: _labsText(
+                context,
+                findings.length == 1
+                    ? '1 finding for your supplements, medicines and results'
+                    : '${findings.length} findings for your supplements, '
+                          'medicines and results',
+                findings.length == 1
+                    ? '1 Hinweis zu Präparaten, Medikamenten und Werten'
+                    : '${findings.length} Hinweise zu Präparaten, '
+                          'Medikamenten und Werten',
+              ),
+              tone:
+                  findings.any(
+                    (finding) => finding.severity == InteractionSeverity.high,
+                  )
+                  ? Theme.of(context).colorScheme.error
+                  : null,
+              onTap: () => showInteractionFindingsSheet(context, findings),
             ),
           _HubTile(
             icon: Icons.inventory_2_outlined,

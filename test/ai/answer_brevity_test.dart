@@ -48,6 +48,39 @@ void main() {
       expect(brief, contains('under 120 words'));
     });
 
+    test('the advisor\'s own prompt keeps every safety and brevity rule', () {
+      // The advisor no longer uses the evidence-package prompt, so the rules
+      // above have to hold for the prompt it does use.
+      const prompt = AdvisorService.agentSystemPrompt;
+      for (final rule in [
+        'Do not diagnose.',
+        'Flag urgent red-flag symptoms clearly',
+        'Never instruct the user to start, stop, or change a prescription '
+            'medicine',
+        'Surface possible interactions',
+        'No general disclaimers',
+        'Answer style: short.',
+      ]) {
+        expect(prompt, contains(rule));
+      }
+      final brief = AdvisorService.agentSystemPromptFor(brief: true);
+      expect(brief, startsWith(AdvisorService.agentSystemPrompt));
+      expect(brief, contains('under 120 words'));
+      expect(
+        AdvisorService.agentSystemPromptFor(brief: false),
+        isNot(contains('simple mode')),
+      );
+    });
+
+    test('the advisor is told findings are computed and not exhaustive', () {
+      const prompt = AdvisorService.agentSystemPrompt;
+      expect(prompt, contains('do not contradict them'));
+      expect(prompt, contains('never evidence that no interaction exists'));
+      expect(prompt, contains('review_checklist'));
+      // Exempt from the length rule, or the review is traded away for brevity.
+      expect(prompt, contains("does not count towards the answer's length"));
+    });
+
     test('the coverage receipt is exempt from the length rule', () {
       // Without this the model trades the receipt away for brevity, and every
       // answer fails validation instead of being short.

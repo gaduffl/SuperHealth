@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +15,7 @@ import 'package:super_health/ai/lab_price_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 import 'package:super_health/analysis/correlation_service.dart';
 import 'package:super_health/app/app_controller.dart';
+import 'package:super_health/app/long_task_guard.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
@@ -34,7 +34,7 @@ void main() {
     // conversation leaves no empty entry for anyone to tidy up.
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('First question.');
+    await fixture.controller.askAdvisor('First question.', notice: _notice);
 
     final firstId = fixture.controller.activeConversationId;
     expect(fixture.controller.advisorConversations, hasLength(1));
@@ -45,7 +45,7 @@ void main() {
     expect(fixture.controller.advisorMessages, isEmpty);
     expect(fixture.controller.advisorConversations, hasLength(1));
 
-    await fixture.controller.askAdvisor('Second question.');
+    await fixture.controller.askAdvisor('Second question.', notice: _notice);
 
     expect(fixture.controller.advisorConversations, hasLength(2));
   });
@@ -62,7 +62,10 @@ void main() {
       () => seen.add(fixture.controller.pendingAdvisorQuestion),
     );
 
-    await fixture.controller.askAdvisor('  What about my ferritin?  ');
+    await fixture.controller.askAdvisor(
+      '  What about my ferritin?  ',
+      notice: _notice,
+    );
 
     // Trimmed, so the bubble matches the message that replaces it.
     expect(seen, contains('What about my ferritin?'));
@@ -79,7 +82,7 @@ void main() {
     fixture.client.failNext = true;
 
     await expectLater(
-      fixture.controller.askAdvisor('Doomed.'),
+      fixture.controller.askAdvisor('Doomed.', notice: _notice),
       throwsA(isA<Object>()),
     );
 
@@ -92,10 +95,10 @@ void main() {
     // question in the light of the old thread.
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('About my ferritin.');
+    await fixture.controller.askAdvisor('About my ferritin.', notice: _notice);
     fixture.controller.startNewAdvisorConversation();
 
-    await fixture.controller.askAdvisor('Unrelated question.');
+    await fixture.controller.askAdvisor('Unrelated question.', notice: _notice);
 
     expect(fixture.client.requests.last.history, isEmpty);
     expect(fixture.controller.advisorMessages, hasLength(2));
@@ -104,7 +107,7 @@ void main() {
   test('pressing new twice in a row is not two conversations', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('A question.');
+    await fixture.controller.askAdvisor('A question.', notice: _notice);
 
     fixture.controller.startNewAdvisorConversation();
     final first = fixture.controller.activeConversationId;
@@ -118,10 +121,10 @@ void main() {
   test('a past conversation reopens with its own messages', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('The first thread.');
+    await fixture.controller.askAdvisor('The first thread.', notice: _notice);
     final first = fixture.controller.activeConversationId;
     fixture.controller.startNewAdvisorConversation();
-    await fixture.controller.askAdvisor('The second thread.');
+    await fixture.controller.askAdvisor('The second thread.', notice: _notice);
 
     await fixture.controller.openAdvisorConversation(first);
 
@@ -132,7 +135,7 @@ void main() {
     );
 
     // And a question asked now continues that thread rather than the newer one.
-    await fixture.controller.askAdvisor('A follow-up.');
+    await fixture.controller.askAdvisor('A follow-up.', notice: _notice);
     expect(fixture.controller.advisorMessages, hasLength(4));
     expect(fixture.client.requests.last.history, hasLength(2));
   });
@@ -140,9 +143,9 @@ void main() {
   test('the list is titled by first question, newest first', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('Older thread.');
+    await fixture.controller.askAdvisor('Older thread.', notice: _notice);
     fixture.controller.startNewAdvisorConversation();
-    await fixture.controller.askAdvisor('Newer thread.');
+    await fixture.controller.askAdvisor('Newer thread.', notice: _notice);
 
     final conversations = fixture.controller.advisorConversations;
     expect(conversations.map((item) => item.title), [
@@ -155,10 +158,10 @@ void main() {
   test('deleting the open conversation lands on a real one', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('Keep me.');
+    await fixture.controller.askAdvisor('Keep me.', notice: _notice);
     final kept = fixture.controller.activeConversationId;
     fixture.controller.startNewAdvisorConversation();
-    await fixture.controller.askAdvisor('Delete me.');
+    await fixture.controller.askAdvisor('Delete me.', notice: _notice);
     final doomed = fixture.controller.activeConversationId;
 
     await fixture.controller.deleteAdvisorConversation(doomed);
@@ -172,7 +175,7 @@ void main() {
   test('deleting the last conversation leaves an empty new one', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('The only one.');
+    await fixture.controller.askAdvisor('The only one.', notice: _notice);
 
     await fixture.controller.deleteAdvisorConversation(
       fixture.controller.activeConversationId,
@@ -188,7 +191,7 @@ void main() {
   test('a deleted conversation is gone from the ledger too', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('Delete me.');
+    await fixture.controller.askAdvisor('Delete me.', notice: _notice);
     final doomed = fixture.controller.activeConversationId;
 
     await fixture.controller.deleteAdvisorConversation(doomed);
@@ -208,9 +211,9 @@ void main() {
     // user left off, so it needs no separate record to be kept honest.
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
-    await fixture.controller.askAdvisor('Older.');
+    await fixture.controller.askAdvisor('Older.', notice: _notice);
     fixture.controller.startNewAdvisorConversation();
-    await fixture.controller.askAdvisor('Newest.');
+    await fixture.controller.askAdvisor('Newest.', notice: _notice);
     final newest = fixture.controller.activeConversationId;
 
     // What an app restart looks like: the field is in memory only, so it
@@ -228,7 +231,7 @@ void main() {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
 
-    await fixture.controller.askAdvisor('The old thread.');
+    await fixture.controller.askAdvisor('The old thread.', notice: _notice);
 
     expect(
       fixture.controller.activeConversationId,
@@ -339,6 +342,8 @@ class _Factory extends AiProviderClientFactory {
   AiProviderClient create(AiProvider provider) => client;
 }
 
+const _notice = LongTaskNotice(title: 'Advisor', text: 'Answering');
+
 class _Client implements AiProviderClient {
   final List<ProviderRequest> requests = [];
   bool failNext = false;
@@ -361,24 +366,19 @@ class _Client implements AiProviderClient {
     String apiKey,
     ProviderRequest request, {
     ProviderActivityCallback? onActivity,
+    AgentToolHandler? onToolCalls,
   }) async {
     requests.add(request);
     if (failNext) throw StateError('provider unavailable');
-    final package = jsonDecode(request.contextJson) as Map<String, Object?>;
-    final manifest = package['manifest']! as Map<String, Object?>;
-    final sections = manifest['sections']! as Map<String, Object?>;
-    final receipt = {
-      'sha256': manifest['context_sha256'],
-      'file_sha256': sha256
-          .convert(utf8.encode(request.contextJson))
-          .toString(),
-      'record_count': manifest['record_count'],
-      'reviewed_sections': sections.keys.toList(),
-    };
-    return ProviderResponse(
-      text:
-          '<context_coverage>${jsonEncode(receipt)}</context_coverage>\nAnswer.',
-      raw: const {},
-    );
+    final digest = jsonDecode(request.digestText!) as Map<String, Object?>;
+    final ids = [
+      for (final item in digest['review_checklist']! as List)
+        (item as Map)['id'],
+    ];
+    final review = ids.isEmpty
+        ? ''
+        : '<exposure_review>${jsonEncode({'relevant': const <Object?>[], 'uncertain': const <Object?>[], 'not_relevant': ids})}'
+              '</exposure_review>\n';
+    return ProviderResponse(text: '${review}Answer.', raw: const {});
   }
 }

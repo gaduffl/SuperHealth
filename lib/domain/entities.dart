@@ -1548,6 +1548,23 @@ class LabPlanItem {
   final DateTime? updatedAt;
   final bool deleted;
 
+  LabPlanItem copyWith({String? preparation, bool? checked}) => LabPlanItem(
+    id: id,
+    planId: planId,
+    biomarkerId: biomarkerId,
+    biomarkerName: biomarkerName,
+    tier: tier,
+    priority: priority,
+    rationale: rationale,
+    evidenceClass: evidenceClass,
+    priceEur: priceEur,
+    preparation: preparation ?? this.preparation,
+    checked: checked ?? this.checked,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+    deleted: deleted,
+  );
+
   Map<String, Object?> toMap() => {
     'id': id,
     'plan_id': planId,

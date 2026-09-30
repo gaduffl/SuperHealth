@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,12 +7,16 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../ai/advisor_review.dart';
+import '../ai/advisor_service.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../app/long_task_guard.dart';
 import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
 import '../workspace/safe_workspace_service.dart';
 import 'common.dart';
+import 'interaction_findings_view.dart';
 
 class AdvisorScreen extends StatefulWidget {
   const AdvisorScreen({super.key});
@@ -24,6 +29,11 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
   final _message = TextEditingController();
   final _scroll = ScrollController();
   int? _handledRequestToken;
+
+  /// Whether the next question sends the whole record as well as the digest.
+  /// Off after every send: it costs several times a normal question, and a
+  /// switch left on by accident would make every later one cost that too.
+  bool _deepReview = false;
 
   /// Picks up a question handed over from another screen and asks it.
   ///
@@ -134,6 +144,9 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
             controller: controller,
             onBrowse: _browseConversations,
           ),
+          // The fixed home of the deterministic checks: shown whatever the
+          // model writes, so a finding the answer skims past is still here.
+          InteractionFindingsBanner(findings: controller.interactionFindings),
           if (controller.workspaceProposals.isNotEmpty)
             Material(
               color: Theme.of(context).colorScheme.tertiaryContainer,
@@ -193,6 +206,29 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
                         ),
                       ],
                     ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilterChip(
+                        avatar: const Icon(Icons.manage_search, size: 18),
+                        label: Text(
+                          strings.pick('Whole-record review', 'Gesamtprüfung'),
+                        ),
+                        selected: _deepReview,
+                        onSelected: controller.busy
+                            ? null
+                            : (value) => setState(() => _deepReview = value),
+                      ),
+                    ),
+                    if (_deepReview)
+                      Text(
+                        strings.pick(
+                          'Also sends the complete record for this question — '
+                              'slower, and several times the cost.',
+                          'Sendet für diese Frage zusätzlich das komplette '
+                              'Profil – langsamer und mehrfach so teuer.',
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     const SizedBox(height: 6),
                     const StandingSafetyNotice(),
                   ],
@@ -237,9 +273,25 @@ class _AdvisorScreenState extends State<AdvisorScreen> {
   Future<void> _send() async {
     final text = _message.text.trim();
     if (text.isEmpty) return;
+    final strings = AppLocalizations.of(context);
+    final deepReview = _deepReview;
     _message.clear();
+    setState(() => _deepReview = false);
     try {
-      await context.read<AppController>().askAdvisor(text);
+      await context.read<AppController>().askAdvisor(
+        text,
+        deepReview: deepReview,
+        notice: LongTaskNotice(
+          title: strings.pick(
+            'The advisor is answering',
+            'Der Berater antwortet',
+          ),
+          text: strings.pick(
+            'Checking your record against your question.',
+            'Dein Profil wird zu deiner Frage geprüft.',
+          ),
+        ),
+      );
     } on Object catch (error) {
       if (mounted) {
         _message.text = text;
@@ -612,13 +664,135 @@ class _ThreadView extends StatelessWidget {
                 createdAt: DateTime.now(),
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
-            ),
+            _AdvisorProgressLine(controller: controller),
           ],
         );
       },
+    );
+  }
+}
+
+/// What the advisor is doing, under the question in flight.
+///
+/// A turn is several calls — lookups, the answer, sometimes a follow-up for
+/// items the review missed — and a spinner alone for a minute is
+/// indistinguishable from a hang. Ticks every second so the clock moves even
+/// while nothing arrives.
+class _AdvisorProgressLine extends StatefulWidget {
+  const _AdvisorProgressLine({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_AdvisorProgressLine> createState() => _AdvisorProgressLineState();
+}
+
+class _AdvisorProgressLineState extends State<_AdvisorProgressLine> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  String _tool(AppLocalizations strings, String name) => switch (name) {
+    'biomarker_history' => strings.pick(
+      'biomarker history',
+      'Biomarker-Verlauf',
+    ),
+    'lab_report' => strings.pick('lab report', 'Laborbefund'),
+    'supplement_details' => strings.pick('product details', 'Produktdetails'),
+    'supplement_intakes' => strings.pick('logged doses', 'erfasste Einnahmen'),
+    'exposure_before' => strings.pick(
+      'what was taken before a draw',
+      'Einnahmen vor einer Blutabnahme',
+    ),
+    'health_events' => strings.pick('symptoms and tags', 'Symptome und Tags'),
+    'search_records' => strings.pick('search', 'Suche'),
+    'biomarker_catalog' => strings.pick('test catalog', 'Testkatalog'),
+    _ => name,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final controller = widget.controller;
+    final progress = controller.advisorProgress;
+    final activity = progress?.activity;
+    final tools = {
+      for (final tool in progress?.tools ?? const <String>[])
+        _tool(strings, tool),
+    }.join(', ');
+    final stage = switch (progress?.stage) {
+      null || AdvisorStage.preparing => strings.pick(
+        'Reading your record…',
+        'Dein Profil wird gelesen …',
+      ),
+      AdvisorStage.lookingUp => strings.pick(
+        'Looking up: $tools',
+        'Schlägt nach: $tools',
+      ),
+      AdvisorStage.answering =>
+        activity == null || activity.totalChars == 0
+            ? strings.pick('Thinking…', 'Denkt nach …')
+            : activity.isThinking
+            ? strings.pick(
+                'Thinking… (${activity.thinkingChars} characters)',
+                'Denkt nach … (${activity.thinkingChars} Zeichen)',
+              )
+            : strings.pick(
+                'Writing… (${activity.outputChars} characters)',
+                'Schreibt … (${activity.outputChars} Zeichen)',
+              ),
+      AdvisorStage.completingReview => strings.pick(
+        'Completing the check of every supplement and medicine…',
+        'Prüfung aller Präparate und Medikamente wird vervollständigt …',
+      ),
+    };
+    final started = controller.advisorStartedAt;
+    final seconds = started == null
+        ? null
+        : DateTime.now().difference(started).inSeconds;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 4),
+      child: Row(
+        children: [
+          const SizedBox.square(
+            dimension: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(seconds == null ? stage : '$stage · ${seconds}s'),
+                Text(
+                  controller.advisorSurvivesBackground
+                      ? strings.pick(
+                          'You can switch apps; it keeps running.',
+                          'Du kannst die App wechseln; es läuft weiter.',
+                        )
+                      : strings.pick(
+                          'Keep the app open until the answer arrives.',
+                          'Lass die App offen, bis die Antwort da ist.',
+                        ),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -773,8 +947,11 @@ class AdvisorMessageBubble extends StatelessWidget {
             // it would mangle anything containing a `*` or a `#`.
             if (user)
               SelectableText(message.content)
-            else
-              _AnswerMarkdown(text: message.content),
+            else ...[
+              _AnswerMarkdown(text: splitReviewSection(message.content).answer),
+              if (splitReviewSection(message.content).review case final review?)
+                AdvisorReviewPanel(review: review),
+            ],
             if (message.citations.isNotEmpty) ...[
               const SizedBox(height: 10),
               Wrap(

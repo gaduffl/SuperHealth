@@ -158,6 +158,166 @@ class SubstanceCatalog {
       displayName: 'Coenzym Q10',
       synonyms: ['coq10', 'co-q10', 'ubiquinone', 'ubiquinol', 'coenzyme q10'],
     ),
+    // The entries below exist because an interaction rule has to recognise
+    // them (see `interaction_rules.dart`); they merge spellings exactly like
+    // the ones above. Compounds whose mass is not the substance's own — salts,
+    // extracts — stay separate, as iron's salts do.
+    Substance(
+      id: 'biotin',
+      displayName: 'Biotin',
+      synonyms: ['d-biotin', 'vitamin b7', 'vit b7', 'vitamin h', 'biotine'],
+    ),
+    Substance(
+      id: 'vitamin-k1',
+      displayName: 'Vitamin K1',
+      synonyms: [
+        'k1',
+        'vit k1',
+        'phylloquinone',
+        'phyllochinon',
+        'phytomenadione',
+        'phytomenadion',
+      ],
+    ),
+    Substance(
+      id: 'st-johns-wort',
+      displayName: 'Johanniskraut',
+      synonyms: [
+        "st. john's wort",
+        "st john's wort",
+        'st johns wort',
+        'hypericum',
+        'hypericum perforatum',
+        'johanniskrautextrakt',
+        'johanniskraut-extrakt',
+      ],
+    ),
+    Substance(
+      id: 'ashwagandha',
+      displayName: 'Ashwagandha',
+      synonyms: [
+        'withania somnifera',
+        'schlafbeere',
+        'ashwagandha extract',
+        'ashwagandha-extrakt',
+      ],
+    ),
+    Substance(
+      id: 'red-yeast-rice',
+      displayName: 'Rotschimmelreis',
+      synonyms: [
+        'red yeast rice',
+        'monascus purpureus',
+        'rotschimmelreis-extrakt',
+      ],
+    ),
+    Substance(
+      id: 'monacolin-k',
+      displayName: 'Monacolin K',
+      synonyms: ['monacolin', 'monacolins', 'monacoline', 'monakolin k'],
+    ),
+    // "Niacin" on an EU label is niacin equivalents and usually nicotinamide,
+    // which has none of nicotinic acid's pharmacological effects — so the two
+    // forms are separate identities and the generic name is a third.
+    Substance(
+      id: 'niacin',
+      displayName: 'Niacin',
+      synonyms: ['vitamin b3', 'vit b3'],
+    ),
+    Substance(
+      id: 'nicotinic-acid',
+      displayName: 'Nicotinsäure',
+      synonyms: ['nicotinic acid', 'nikotinsäure'],
+    ),
+    Substance(
+      id: 'nicotinamide',
+      displayName: 'Nicotinamid',
+      synonyms: ['nicotinamide', 'niacinamide', 'niacinamid', 'nikotinamid'],
+    ),
+    Substance(
+      id: 'berberine',
+      displayName: 'Berberin',
+      synonyms: ['berberine'],
+    ),
+    Substance(
+      id: 'dhea',
+      displayName: 'DHEA',
+      synonyms: [
+        'dehydroepiandrosterone',
+        'dehydroepiandrosteron',
+        'prasterone',
+        'prasteron',
+      ],
+    ),
+    Substance(
+      id: 'egcg',
+      displayName: 'EGCG',
+      synonyms: [
+        'epigallocatechin gallate',
+        'epigallocatechin-3-gallate',
+        'epigallocatechingallat',
+      ],
+    ),
+    Substance(
+      id: 'green-tea-extract',
+      displayName: 'Grüntee-Extrakt',
+      synonyms: [
+        'green tea extract',
+        'grüntee extrakt',
+        'grünteeextrakt',
+        'grüner tee extrakt',
+      ],
+    ),
+    Substance(
+      id: 'curcumin',
+      displayName: 'Curcumin',
+      synonyms: ['kurkumin', 'curcuminoids', 'curcuminoide'],
+    ),
+    Substance(
+      id: 'turmeric',
+      displayName: 'Kurkuma',
+      synonyms: ['turmeric', 'curcuma longa', 'turmeric extract'],
+    ),
+    Substance(
+      id: 'ginkgo',
+      displayName: 'Ginkgo',
+      synonyms: [
+        'ginkgo biloba',
+        'ginkgo-biloba-extrakt',
+        'ginkgo biloba extract',
+      ],
+    ),
+    Substance(
+      id: 'omega-3',
+      displayName: 'Omega-3',
+      synonyms: [
+        'omega-3-fettsäuren',
+        'omega-3 fatty acids',
+        'fish oil',
+        'fischöl',
+        'krill oil',
+        'krillöl',
+      ],
+    ),
+    Substance(
+      id: 'potassium',
+      displayName: 'Kalium',
+      synonyms: ['potassium', 'kalium-ion', 'potassium ion'],
+    ),
+    Substance(
+      id: 'kelp',
+      displayName: 'Meeresalgen (Kelp)',
+      synonyms: [
+        'kelp',
+        'seetang',
+        'meeresalgen',
+        'braunalgen',
+        'ascophyllum nodosum',
+        'fucus vesiculosus',
+        'blasentang',
+      ],
+    ),
+    Substance(id: 'copper', displayName: 'Kupfer', synonyms: ['copper']),
   ];
 
   static final Map<String, String> _lookup = {

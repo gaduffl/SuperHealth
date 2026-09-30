@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/analysis/correlation_service.dart';
+import 'package:super_health/ai/advisor_review.dart';
 import 'package:super_health/ai/advisor_service.dart';
 import 'package:super_health/ai/ai_models.dart';
 import 'package:super_health/ai/ai_settings.dart';
@@ -41,7 +42,7 @@ void main() {
           _Client(
             (request) => ProviderResponse(
               text:
-                  '${_coverage(request)}\nVisible answer.\n'
+                  'Visible answer.\n'
                   '```superhealth-file-proposal\n'
                   '{"operation":"delete","path":"notes.txt","summary":"remove stale note"}\n'
                   '```',
@@ -70,37 +71,293 @@ void main() {
     },
   );
 
+  test('an answer that never judges some items is kept, with those items '
+      'named as not assessed after one follow-up', () async {
+    // Discarding a paid answer over a missing verdict would leave the reader
+    // with nothing; implying the item was judged irrelevant would be worse.
+    // The answer stays and the gap is stated on screen.
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    await _seedBiotinAndTsh(fixture);
+    final client = _Client(
+      (request) => ProviderResponse(
+        text:
+            '<exposure_review>{"relevant":[{"id":"exp:biotin",'
+            '"why":"Can make TSH read falsely low."}],"uncertain":[],'
+            '"not_relevant":[]}</exposure_review>\nPause biotin first.',
+        raw: const {},
+      ),
+    );
+    final service = AdvisorService(
+      repository: fixture.repository,
+      keyStore: _KeyStore(),
+      clientFactory: _Factory(client),
+      contextBuilder: HealthContextBuilder(fixture.repository),
+    );
+
+    final turn = await service.ask(
+      profileId: fixture.profile.id,
+      conversationId: 'partial',
+      question: 'Should I get my TSH checked?',
+      settings: _settings,
+    );
+
+    expect(client.calls, 2);
+    expect(client.requests.last.userPrompt, contains('Missing:'));
+    expect(turn.review.complete, isFalse);
+    expect(turn.review.relevant.single.what, 'Biotin');
+    expect(turn.review.notAssessed, isNotEmpty);
+    final stored = splitReviewSection(turn.assistantMessage.content);
+    expect(stored.answer, 'Pause biotin first.');
+    expect(stored.review!.notAssessed, turn.review.notAssessed);
+  });
+
+  test('a follow-up call that fails keeps the first answer, with the '
+      'unjudged items not assessed', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    await _seedBiotinAndTsh(fixture);
+    late final _Client client;
+    client = _Client((request) {
+      if (client.calls > 1) {
+        throw const AiProviderException('Connection dropped.');
+      }
+      return ProviderResponse(
+        text:
+            '<exposure_review>{"relevant":[{"id":"exp:biotin",'
+            '"why":"Can make TSH read falsely low."}],"uncertain":[],'
+            '"not_relevant":[]}</exposure_review>\nPause biotin first.',
+        raw: const {},
+      );
+    });
+    final service = AdvisorService(
+      repository: fixture.repository,
+      keyStore: _KeyStore(),
+      clientFactory: _Factory(client),
+      contextBuilder: HealthContextBuilder(fixture.repository),
+    );
+
+    final turn = await service.ask(
+      profileId: fixture.profile.id,
+      conversationId: 'dropped',
+      question: 'Should I get my TSH checked?',
+      settings: _settings,
+    );
+
+    expect(client.calls, 2);
+    expect(
+      splitReviewSection(turn.assistantMessage.content).answer,
+      'Pause biotin first.',
+    );
+    expect(turn.review.notAssessed, isNotEmpty);
+    expect(
+      await fixture.repository.messages(fixture.profile.id, 'dropped'),
+      hasLength(2),
+    );
+  });
+
+  test('a follow-up call that fails after a reply with no answer fails the '
+      'turn and saves nothing', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    await _seedBiotinAndTsh(fixture);
+    late final _Client client;
+    client = _Client((request) {
+      if (client.calls > 1) {
+        throw const AiProviderException('Connection dropped.');
+      }
+      return ProviderResponse(
+        text:
+            '<exposure_review>{"relevant":[],"uncertain":[],'
+            '"not_relevant":["exp:biotin"]}</exposure_review>',
+        raw: const {},
+      );
+    });
+    final service = AdvisorService(
+      repository: fixture.repository,
+      keyStore: _KeyStore(),
+      clientFactory: _Factory(client),
+      contextBuilder: HealthContextBuilder(fixture.repository),
+    );
+
+    await expectLater(
+      service.ask(
+        profileId: fixture.profile.id,
+        conversationId: 'empty',
+        question: 'Should I get my TSH checked?',
+        settings: _settings,
+      ),
+      throwsA(isA<AiProviderException>()),
+    );
+    expect(client.calls, 2);
+    expect(
+      await fixture.repository.messages(fixture.profile.id, 'empty'),
+      isEmpty,
+    );
+  });
+
+  test('the biotin finding reaches the model through the digest and the '
+      'checklist, without the full package', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    await _seedBiotinAndTsh(fixture);
+    final client = _Client(
+      (request) =>
+          ProviderResponse(text: _reviewed(request, 'Answer.'), raw: const {}),
+    );
+    final service = AdvisorService(
+      repository: fixture.repository,
+      keyStore: _KeyStore(),
+      clientFactory: _Factory(client),
+      contextBuilder: HealthContextBuilder(fixture.repository),
+    );
+
+    final turn = await service.ask(
+      profileId: fixture.profile.id,
+      conversationId: 'biotin',
+      question: 'Should I get my TSH checked?',
+      settings: _settings,
+    );
+
+    final request = client.requests.single;
+    expect(request.contextJson, isEmpty);
+    final digest = jsonDecode(request.digestText!) as Map<String, Object?>;
+    final checklist = [
+      for (final item in digest['review_checklist']! as List)
+        (item as Map)['id'],
+    ];
+    expect(checklist, contains('exp:biotin'));
+    expect(checklist, contains('finding:biotin-streptavidin-immunoassay'));
+    expect(checklist, contains('finding:biotin-streptavidin-immunoassay@tsh'));
+    expect(
+      request.tools.map((tool) => tool.name),
+      containsAll(['biomarker_history', 'exposure_before']),
+    );
+    expect(turn.review.complete, isTrue);
+    expect(
+      turn.findings.map((finding) => finding.id),
+      contains('finding:biotin-streptavidin-immunoassay@tsh'),
+    );
+  });
+
+  test('a whole-record review sends the package beside the digest', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    final client = _Client(
+      (request) =>
+          ProviderResponse(text: _reviewed(request, 'Answer.'), raw: const {}),
+    );
+    final service = AdvisorService(
+      repository: fixture.repository,
+      keyStore: _KeyStore(),
+      clientFactory: _Factory(client),
+      contextBuilder: HealthContextBuilder(
+        fixture.repository,
+        scope: HealthContextScope.advisory,
+      ),
+    );
+
+    final turn = await service.ask(
+      profileId: fixture.profile.id,
+      conversationId: 'deep',
+      question: 'Review everything.',
+      settings: _settings,
+      mode: AdvisorMode.deepReview,
+    );
+
+    final request = client.requests.single;
+    expect(request.contextJson, isNotEmpty);
+    expect(request.digestText, isNotNull);
+    expect(request.userPrompt, contains('complete evidence package'));
+    expect(turn.context, isNotNull);
+  });
+
   test(
-    'advisor rejects non-integer coverage record counts after one repair',
+    'a provider without a tool loop gets the package and no tools',
     () async {
       final fixture = await _Fixture.create();
       addTearDown(fixture.dispose);
-      for (final invalid in [1.2, -1, true, '1']) {
-        final client = _Client(
-          (request) => ProviderResponse(
-            text: _coverage(request, recordCount: invalid),
-            raw: const {},
-          ),
-        );
-        final service = AdvisorService(
-          repository: fixture.repository,
-          keyStore: _KeyStore(),
-          clientFactory: _Factory(client),
-          contextBuilder: HealthContextBuilder(fixture.repository),
-        );
-        await expectLater(
-          service.ask(
-            profileId: fixture.profile.id,
-            conversationId: 'coverage-$invalid',
-            question: 'Check coverage.',
-            settings: _settings,
-          ),
-          throwsA(isA<AdvisorCoverageException>()),
-        );
-        expect(client.calls, 2);
-      }
+      final client = _Client(
+        (request) => ProviderResponse(
+          text: _reviewed(request, 'Answer.'),
+          raw: const {},
+        ),
+      );
+      final service = AdvisorService(
+        repository: fixture.repository,
+        keyStore: _KeyStore(),
+        clientFactory: _Factory(client),
+        contextBuilder: HealthContextBuilder(
+          fixture.repository,
+          scope: HealthContextScope.advisory,
+        ),
+      );
+
+      await service.ask(
+        profileId: fixture.profile.id,
+        conversationId: 'gemini',
+        question: 'Anything to watch?',
+        settings: const AiTaskSettings(
+          provider: AiProvider.gemini,
+          model: 'gemini-3.1-pro-preview',
+        ),
+      );
+
+      final request = client.requests.single;
+      expect(request.tools, isEmpty);
+      expect(request.contextJson, isNotEmpty);
+      expect(request.digestText, isNotNull);
     },
   );
+
+  test('tools run on the device and answer from the record', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    await _seedBiotinAndTsh(fixture);
+    final results = <AgentToolResult>[];
+    final client = _Client(
+      (request) =>
+          ProviderResponse(text: _reviewed(request, 'Answer.'), raw: const {}),
+      beforeAnswer: (handler) async {
+        results.addAll(
+          await handler([
+            const AgentToolCall(
+              id: 'c1',
+              name: 'exposure_before',
+              input: {'measurement_id': 'tsh-1'},
+            ),
+            const AgentToolCall(
+              id: 'c2',
+              name: 'biomarker_history',
+              input: {'biomarker': 'TSH'},
+            ),
+          ], 1),
+        );
+      },
+    );
+    final service = AdvisorService(
+      repository: fixture.repository,
+      keyStore: _KeyStore(),
+      clientFactory: _Factory(client),
+      contextBuilder: HealthContextBuilder(fixture.repository),
+    );
+
+    final turn = await service.ask(
+      profileId: fixture.profile.id,
+      conversationId: 'tools',
+      question: 'Was my TSH affected?',
+      settings: _settings,
+    );
+
+    expect(turn.toolCalls, 2);
+    final exposure = jsonDecode(results[0].content) as Map<String, Object?>;
+    expect(jsonEncode(exposure['substances']), contains('Biotin'));
+    final history = jsonDecode(results[1].content) as Map<String, Object?>;
+    expect(
+      (history['measurements']! as List).single,
+      containsPair('value', 0.3),
+    );
+  });
 
   test('a plan stores prose without the record keys it cited', () async {
     // The prompts ask for `section:id` so the model points at a row instead of
@@ -154,10 +411,8 @@ void main() {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
     final client = _Client(
-      (request) => ProviderResponse(
-        text: '${_coverage(request)}\nAnswer.',
-        raw: const {},
-      ),
+      (request) =>
+          ProviderResponse(text: _reviewed(request, 'Answer.'), raw: const {}),
     );
     final service = AdvisorService(
       repository: fixture.repository,
@@ -202,6 +457,63 @@ void main() {
       () => ProviderRequest.cacheKey('x' * 60, 'abc'),
       throwsArgumentError,
     );
+  });
+
+  test('a planned test a finding affects carries its preparation, and '
+      'draft and review both see the findings', () async {
+    final fixture = await _Fixture.create(withBiomarker: true);
+    addTearDown(fixture.dispose);
+    await _seedBiotinAndTsh(fixture);
+    final client = _Client(
+      (request) => ProviderResponse(
+        text: jsonEncode(
+          request.userPrompt.contains('Independently verify')
+              ? _verificationBody(request)
+              : _labBody(
+                  request,
+                  tiers: [
+                    {
+                      'tier': 'core',
+                      'tradeoff_versus_next': 'Can wait.',
+                      'items': [
+                        {
+                          'biomarker_id': 'tsh',
+                          'biomarker_name': 'TSH',
+                          'priority': 1,
+                          'rationale': 'Thyroid check.',
+                          'evidence_class': 'guideline',
+                          'preparation': 'Morgens.',
+                        },
+                      ],
+                    },
+                    _tier('advanced'),
+                    _tier('comprehensive'),
+                  ],
+                ),
+        ),
+        raw: const {},
+      ),
+    );
+
+    final result = await _planner(
+      fixture,
+      client,
+    ).generate(profileId: fixture.profile.id, settings: _settings);
+
+    final tsh = result.plan.items.singleWhere(
+      (item) => item.biomarkerId == 'tsh',
+    );
+    expect(
+      tsh.preparation,
+      'Morgens. Biotin mind. 72 Std. vorher pausieren (ab 100 mg/Tag etwa '
+      'eine Woche) und dem Labor mitteilen.',
+    );
+    final draft = client.requests.first.userPrompt;
+    final review = client.requests.last.userPrompt;
+    expect(draft, contains('biotin-streptavidin-immunoassay'));
+    expect(review, contains('biotin-streptavidin-immunoassay'));
+    // The reviewer sees the preparation the reader will get.
+    expect(review, contains('Biotin mind. 72 Std. vorher pausieren'));
   });
 
   test('lab planner accepts a valid exact catalog plan', () async {
@@ -942,9 +1254,6 @@ Map<String, Object?> _externalLabBody(
   _ => ('bio-1', 'ApoB'),
 };
 
-String _coverage(ProviderRequest request, {Object? recordCount}) =>
-    '<context_coverage>${jsonEncode(_receipt(request, recordCount: recordCount))}</context_coverage>';
-
 Map<String, Object?> _receipt(ProviderRequest request, {Object? recordCount}) {
   final package = Map<String, Object?>.from(
     jsonDecode(request.contextJson) as Map,
@@ -973,10 +1282,81 @@ class _Factory extends AiProviderClientFactory {
   AiProviderClient create(AiProvider provider) => client;
 }
 
+/// A reply that judges every checklist item, as a compliant model would.
+String _reviewed(ProviderRequest request, String answer) {
+  final digest = jsonDecode(request.digestText!) as Map<String, Object?>;
+  final ids = [
+    for (final item in digest['review_checklist']! as List) (item as Map)['id'],
+  ];
+  if (ids.isEmpty) return answer;
+  final review = jsonEncode({
+    'relevant': const <Object?>[],
+    'uncertain': const <Object?>[],
+    'not_relevant': ids,
+  });
+  return '<exposure_review>$review</exposure_review>\n$answer';
+}
+
+/// A biotin product taken daily and a TSH drawn the morning after a dose.
+Future<void> _seedBiotinAndTsh(_Fixture fixture) async {
+  final now = DateTime.now();
+  final repository = fixture.repository;
+  await repository.saveSupplement(
+    Supplement(
+      id: 'hair',
+      name: 'Haut, Haare & Nägel',
+      ingredients: const [
+        {'name': 'Biotin', 'amount': 10, 'unit': 'mg'},
+      ],
+      createdAt: now,
+      updatedAt: now,
+    ),
+  );
+  for (var day = 0; day < 10; day++) {
+    await repository.saveIntake(
+      SupplementIntake(
+        id: 'hair-$day',
+        profileId: fixture.profile.id,
+        supplementId: 'hair',
+        takenAt: now.subtract(Duration(days: day, hours: 2)),
+        dose: 1,
+        unit: 'capsule',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  }
+  await repository.saveBiomarker(
+    Biomarker(
+      id: 'tsh',
+      canonicalName: 'tsh',
+      displayName: 'TSH',
+      createdAt: now,
+      updatedAt: now,
+    ),
+  );
+  await repository.saveMeasurement(
+    Measurement(
+      id: 'tsh-1',
+      profileId: fixture.profile.id,
+      biomarkerId: 'tsh',
+      takenAt: now.subtract(const Duration(days: 2)),
+      value: 0.3,
+      unit: 'mU/L',
+      createdAt: now,
+      updatedAt: now,
+    ),
+  );
+}
+
 class _Client implements AiProviderClient {
-  _Client(this._response);
+  _Client(this._response, {this.beforeAnswer});
 
   final ProviderResponse Function(ProviderRequest request) _response;
+
+  /// Runs tool calls through the service's handler before answering, the
+  /// way a provider's tool loop would.
+  final Future<void> Function(AgentToolHandler handler)? beforeAnswer;
   int calls = 0;
   final List<ProviderRequest> requests = [];
 
@@ -998,9 +1378,13 @@ class _Client implements AiProviderClient {
     String apiKey,
     ProviderRequest request, {
     ProviderActivityCallback? onActivity,
+    AgentToolHandler? onToolCalls,
   }) async {
     calls++;
     requests.add(request);
+    if (beforeAnswer != null && onToolCalls != null) {
+      await beforeAnswer!(onToolCalls);
+    }
     return _response(request);
   }
 }
