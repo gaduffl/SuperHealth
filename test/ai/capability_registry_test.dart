@@ -5,7 +5,7 @@ void main() {
   final registry = ProviderCapabilityRegistry();
 
   test('registry records the documentation audit date', () {
-    expect(ProviderCapabilityRegistry.version, '2026-09-25');
+    expect(ProviderCapabilityRegistry.version, '2026-09-30');
   });
 
   test('documented model families expose only their audited controls', () {
@@ -32,6 +32,14 @@ void main() {
             provider: AiProvider.openai,
             id: 'gpt-6-luna',
             effort: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+            context: 1050000,
+            web: true,
+            code: true,
+          ),
+          (
+            provider: AiProvider.openai,
+            id: 'gpt-6.1-sol',
+            effort: ['low', 'medium', 'high', 'xhigh', 'max'],
             context: 1050000,
             web: true,
             code: true,
@@ -357,7 +365,12 @@ void main() {
   });
 
   test('OpenAI GPT-6 exposes the lossless context file path', () {
-    for (final id in ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra']) {
+    for (final id in [
+      'gpt-6-sol',
+      'gpt-6.1-sol',
+      'gpt-6-luna',
+      'gpt-6-astra',
+    ]) {
       final value = registry.forModel(AiProvider.openai, id);
       expect(value.losslessContextFile, isTrue, reason: id);
       expect(value.structuredOutput, isTrue, reason: id);
