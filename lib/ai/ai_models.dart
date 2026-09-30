@@ -207,7 +207,7 @@ class TokenUsage {
 /// Versioned from provider documentation. Unknown models intentionally receive
 /// no reasoning/tool controls until their support is known.
 class ProviderCapabilityRegistry {
-  static const version = '2026-09-25';
+  static const version = '2026-09-30';
 
   ModelCapabilities forModel(AiProvider provider, String model) =>
       switch (provider) {
@@ -227,8 +227,8 @@ class ProviderCapabilityRegistry {
         contextWindowTokens: 1050000,
       );
     }
-    // Astra documents no `none` effort, unlike the rest of its family.
-    if (id == 'gpt-6-astra') {
+    // Astra and 6.1 Sol document no `none` effort, unlike the rest of the family.
+    if (const {'gpt-6-astra', 'gpt-6.1-sol'}.contains(id)) {
       return const ModelCapabilities(
         reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         webSearch: true,
