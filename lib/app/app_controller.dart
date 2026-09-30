@@ -20,6 +20,8 @@ import '../ai/lab_price_service.dart';
 import '../ai/provider_clients.dart';
 import '../ai/supplement_label_service.dart';
 import '../analysis/correlation_service.dart';
+import '../analysis/exposure_analysis.dart';
+import '../analysis/interaction_findings.dart';
 import '../analysis/lab_plan_pricing.dart';
 import 'feature_visibility.dart';
 import 'long_task_guard.dart';
@@ -221,6 +223,16 @@ class AppController extends ChangeNotifier {
   /// the thread, and in a new conversation the welcome screen still showing. A
   /// chat has to show what you just said while it is being answered.
   String? pendingAdvisorQuestion;
+
+  /// What the advisor is doing during a turn: looking something up, writing,
+  /// completing its review. A turn can now take several calls, and a still
+  /// screen for a minute is indistinguishable from a hung one.
+  AdvisorProgress? advisorProgress;
+  DateTime? advisorStartedAt;
+
+  /// Whether the running advisor turn holds a foreground service, so the
+  /// screen may say it survives switching away.
+  bool get advisorSurvivesBackground => _longTaskGuard.hasForegroundService;
 
   /// Null until a refresh resolves it; never null to a caller.
   ///
@@ -2075,6 +2087,63 @@ class AppController extends ChangeNotifier {
     return (added: added, removed: removed);
   });
 
+  /// The curated interaction rules evaluated against the loaded record.
+  ///
+  /// Derived here rather than in a screen, and memoised on the lists it reads
+  /// and the local day: a rebuild must not re-run every rule, but a refresh
+  /// that replaced any of those lists, or a new day that moved the
+  /// "currently taking" window, must.
+  List<InteractionFinding> get interactionFindings {
+    final key = (
+      supplements,
+      schedules,
+      intakes,
+      namedRecords,
+      biomarkers,
+      measurements,
+      events,
+      localDayKey(DateTime.now()),
+    );
+    final cached = _findingsCache;
+    if (cached != null && _sameFindingInputs(cached.$1, key)) {
+      return cached.$2;
+    }
+    final exposure = ExposureAnalysis.build(
+      supplements: supplements,
+      schedules: schedules,
+      intakes: intakes,
+      records: namedRecords,
+      now: DateTime.now(),
+    );
+    final findings = const InteractionFindingsEngine().evaluate(
+      exposure: exposure,
+      biomarkers: biomarkers,
+      measurements: measurements,
+      events: events,
+    );
+    _findingsCache = (key, findings);
+    return findings;
+  }
+
+  /// Findings that touch one biomarker: current exposures that affect its
+  /// test, and its past values that may have been affected.
+  List<InteractionFinding> findingsForBiomarker(String biomarkerId) => [
+    for (final finding in interactionFindings)
+      if (finding.affectedBiomarkerIds.contains(biomarkerId)) finding,
+  ];
+
+  (_FindingInputs, List<InteractionFinding>)? _findingsCache;
+
+  static bool _sameFindingInputs(_FindingInputs a, _FindingInputs b) =>
+      identical(a.$1, b.$1) &&
+      identical(a.$2, b.$2) &&
+      identical(a.$3, b.$3) &&
+      identical(a.$4, b.$4) &&
+      identical(a.$5, b.$5) &&
+      identical(a.$6, b.$6) &&
+      identical(a.$7, b.$7) &&
+      a.$8 == b.$8;
+
   /// When [biomarkerId] was last measured, including calculated results.
   DateTime? lastMeasuredAt(String biomarkerId) => measurements
       .firstWhereOrNull((item) => item.biomarkerId == biomarkerId)
@@ -2180,7 +2249,14 @@ class AppController extends ChangeNotifier {
     await refreshInitialSetupProgress();
   }
 
-  Future<void> askAdvisor(String question) async {
+  /// [notice] is what the ongoing notification says while the turn runs;
+  /// required for the same reason as in [generateLabPlan] — only the widget
+  /// tree knows the reader's language.
+  Future<void> askAdvisor(
+    String question, {
+    required LongTaskNotice notice,
+    bool deepReview = false,
+  }) async {
     final settings = advisorSettings;
     if (settings == null) {
       throw StateError('Configure the advisor model first.');
@@ -2193,7 +2269,12 @@ class AppController extends ChangeNotifier {
       // Visible before the first byte leaves, so the thread shows the question
       // rather than an empty screen with a progress bar over it.
       pendingAdvisorQuestion = question.trim();
+      advisorStartedAt = DateTime.now();
       notifyListeners();
+      // A turn is several calls now — tool rounds, perhaps a review
+      // follow-up — so it gets the same protection against a sleeping device
+      // and a reclaimed process as a lab plan.
+      await _longTaskGuard.hold(notice);
       try {
         final turn = await _advisorService.ask(
           profileId: _profileId,
@@ -2201,9 +2282,14 @@ class AppController extends ChangeNotifier {
           question: question,
           settings: settings,
           brief: visibility.briefAnswers,
+          mode: deepReview ? AdvisorMode.deepReview : AdvisorMode.standard,
+          onProgress: (progress) {
+            advisorProgress = progress;
+            notifyListeners();
+          },
         );
-        lastContextBytes = turn.context.byteLength;
-        lastContextTokens = turn.context.estimatedTokens;
+        lastContextBytes = turn.contextBytes;
+        lastContextTokens = turn.contextTokens;
         lastTokenUsage = turn.usage;
         advisorMessages = await repository.messages(_profileId, conversationId);
         // The first answer in a new conversation is what makes it exist.
@@ -2214,6 +2300,9 @@ class AppController extends ChangeNotifier {
         // Cleared either way: on success the stored message replaces it, and on
         // failure the screen puts the question back in the input box.
         pendingAdvisorQuestion = null;
+        advisorProgress = null;
+        advisorStartedAt = null;
+        await _longTaskGuard.release();
         // However the turn ended — and a failed one is the interesting case —
         // the log now has something new to say about it.
         await refreshAiLogSummaries();
@@ -2914,3 +3003,14 @@ class AppController extends ChangeNotifier {
     super.dispose();
   }
 }
+
+typedef _FindingInputs = (
+  List<Supplement>,
+  List<SupplementSchedule>,
+  List<SupplementIntake>,
+  List<NamedHealthRecord>,
+  List<Biomarker>,
+  List<Measurement>,
+  List<HealthEvent>,
+  String,
+);

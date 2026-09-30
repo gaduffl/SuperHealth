@@ -232,6 +232,11 @@ enum HealthContextScope {
 
   /// Only what the profile has actually measured or taken.
   advisory,
+
+  /// The whole record, unwindowed, for the advisor's on-device tools and
+  /// digest. Never sent as a whole: the digest summarises it and tools return
+  /// slices of it on request, so there is no size to economise on here.
+  agent,
 }
 
 class HealthRepository {
@@ -2611,7 +2616,8 @@ class HealthRepository {
       // actually measured, which is a small fraction of a 169-entry catalog.
       // One shared context could not serve both without wasting most of it.
       'biomarker_catalog': switch (scope) {
-        HealthContextScope.labPlanning => biomarkerRows,
+        HealthContextScope.labPlanning ||
+        HealthContextScope.agent => biomarkerRows,
         HealthContextScope.advisory =>
           biomarkerRows
               .where(
@@ -2620,10 +2626,8 @@ class HealthRepository {
               .toList(growable: false),
       },
       'biomarker_ranges': switch (scope) {
-        HealthContextScope.labPlanning => await db.query(
-          'biomarker_ranges',
-          where: 'deleted = 0',
-        ),
+        HealthContextScope.labPlanning || HealthContextScope.agent =>
+          await db.query('biomarker_ranges', where: 'deleted = 0'),
         HealthContextScope.advisory => await _measuredBiomarkerRanges(
           db,
           profileId,
@@ -2743,6 +2747,7 @@ class HealthRepository {
                   'start of a supplement.',
             },
           },
+          HealthContextScope.agent => const <String, Object?>{},
           HealthContextScope.advisory => {
             'supplement_intakes': {
               'days': advisoryIntakeWindow.inDays,
@@ -2874,7 +2879,15 @@ class HealthRepository {
     final cutoff = switch (scope) {
       HealthContextScope.labPlanning => labPlanningIntakeCutoff(DateTime.now()),
       HealthContextScope.advisory => advisoryIntakeCutoff(DateTime.now()),
+      HealthContextScope.agent => null,
     };
+    if (cutoff == null) {
+      return db.query(
+        'supplement_intakes',
+        where: 'profile_id = ? AND deleted = 0',
+        whereArgs: [profileId],
+      );
+    }
     return db.query(
       'supplement_intakes',
       where: 'profile_id = ? AND deleted = 0 AND taken_at >= ?',

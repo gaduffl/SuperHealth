@@ -43,9 +43,10 @@ Flutter SDK path — do not commit a machine-specific rewrite of it.
 | `lib/domain/entities.dart` | Every entity, each with `toMap()`/`fromMap()` mirroring its SQLite row |
 | `lib/data/app_database.dart` | Versioned schema: `schemaVersion`, `_create`, `_upgrade`, table allowlists |
 | `lib/data/health_repository.dart` | The only normal read/write interface to health records |
-| `lib/analysis/` | `correlation_service.dart`, `supplement_insights.dart` — all derived numbers |
+| `lib/analysis/` | `correlation_service.dart`, `supplement_insights.dart`, `exposure_analysis.dart`, `interaction_findings.dart` — all derived numbers |
+| `lib/domain/interaction_rules.dart` | The curated interaction table; `biomarker_concepts.dart` and `medication_catalog.dart` are the vocabularies it names tests and drugs by |
 | `lib/app/app_controller.dart` | `ChangeNotifier` holding loaded state; screens read it, mutate through it |
-| `lib/ai/` | Provider clients, context builder, advisor, parsing, lab planner |
+| `lib/ai/` | Provider clients and their tool loops, the advisor (digest, tools, review), context builder, parsing, lab planner |
 | `lib/sync/`, `lib/backup/` | OneDrive snapshot sync, portable backup/restore |
 | `lib/ui/` | Screens, dialogs, and `design.dart`/`charts.dart` visual vocabulary |
 | `test/` | Mirrors `lib/` one directory per layer |
@@ -581,11 +582,13 @@ from the thread, welcome screen still showing. `pendingAdvisorQuestion` carries
 it for exactly the duration of the call. Whenever a write is deferred until
 success, ask where the user sees the thing they just did.
 
-**The advisor is where prompt caching pays, not the lab planner.** A chat
-re-sends the entire context on every turn; the planner runs twice and stops. The
-advisor had no `promptCacheKey` at all. Both now key on the catalog fingerprint
-through `ProviderRequest.cacheKey`, which is bounded by construction — a key one
-character over the limit fails the whole call before a token.
+**The advisor is where prompt caching pays, not the lab planner.** A tool loop
+re-sends the digest on every round and a chat on every turn; the planner runs
+twice and stops. The planner keys on the catalog fingerprint; the advisor keys
+on a hash of the profile (`advisorCacheKeyFor`), because its digest changes with
+every logged dose and a content-derived key would send each turn to a cold node.
+Both go through `ProviderRequest.cacheKey`, which is bounded by construction — a
+key one character over the limit fails the whole call before a token.
 
 **Forbidding boilerplate in a prompt obliges the app to say it.** The advisor
 and planner prompts now ban the "consult your doctor", "not a diagnosis",
@@ -819,11 +822,82 @@ dropped, never created.
 
 **The AI context is scoped per flow.** `HealthContextScope.labPlanning` carries
 the whole biomarker catalog because the planner must be able to propose and
-price a test never run; `advisory` carries only measured markers. Supplements are
+price a test never run; `advisory` carries only measured markers, and is what a
+whole-record review sends; `agent` is the unwindowed record the advisor's digest
+and tools read on the device, and is never sent as a whole. Supplements are
 filtered to the active profile, and the raw inventory ledger is not shipped at
 all — `household_stock_levels` carries the useful part in one row per item. One
 shared context could not serve both flows without wasting most of it on
 whichever did not need it.
+
+**A context that holds everything proves the data was sent, not that it was
+used.** The advisor once sent every row (~310k tokens) and relied on attention
+to connect biotin, inside an ingredient string, to a question about TSH — a
+latent association with no words in common, which is exactly what long-context
+recall is worst at. The advisor now answers from `ClinicalDigest`, which lists
+*every entity* (each medication, condition, product, substance, measured
+biomarker, lab comment and symptom series) and abbreviates only detail, plus
+read-only tools for that detail. An agent that searches from nothing never
+thinks to look for biotin; one that is shown every entity does not have to.
+Completeness is pinned by `test/ai/clinical_digest_test.dart` — a new kind of
+record means a new digest section and a new assertion there, and free text goes
+in verbatim.
+
+**Known interactions are code, not attention.** `interactionRules` is a curated,
+cited table: substance or medicine against lab values (assay interference,
+physiological effect, masking, timing before a draw), supplement–drug pairs,
+and official upper intake levels. `InteractionFindingsEngine` evaluates every
+rule against every exposure and every stored measurement, so "biotin 10 mg
+yesterday, TSH 0.3 this morning" is found every time rather than when noticed.
+Add a rule with its source, both languages, and a test; never tell anyone to
+stop a prescribed medicine in a rule. A missing rule means "not in the table",
+never "no interaction" — the prompts and the UI both say so.
+
+**Thresholds convert, they never add across units.** A rule's dose is compared
+in its own unit through `SubstanceConversions` (mg↔µg, and the IU of vitamin D);
+a contribution that cannot be converted — a salt, an extract, "1 capsule", a
+product whose contents were never entered — is an *unknown* dose, and each rule
+decides whether an unknown dose still fires. Never treat it as zero: a product
+called "Biotin forte" with no ingredients must still raise the biotin finding.
+
+**The review is the coverage proof.** Every current substance, current
+medication and finding is on `review_checklist`, and the reply must open with an
+`<exposure_review>` giving each one a verdict. `parseAdvisorReply` checks the
+ids; anything missing gets one follow-up naming it; anything still missing is
+stored and shown as *not assessed*, never implied irrelevant. A follow-up that
+fails as a call leaves the same gap and keeps the first answer; only a reply
+with no answer at all makes that failure the turn's. This replaced a
+receipt that echoed hashes the prompt itself supplied — proof of copying, not of
+reading. The review is stored after `reviewSentinel` in the message content and
+stripped from replayed history, so old verdicts are never copied forward.
+
+**Advisor tools read the snapshot, never the database.** `AdvisorToolbox` runs
+over `AgentSnapshot` — parsed rows from `completeProfileSnapshot(scope: agent)` —
+so the AI layer still holds data, not a handle. Results are bounded
+(`maxResultChars`) because every result is re-sent on each later round, and a
+bad call returns an error the model can read rather than throwing mid-loop.
+
+**Tool loops echo provider items verbatim.** Anthropic thinking blocks carry
+signatures the API checks; OpenAI with `store: false` needs
+`include: reasoning.encrypted_content` and its reasoning items passed back; both
+reject a call without its result. Tool definitions sit in the cached prefix, so
+they are identical on every round and on the review follow-up. Anthropic allows
+four cache breakpoints: system, digest, package, and one that moves to the
+newest tool results — move it, never add another. A provider whose loop is not
+verified (Gemini) gets no tools and the full package instead, so it never
+answers from less than it used to.
+
+**A deterministic preparation beats a remembered one.** Rules whose timing
+changes a result carry a `PreparationNote`; `withFindingPreparation` writes it
+into every planned test the finding affects, before the independent review, so
+"pause biotin 72 h before" cannot fall off a forty-item plan. A note the model
+already wrote is recognised by keyword and not doubled.
+
+**Names match on whole words.** `matchesKeyword` treats `word*` as a word prefix
+and anything else as whole words, because prefixes misfire on short stems:
+"lauf*" found "Laufnase" (a runny nose) as exercise and "wein*" found "Weinen"
+(crying) as alcohol. `MedicationClass` aliases match as whole-word phrases, so
+"ASS 100" is aspirin and "Massage" is not.
 
 **Keep this file current.** When a change adds, removes, or alters a convention
 described here — a new layer under `lib/`, a different verification command, a
@@ -858,6 +932,14 @@ which remain unexamined rather than known-good:
 - The backup/restore checksum scheme.
 - Localisation coverage beyond unit and migration strings.
 - Index coverage and query performance on the larger tables.
+- The clinical content of `interactionRules`. Thresholds and windows were
+  checked against the cited sources when written, but no clinician has
+  reviewed the table: treat a rule as a well-sourced default, not validated
+  clinical advice, and prefer adding a source to editing a number.
+- The provider tool loops against live APIs. Their wire shapes are pinned by
+  scripted-stream tests (`test/ai/provider_tool_loop_test.dart`), which prove the
+  app sends what it intends, not that a provider accepts it — the first real
+  turn on each provider is the verification. Gemini has no tool loop at all.
 - Foreground-service behaviour on a real device. `LongTaskGuard`'s bookkeeping is
   tested against injected seams, but the service actually starting, surviving
   Doze, and stopping cleanly has never run anywhere: CI builds the APK and never

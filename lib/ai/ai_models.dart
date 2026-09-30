@@ -63,12 +63,71 @@ class ProviderChatMessage {
   final String content;
 }
 
+/// A function the model may call, executed on the device.
+///
+/// The agent loop is provider-neutral: each client translates these into its
+/// own wire shape and keeps its own transcript, because what must be echoed
+/// back between rounds (thinking blocks, encrypted reasoning items) differs by
+/// provider and is only valid verbatim.
+class AgentToolSpec {
+  const AgentToolSpec({
+    required this.name,
+    required this.description,
+    required this.inputSchema,
+  });
+
+  final String name;
+  final String description;
+
+  /// JSON Schema for the arguments.
+  final Map<String, Object?> inputSchema;
+}
+
+class AgentToolCall {
+  const AgentToolCall({
+    required this.id,
+    required this.name,
+    required this.input,
+    this.inputError,
+  });
+
+  /// The provider's id for this call, echoed with the result.
+  final String id;
+  final String name;
+  final Map<String, Object?> input;
+
+  /// Set when the provider's arguments could not be decoded. Such a call is
+  /// answered with an error so the model can retry, never silently dropped.
+  final String? inputError;
+}
+
+class AgentToolResult {
+  const AgentToolResult({
+    required this.callId,
+    required this.content,
+    this.isError = false,
+  });
+
+  final String callId;
+  final String content;
+  final bool isError;
+}
+
+/// Runs one round of tool calls. [round] counts from 1.
+typedef AgentToolHandler =
+    Future<List<AgentToolResult>> Function(
+      List<AgentToolCall> calls,
+      int round,
+    );
+
 class ProviderRequest {
   const ProviderRequest({
     required this.model,
     required this.systemPrompt,
     required this.userPrompt,
     required this.contextJson,
+    this.digestText,
+    this.tools = const [],
     this.history = const [],
     this.reasoningLevel,
     this.webSearch = false,
@@ -84,7 +143,18 @@ class ProviderRequest {
   final String model;
   final String systemPrompt;
   final String userPrompt;
+
+  /// The full evidence package, or empty when only [digestText] is sent.
   final String contextJson;
+
+  /// The advisor's clinical digest. Sent first and marked cacheable, since it
+  /// is identical across every round of one turn and usually across turns.
+  final String? digestText;
+
+  /// Functions the model may call, run on the device between rounds. Must be
+  /// byte-identical across the rounds of a turn: they are part of the cached
+  /// prefix.
+  final List<AgentToolSpec> tools;
 
   /// Prior turns in order. The current question stays in [userPrompt];
   /// providers place history between the stable context and the prompt.
@@ -144,6 +214,8 @@ class ProviderResponse {
     required this.raw,
     this.responseId,
     this.citations = const [],
+    this.aggregateUsage,
+    this.toolRounds = 0,
   });
 
   final String text;
@@ -151,12 +223,19 @@ class ProviderResponse {
   final String? responseId;
   final List<String> citations;
 
+  /// The sum over every call of a tool loop. [raw] is only the last call, so
+  /// reading usage from it alone would report one round of several.
+  final TokenUsage? aggregateUsage;
+
+  /// How many rounds of tool calls the answer took.
+  final int toolRounds;
+
   /// What the provider says the exchange actually cost in tokens.
   ///
   /// Read from [raw] rather than plumbed through each client, because all
   /// three report it in their own response body and none of them needs to know
   /// the app is looking.
-  TokenUsage? get usage => TokenUsage.fromResponse(raw);
+  TokenUsage? get usage => aggregateUsage ?? TokenUsage.fromResponse(raw);
 }
 
 /// Tokens a single exchange consumed, as reported by the provider.
@@ -171,6 +250,17 @@ class TokenUsage {
   final int? outputTokens;
 
   bool get isEmpty => inputTokens == null && outputTokens == null;
+
+  /// Adds two reports; a side that reported nothing stays unknown rather than
+  /// becoming zero.
+  TokenUsage operator +(TokenUsage other) => TokenUsage(
+    inputTokens: inputTokens == null && other.inputTokens == null
+        ? null
+        : (inputTokens ?? 0) + (other.inputTokens ?? 0),
+    outputTokens: outputTokens == null && other.outputTokens == null
+        ? null
+        : (outputTokens ?? 0) + (other.outputTokens ?? 0),
+  );
 
   int? get totalTokens => inputTokens == null && outputTokens == null
       ? null
