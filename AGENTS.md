@@ -726,6 +726,12 @@ the bytes; Android's same-key signature check is the backstop, not the first lin
 `0.50.0+70` is not an update to `0.42.0+71`. This is also why every PR bumps both
 halves of `version:`.
 
+**The app's version is read from the installed package, never written in a
+widget.** Settings' About line carried a literal `0.5.0` through dozens of
+releases, so it described no build anyone had. `UpdateController.installedVersion`
+(Android's `versionName` + `versionCode`, printed as `0.43.1+73`) is the one source;
+when it is unavailable the line drops the number instead of showing a stale one.
+
 **Updater state is a `ChangeNotifier` beside `AppController`, not inside it.** It
 holds no health data and is device-level, so it is provided separately in `main.dart`
 and read as `UpdateController?` — absent in a test that does not care, in which case
