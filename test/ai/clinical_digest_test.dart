@@ -227,7 +227,10 @@ class _Record {
     return (snapshot: snapshot, exposure: exposure);
   }
 
-  Future<ClinicalDigest> digest() async {
+  Future<ClinicalDigest> digest({
+    ClinicalDigestPurpose purpose = ClinicalDigestPurpose.advisor,
+    List<DueBiomarker> overdueTests = const [],
+  }) async {
     final loaded = await load();
     return const ClinicalDigestBuilder().build(
       snapshot: loaded.snapshot,
@@ -238,6 +241,8 @@ class _Record {
         measurements: loaded.snapshot.measurements,
         events: loaded.snapshot.events,
       ),
+      purpose: purpose,
+      overdueTests: overdueTests,
     );
   }
 
@@ -329,6 +334,74 @@ void main() {
       expect(
         digest.checklist.singleWhere((item) => item.id == 'med:lt4').label,
         'L-Thyroxin 75',
+      );
+    });
+
+    test('the advisor judges what is taken and found, and reaches the '
+        'catalog through a tool', () async {
+      final record = await _Record.create();
+      addTearDown(record.dispose);
+      final digest = await record.digest();
+      final json = jsonDecode(digest.json) as Map;
+
+      expect(digest.checklist.map((item) => item.kind).toSet(), {
+        'substance',
+        'medication',
+        'finding',
+      });
+      expect(json.containsKey('test_catalog'), isFalse);
+      expect(
+        (json['not_in_this_digest'] as Map).values,
+        contains('biomarker_catalog'),
+      );
+    });
+
+    test('the planner also accounts for conditions, goals, family history and '
+        'optional overdue tests, and carries the whole catalog', () async {
+      final record = await _Record.create();
+      addTearDown(record.dispose);
+      final psa = (await record.repository.biomarkers()).singleWhere(
+        (item) => item.id == 'psa',
+      );
+      final digest = await record.digest(
+        purpose: ClinicalDigestPurpose.labPlanner,
+        overdueTests: [
+          DueBiomarker(
+            biomarker: psa,
+            listNames: const ['Vorsorge'],
+            dueDate: record.now,
+            intervalDays: 365,
+          ),
+        ],
+      );
+      final kinds = {for (final item in digest.checklist) item.id: item.kind};
+
+      expect(kinds['hashi'], 'condition');
+      expect(kinds['fam'], 'family_history');
+      expect(kinds['due:psa'], 'overdue_test');
+      expect(kinds['med:lt4'], 'medication');
+      // Resolved is not current, for a condition as for a medicine.
+      expect(kinds, isNot(contains('med:ppi')));
+      final json = jsonDecode(digest.json) as Map;
+      final catalog = [
+        for (final row in json['test_catalog'] as List) (row as Map)['id'],
+      ];
+      // Never measured, and still a test the planner can propose.
+      expect(catalog, contains('psa'));
+      expect(
+        (json['not_in_this_digest'] as Map).values,
+        isNot(contains('biomarker_catalog')),
+      );
+      // A finding about one past draw names the test, so two of them do not
+      // read like the same item listed twice.
+      expect(
+        digest.checklist
+            .singleWhere(
+              (item) =>
+                  item.id == 'finding:biotin-streptavidin-immunoassay@tsh',
+            )
+            .label,
+        endsWith('(TSH)'),
       );
     });
 

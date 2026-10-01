@@ -52,6 +52,31 @@ const legacyLabPlansTable = '''
   )
 ''';
 
+/// `lab_plans` as a v12 database had it: the v5 shape plus the tier
+/// tradeoffs v12 added. A fixture opened at v12 or later starts from this, so
+/// the v15 coverage column has a table to go into.
+const legacyLabPlansV12Table = '''
+  CREATE TABLE lab_plans (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    planned_for TEXT,
+    currency TEXT NOT NULL DEFAULT 'EUR',
+    context_hash TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    verification_summary TEXT NOT NULL DEFAULT '',
+    verification_warnings_json TEXT NOT NULL DEFAULT '[]',
+    verification_citations_json TEXT NOT NULL DEFAULT '[]',
+    verified_at TEXT,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    tier_tradeoffs_json TEXT NOT NULL DEFAULT '{}'
+  )
+''';
+
 const legacyBiomarkerListsTable = '''
   CREATE TABLE biomarker_lists (
     id TEXT PRIMARY KEY,

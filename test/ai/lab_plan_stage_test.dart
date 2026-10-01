@@ -20,6 +20,7 @@ void main() {
       LabPlanStage.preparingContext,
       LabPlanStage.drafting,
       LabPlanStage.repairingDraft,
+      LabPlanStage.completingCoverage,
       LabPlanStage.verifying,
       LabPlanStage.reading,
     ]);

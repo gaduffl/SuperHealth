@@ -300,6 +300,19 @@ class LabPlanExportService {
       },
       'tiers_are_cumulative': true,
       'tiers': tiers,
+      // Null for a plan made before coverage was recorded: absent is a
+      // different statement from an empty list, and the export keeps it.
+      'coverage': plan.coverage == null
+          ? null
+          : [
+              for (final entry in plan.coverage!)
+                {
+                  ...entry.toJson(),
+                  'tests': [
+                    for (final id in entry.biomarkerIds) _nameOf(plan, id),
+                  ],
+                },
+            ],
     };
     return ExportedFile(
       fileName: '${_baseName(plan)}.json',
@@ -360,6 +373,20 @@ class LabPlanExportService {
       ['Independent review', plan.verificationSummary],
       ['Review warnings', plan.verificationWarnings.join(' | ')],
       ['Sources', plan.verificationCitations.join(' | ')],
+      [],
+      if (plan.coverage == null)
+        ['Coverage', 'Not recorded for this plan']
+      else ...[
+        ['Record item', 'Kind', 'Verdict', 'Tests', 'Why'],
+        for (final entry in plan.coverage!)
+          [
+            entry.label,
+            entry.kind,
+            _verdictLabel(entry.verdict),
+            entry.biomarkerIds.map((id) => _nameOf(plan, id)).join(' | '),
+            entry.why,
+          ],
+      ],
     ];
     return ExportedFile(
       fileName: '${_baseName(plan)}.csv',
@@ -452,6 +479,10 @@ class LabPlanExportService {
               ),
             ),
           ],
+          if (plan.coverage != null && plan.coverage!.isNotEmpty) ...[
+            pw.SizedBox(height: 10),
+            _pdfCoverage(plan),
+          ],
           pw.SizedBox(height: 18),
           for (final tier in LabTier.values) ...[
             _tierHeader(plan, tier),
@@ -469,6 +500,72 @@ class LabPlanExportService {
       bytes: await document.save(),
     );
   }
+
+  /// What the plan did about everything current in the record. Gaps first,
+  /// in their own colour, so a printed page cannot imply they were judged.
+  pw.Widget _pdfCoverage(LabPlan plan) {
+    final coverage = plan.coverage!;
+    final gaps = plan.notConsidered;
+    String line(PlanCoverage entry) {
+      final tests = entry.biomarkerIds.map((id) => _nameOf(plan, id));
+      final head = tests.isEmpty
+          ? entry.label
+          : '${entry.label} - ${tests.join(', ')}';
+      return entry.why.isEmpty ? head : '$head: ${entry.why}';
+    }
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(8),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(
+          color: gaps.isEmpty ? PdfColors.grey400 : PdfColors.red300,
+        ),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            gaps.isEmpty
+                ? 'Accounted for all ${coverage.length} items in the record'
+                : '${coverage.length - gaps.length} of ${coverage.length} '
+                      'items accounted for - ${gaps.length} not considered',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+          for (final entry in gaps)
+            pw.Text(
+              labPlanPdfSafeText('Not considered: ${entry.label}'),
+              style: const pw.TextStyle(fontSize: 8, color: PdfColors.red700),
+            ),
+          for (final entry in coverage)
+            if (entry.verdict == PlanCoverageVerdict.addressed)
+              pw.Text(
+                labPlanPdfSafeText('Addressed: ${line(entry)}'),
+                style: const pw.TextStyle(fontSize: 8),
+              ),
+          for (final entry in coverage)
+            if (entry.verdict == PlanCoverageVerdict.notNeeded)
+              pw.Text(
+                labPlanPdfSafeText('No test needed: ${line(entry)}'),
+                style: const pw.TextStyle(fontSize: 8),
+              ),
+        ],
+      ),
+    );
+  }
+
+  String _nameOf(LabPlan plan, String biomarkerId) =>
+      plan.items
+          .where((item) => item.biomarkerId == biomarkerId)
+          .firstOrNull
+          ?.biomarkerName ??
+      biomarkerId;
+
+  String _verdictLabel(PlanCoverageVerdict verdict) => switch (verdict) {
+    PlanCoverageVerdict.addressed => 'addressed',
+    PlanCoverageVerdict.notNeeded => 'no test needed',
+    PlanCoverageVerdict.notConsidered => 'not considered',
+  };
 
   pw.Widget _tierHeader(LabPlan plan, LabTier tier) {
     final missing = plan.missingPriceCount(tier);

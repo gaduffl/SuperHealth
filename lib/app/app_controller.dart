@@ -296,6 +296,10 @@ class AppController extends ChangeNotifier {
   /// healthy through a stall; a byte count that stopped moving does not.
   DateTime? labPlanActivityAt;
 
+  /// The record lookups running on the device between two rounds of a call,
+  /// or empty while the model itself is working.
+  List<String> labPlanTools = const [];
+
   /// Whether the running generation is held by a foreground service, and so
   /// survives the app leaving the foreground.
   ///
@@ -2377,11 +2381,15 @@ class AppController extends ChangeNotifier {
   /// device locale — under [AppLanguage.system] only the widget tree knows
   /// which language the user is reading, and a silent English fallback is
   /// exactly the untranslated string this app does not allow.
+  ///
+  /// [wholeRecord] also sends the complete evidence package — several times
+  /// the cost and time of a plan made from the digest and on-device lookups.
   Future<LabPlanGeneration> generateLabPlan({
     required LongTaskNotice notice,
     DateTime? targetDate,
     String priorities = '',
     bool includeOverdueBiomarkers = true,
+    bool wholeRecord = false,
   }) async {
     // Its own setting. This used to read advisorSettings, so a planner run
     // silently used whatever the advisor was set to — on the most expensive
@@ -2410,8 +2418,10 @@ class AppController extends ChangeNotifier {
           targetDate: targetDate,
           priorities: priorities,
           includeOverdueBiomarkers: includeOverdueBiomarkers,
+          wholeRecord: wholeRecord,
           onProgress: (update) {
             labPlanStage = update.stage;
+            labPlanTools = update.tools;
             final activity = update.activity;
             if (activity != null) {
               labPlanActivity = activity;
@@ -2425,8 +2435,8 @@ class AppController extends ChangeNotifier {
           },
         );
         draftLabPlan = result;
-        lastContextBytes = result.context.byteLength;
-        lastContextTokens = result.context.estimatedTokens;
+        lastContextBytes = result.contextBytes;
+        lastContextTokens = result.contextTokens;
         return result;
       } finally {
         // Cleared however this ends. A stage left behind after a failure would
@@ -2435,6 +2445,7 @@ class AppController extends ChangeNotifier {
         labPlanStartedAt = null;
         labPlanActivity = null;
         labPlanActivityAt = null;
+        labPlanTools = const [];
         await _longTaskGuard.release();
         // However this ended, the log now has something new to say about it.
         await refreshAiLogSummaries();
@@ -2475,8 +2486,8 @@ class AppController extends ChangeNotifier {
       includeOverdueBiomarkers: includeOverdueBiomarkers,
     );
     draftLabPlan = result;
-    lastContextBytes = result.context.byteLength;
-    lastContextTokens = result.context.estimatedTokens;
+    lastContextBytes = result.contextBytes;
+    lastContextTokens = result.contextTokens;
     return result;
   });
 

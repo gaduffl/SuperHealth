@@ -10,14 +10,32 @@ import '../domain/interaction_rules.dart';
 import 'agent_snapshot.dart';
 import 'health_context_builder.dart';
 
-/// One thing the advisor must explicitly judge before answering.
+/// One thing a model must explicitly judge: the advisor before answering, the
+/// lab planner in its plan's coverage.
 class ReviewItem {
-  const ReviewItem({required this.id, required this.label});
+  const ReviewItem({required this.id, required this.label, this.kind = ''});
 
   final String id;
 
   /// How the item is named to the reader — never the id.
   final String label;
+
+  /// `substance`, `medication`, `condition`, `goal`, `family_history`,
+  /// `finding` or `overdue_test`.
+  final String kind;
+}
+
+/// Who reads the digest, which decides what it lists and what must be judged.
+enum ClinicalDigestPurpose {
+  /// The advisor judges what is taken and what was found; the record's other
+  /// entries are context for a question, not items every answer must address.
+  advisor,
+
+  /// The lab planner additionally accounts for every current condition, goal,
+  /// family history entry and optional overdue test, because each of those is
+  /// a reason to order a test — and carries the whole test catalog inline,
+  /// since choosing from it is the job.
+  labPlanner,
 }
 
 /// The advisor's always-present picture of the whole record.
@@ -61,33 +79,65 @@ class ClinicalDigestBuilder {
   /// Measurement notes kept per biomarker; the rest via `biomarker_history`.
   static const measurementNotesPerBiomarker = 10;
 
+  /// [overdueTests] are overdue list tests the plan is free to leave out;
+  /// each then needs a verdict. Tests the plan must include are enforced by
+  /// validation instead, so they are not passed here.
   ClinicalDigest build({
     required AgentSnapshot snapshot,
     required ExposureAnalysis exposure,
     required List<InteractionFinding> findings,
+    ClinicalDigestPurpose purpose = ClinicalDigestPurpose.advisor,
+    List<DueBiomarker> overdueTests = const [],
   }) {
     final now = exposure.now;
+    final planning = purpose == ClinicalDigestPurpose.labPlanner;
+    final records = [
+      for (final record in snapshot.records)
+        if (!record.deleted && ExposureAnalysis.isCurrentRecord(record, now))
+          record,
+    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final checklist = <ReviewItem>[
       for (final substance in exposure.substances)
         if (substance.current)
           ReviewItem(
             id: substance.id,
+            kind: 'substance',
             label: substance.ingredientsRecorded
                 ? substance.displayName
                 : '${substance.displayName} (contents not recorded)',
           ),
       for (final medication in exposure.medications)
         if (medication.current)
-          ReviewItem(id: medication.id, label: medication.record.name),
+          ReviewItem(
+            id: medication.id,
+            kind: 'medication',
+            label: medication.record.name,
+          ),
+      if (planning)
+        for (final kind in const ['condition', 'goal', 'family_history'])
+          for (final record in records)
+            if (record.kind == kind)
+              ReviewItem(id: record.id, kind: kind, label: record.name),
       for (final finding in findings)
-        ReviewItem(id: finding.id, label: finding.rule.title.en),
+        ReviewItem(
+          id: finding.id,
+          kind: 'finding',
+          label: _findingLabel(finding),
+        ),
+      if (planning)
+        for (final due in overdueTests)
+          ReviewItem(
+            id: 'due:${due.biomarker.id}',
+            kind: 'overdue_test',
+            label: due.biomarker.displayName,
+          ),
     ];
     final digest = <String, Object?>{
       'schema': schema,
       'schema_version': schemaVersion,
       'as_of': _day(now),
       'utc_offset': _offset(now),
-      'how_to_read': const [
+      'how_to_read': [
         'Built by the app from the complete record of this profile. Every '
             'list below is complete: every recorded medication, condition, '
             'goal and family history entry; every product this person '
@@ -106,6 +156,10 @@ class ClinicalDigestBuilder {
             'units. A product whose contents were never recorded appears as '
             'its own exposure: its substances are unknown, not absent.',
         'Times are local to the person (utc_offset). Dates are YYYY-MM-DD.',
+        if (planning)
+          'test_catalog lists every orderable and calculated test in the '
+              'catalog, measured or not, with its exact id, name and price. '
+              'A plan can only use these ids.',
       ],
       'profile': _profile(snapshot.profile, now),
       'health_records': _records(snapshot.records, exposure),
@@ -120,10 +174,12 @@ class ClinicalDigestBuilder {
       'symptoms_and_tags': _eventSeries(snapshot.events, now),
       'retest_lists': _lists(snapshot),
       'lab_plans': _plans(snapshot),
+      if (planning) 'test_catalog': _testCatalog(snapshot),
       'review_checklist': [
-        for (final item in checklist) {'id': item.id, 'what': item.label},
+        for (final item in checklist)
+          {'id': item.id, 'kind': item.kind, 'what': item.label},
       ],
-      'not_in_this_digest': const {
+      'not_in_this_digest': {
         'every measurement of a biomarker, with notes, reference ranges and '
                 'report links':
             'biomarker_history',
@@ -137,7 +193,8 @@ class ClinicalDigestBuilder {
         'every symptom or tag entry with notes': 'health_events',
         'any word in any name, note or comment across the record':
             'search_records',
-        'catalog tests never measured, with prices': 'biomarker_catalog',
+        if (!planning)
+          'catalog tests never measured, with prices': 'biomarker_catalog',
       },
     };
     final json = HealthRepository.stableJson(digest);
@@ -294,6 +351,18 @@ class ClinicalDigestBuilder {
   List<String> _amounts(Map<String, double> byUnit) {
     final units = byUnit.keys.toList()..sort();
     return [for (final unit in units) '${_number(byUnit[unit]!)} $unit'];
+  }
+
+  /// A past-measurement finding exists once per affected test, so its title
+  /// alone would read like the same item listed twice.
+  static String _findingLabel(InteractionFinding finding) {
+    final tests = {
+      for (final affected in finding.measurements)
+        affected.biomarker.displayName,
+    }.toList()..sort();
+    return finding.scope == FindingScope.pastMeasurement && tests.isNotEmpty
+        ? '${finding.rule.title.en} (${tests.join(', ')})'
+        : finding.rule.title.en;
   }
 
   /// One finding as the models read it — shared with the lab planner, so a
@@ -574,6 +643,32 @@ class ClinicalDigestBuilder {
     final due = list.dueDateFor(item, lastMeasured);
     if (due == null) return null;
     return lastMeasured == null ? 'now (never measured)' : _day(due);
+  }
+
+  /// The whole catalog, because a plan is chosen from it: a test this person
+  /// has never had is exactly the kind a planner must be able to propose.
+  List<Map<String, Object?>> _testCatalog(AgentSnapshot snapshot) {
+    final measured = {
+      for (final row in snapshot.measurements)
+        if (!row.deleted) row.biomarkerId,
+    };
+    final sorted = [
+      for (final biomarker in snapshot.biomarkers)
+        if (!biomarker.deleted) biomarker,
+    ]..sort((a, b) => a.displayName.compareTo(b.displayName));
+    return [
+      for (final biomarker in sorted)
+        _lean({
+          'id': biomarker.id,
+          'name': biomarker.displayName,
+          'category': biomarker.category,
+          'unit': biomarker.defaultUnit,
+          'price_eur': biomarker.hasPrice ? biomarker.priceEur : null,
+          'calculated': biomarker.isCalculated ? true : null,
+          'measured': measured.contains(biomarker.id) ? true : null,
+          'synonyms': biomarker.synonyms,
+        }),
+    ];
   }
 
   List<Map<String, Object?>> _plans(AgentSnapshot snapshot) {

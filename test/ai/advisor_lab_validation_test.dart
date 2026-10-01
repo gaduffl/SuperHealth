@@ -508,10 +508,11 @@ void main() {
       'Morgens. Biotin mind. 72 Std. vorher pausieren (ab 100 mg/Tag etwa '
       'eine Woche) und dem Labor mitteilen.',
     );
-    final draft = client.requests.first.userPrompt;
+    // Both passes read the findings in the digest they carry.
+    for (final request in [client.requests.first, client.requests.last]) {
+      expect(request.digestText, contains('biotin-streptavidin-immunoassay'));
+    }
     final review = client.requests.last.userPrompt;
-    expect(draft, contains('biotin-streptavidin-immunoassay'));
-    expect(review, contains('biotin-streptavidin-immunoassay'));
     // The reviewer sees the preparation the reader will get.
     expect(review, contains('Biotin mind. 72 Std. vorher pausieren'));
   });
@@ -831,10 +832,11 @@ void main() {
         ),
       );
 
-      final result = await _planner(
-        fixture,
-        client,
-      ).generate(profileId: fixture.profile.id, settings: _settings);
+      final result = await _planner(fixture, client).generate(
+        profileId: fixture.profile.id,
+        settings: _settings,
+        wholeRecord: true,
+      );
 
       expect(result.verification.approved, isFalse);
       expect(result.canSave, isFalse);
@@ -955,10 +957,11 @@ void main() {
       ),
     );
 
-    final result = await _planner(
-      fixture,
-      client,
-    ).generate(profileId: fixture.profile.id, settings: _settings);
+    final result = await _planner(fixture, client).generate(
+      profileId: fixture.profile.id,
+      settings: _settings,
+      wholeRecord: true,
+    );
 
     // `_receipt` emits no `section_hashes` at all. Neither pass may demand one:
     // the model copies those digests rather than computing them, so the echo
@@ -997,10 +1000,11 @@ void main() {
         ),
       );
 
-      final result = await _planner(
-        fixture,
-        client,
-      ).generate(profileId: fixture.profile.id, settings: _settings);
+      final result = await _planner(fixture, client).generate(
+        profileId: fixture.profile.id,
+        settings: _settings,
+        wholeRecord: true,
+      );
 
       // The digest that broke a real run was 63 characters instead of 64. A
       // stray or wrong one must not be a gate any more, in either pass.
@@ -1122,10 +1126,11 @@ void main() {
               ProviderResponse(text: jsonEncode(body(request)), raw: const {}),
         );
         await expectLater(
-          _planner(
-            fixture,
-            client,
-          ).generate(profileId: fixture.profile.id, settings: _settings),
+          _planner(fixture, client).generate(
+            profileId: fixture.profile.id,
+            settings: _settings,
+            wholeRecord: true,
+          ),
           throwsA(isA<LabPlanFormatException>()),
         );
         expect(client.calls, 2);
@@ -1161,21 +1166,45 @@ Map<String, Object?> _labBody(
   List<String> warnings = const [],
   Map<String, Object?> receiptPatch = const {},
   Map<String, String> tradeoffs = const {},
+  List<Object?>? coverage,
 }) => {
   'title': 'Plan',
   'planned_for': null,
   'warnings': warnings,
-  'context_receipt': {
-    ..._receipt(request, recordCount: recordCount),
-    ...receiptPatch,
-  },
+  // Only a run that sent the package asks for its receipt.
+  if (request.contextJson.isNotEmpty)
+    'context_receipt': {
+      ..._receipt(request, recordCount: recordCount),
+      ...receiptPatch,
+    },
   'tiers':
       tiers ??
       [
         for (final name in ['core', 'advanced', 'comprehensive'])
           _tier(name, itemPatch: itemPatch, tradeoff: tradeoffs[name]),
       ],
+  'coverage': coverage ?? _coverageFor(request),
 };
+
+/// Every checklist item answered as needing no test: complete coverage that
+/// stays valid whichever tests a body plans.
+List<Object?> _coverageFor(ProviderRequest request) => [
+  for (final id in _checklistIds(request))
+    {
+      'id': id,
+      'verdict': 'not_needed',
+      'biomarker_ids': const <String>[],
+      'why': 'Für diesen Plan nicht nötig.',
+    },
+];
+
+List<String> _checklistIds(ProviderRequest request) {
+  final digest = jsonDecode(request.digestText!) as Map<String, Object?>;
+  return [
+    for (final item in digest['review_checklist']! as List)
+      '${(item as Map)['id']}',
+  ];
+}
 
 Map<String, Object?> _tier(
   String name, {
@@ -1212,7 +1241,8 @@ Map<String, Object?> _verificationBody(
       : 'The draft needs review.',
   'blocking_issues': blockingIssues,
   'warnings': warnings,
-  'context_receipt': {..._receipt(request), ...receiptPatch},
+  if (request.contextJson.isNotEmpty)
+    'context_receipt': {..._receipt(request), ...receiptPatch},
 };
 
 Map<String, Object?> _externalLabBody(

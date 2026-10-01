@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:super_health/domain/entities.dart';
 
@@ -184,6 +186,15 @@ void main() {
       verificationCitations: const ['cite'],
       items: const [],
       tierTradeoffs: const {LabTier.advanced: 'Kept.'},
+      coverage: const [
+        PlanCoverage(
+          id: 'exp:biotin',
+          kind: 'substance',
+          label: 'Biotin',
+          verdict: PlanCoverageVerdict.addressed,
+          biomarkerIds: ['tsh'],
+        ),
+      ],
     );
 
     final verified = plan.copyWith(
@@ -200,5 +211,89 @@ void main() {
     expect(verified.plannedFor, DateTime(2026, 2, 1));
     expect(verified.verificationWarnings, ['warn']);
     expect(verified.verificationCitations, ['cite']);
+    expect(verified.coverage!.single.id, 'exp:biotin');
+  });
+
+  group('coverage', () {
+    final now = DateTime(2026, 1, 1);
+    LabPlan plan({List<PlanCoverage>? coverage}) => LabPlan(
+      id: 'plan',
+      profileId: 'profile',
+      title: 'Test plan',
+      createdAt: now,
+      updatedAt: now,
+      items: const [],
+      coverage: coverage,
+    );
+
+    test('survives a round trip through the database map', () {
+      const entries = [
+        PlanCoverage(
+          id: 'exp:biotin',
+          kind: 'substance',
+          label: 'Biotin',
+          verdict: PlanCoverageVerdict.addressed,
+          biomarkerIds: ['tsh', 'ft4'],
+          why: 'Vorher pausieren.',
+        ),
+        PlanCoverage(
+          id: 'med:levo',
+          kind: 'medication',
+          label: 'L-Thyroxin',
+          verdict: PlanCoverageVerdict.notNeeded,
+          why: 'Kein eigener Test.',
+        ),
+        PlanCoverage(
+          id: 'finding:x',
+          kind: 'finding',
+          label: 'Something',
+          verdict: PlanCoverageVerdict.notConsidered,
+        ),
+      ];
+
+      final restored = LabPlan.fromMap(
+        plan(coverage: entries).toMap(),
+        const [],
+      );
+
+      expect(restored.coverage!.map((entry) => entry.toJson()), [
+        for (final entry in entries) entry.toJson(),
+      ]);
+      expect(restored.notConsidered.single.id, 'finding:x');
+    });
+
+    test('never checked and checked with nothing to account for stay '
+        'different', () {
+      // Null is a plan made before coverage existed; an empty list is one
+      // that was checked and found nothing current in the record. Reading
+      // either as the other would misstate what the plan considered.
+      expect(plan().toMap()['coverage_json'], isNull);
+      expect(LabPlan.fromMap(plan().toMap(), const []).coverage, isNull);
+      final empty = LabPlan.fromMap(plan(coverage: const []).toMap(), const []);
+      expect(empty.coverage, isEmpty);
+    });
+
+    test('a malformed entry is dropped and an unknown verdict reads as not '
+        'considered', () {
+      final restored = LabPlan.fromMap({
+        ...plan().toMap(),
+        'coverage_json': jsonEncode([
+          'not an object',
+          {'kind': 'substance', 'label': 'No id'},
+          {
+            'id': 'exp:zinc',
+            'kind': 'substance',
+            'label': 'Zink',
+            'verdict': 'from a newer app',
+          },
+        ]),
+      }, const []);
+
+      expect(restored.coverage!.single.id, 'exp:zinc');
+      expect(
+        restored.coverage!.single.verdict,
+        PlanCoverageVerdict.notConsidered,
+      );
+    });
   });
 }

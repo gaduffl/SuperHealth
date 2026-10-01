@@ -1602,6 +1602,97 @@ class LabPlanItem {
   );
 }
 
+/// What a plan did about one thing the record says is going on.
+enum PlanCoverageVerdict {
+  /// A planned test monitors, screens for or confirms it, or the preparation
+  /// or a warning on a planned test deals with its effect on that test.
+  addressed,
+
+  /// The plan needs nothing for it, and says why.
+  notNeeded,
+
+  /// The planner never gave it a verdict, even when asked again. Stated, not
+  /// hidden: an omission nobody can see reads exactly like a judgement that
+  /// it did not matter.
+  notConsidered,
+}
+
+/// One entry of a plan's coverage: a current substance, medicine, condition,
+/// goal, family history entry, finding or overdue test, and what the plan did
+/// about it.
+class PlanCoverage {
+  const PlanCoverage({
+    required this.id,
+    required this.kind,
+    required this.label,
+    required this.verdict,
+    this.biomarkerIds = const [],
+    this.why = '',
+  });
+
+  /// The checklist id the planner answered to, such as `exp:biotin`.
+  final String id;
+
+  /// `substance`, `medication`, `condition`, `goal`, `family_history`,
+  /// `finding` or `overdue_test`.
+  final String kind;
+
+  /// The item as it was named when the plan was made. Kept, because the
+  /// record it came from can be renamed or deleted afterwards.
+  final String label;
+  final PlanCoverageVerdict verdict;
+
+  /// The planned tests the verdict rests on.
+  final List<String> biomarkerIds;
+  final String why;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'kind': kind,
+    'label': label,
+    'verdict': verdict.name,
+    'biomarker_ids': biomarkerIds,
+    'why': why,
+  };
+
+  /// Tolerant on read: an entry is commentary on a plan, and a plan is worth
+  /// more than one malformed entry. An unknown verdict reads as not
+  /// considered, which is the one answer that can never overstate the plan.
+  static PlanCoverage? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final id = '${value['id'] ?? ''}'.trim();
+    if (id.isEmpty) return null;
+    final rawIds = value['biomarker_ids'];
+    final label = '${value['label'] ?? ''}'.trim();
+    return PlanCoverage(
+      id: id,
+      kind: '${value['kind'] ?? ''}'.trim(),
+      label: label.isEmpty ? id : label,
+      verdict:
+          PlanCoverageVerdict.values
+              .where((verdict) => verdict.name == value['verdict'])
+              .firstOrNull ??
+          PlanCoverageVerdict.notConsidered,
+      biomarkerIds: rawIds is List
+          ? [for (final item in rawIds) '$item']
+          : const [],
+      why: '${value['why'] ?? ''}'.trim(),
+    );
+  }
+}
+
+/// Reads a stored coverage list. Null is a plan made before coverage existed,
+/// which is a different statement from an empty list: that one was checked,
+/// and nothing in the record needed accounting for.
+List<PlanCoverage>? _coverage(Object? value) {
+  if (value == null) return null;
+  final decoded = value is String
+      ? (value.isEmpty ? null : jsonDecode(value))
+      : value;
+  if (decoded is! List) return null;
+  return [for (final item in decoded) ?PlanCoverage.fromJson(item)];
+}
+
 class LabPlan {
   const LabPlan({
     required this.id,
@@ -1622,6 +1713,7 @@ class LabPlan {
     this.verifiedAt,
     this.deleted = false,
     this.tierTradeoffs = const {},
+    this.coverage,
   });
 
   final String id;
@@ -1651,6 +1743,16 @@ class LabPlan {
   /// just a shorter list — the reader cannot tell whether the omissions were
   /// reasoned about or fell off the end.
   final Map<LabTier, String> tierTradeoffs;
+
+  /// What the plan did about everything current in the record, one entry per
+  /// item; null for a plan made before this was recorded.
+  final List<PlanCoverage>? coverage;
+
+  /// The items the planner never gave a verdict.
+  List<PlanCoverage> get notConsidered => [
+    for (final entry in coverage ?? const <PlanCoverage>[])
+      if (entry.verdict == PlanCoverageVerdict.notConsidered) entry,
+  ];
 
   List<LabPlanItem> itemsThrough(LabTier tier) => items
       .where((item) => item.tier.index <= tier.index)
@@ -1722,6 +1824,9 @@ class LabPlan {
     'tier_tradeoffs_json': jsonEncode({
       for (final entry in tierTradeoffs.entries) entry.key.name: entry.value,
     }),
+    'coverage_json': coverage == null
+        ? null
+        : jsonEncode([for (final entry in coverage!) entry.toJson()]),
   };
 
   /// Rebuild with selected fields replaced.
@@ -1740,6 +1845,7 @@ class LabPlan {
     bool? deleted,
     List<LabPlanItem>? items,
     Map<LabTier, String>? tierTradeoffs,
+    List<PlanCoverage>? coverage,
   }) => LabPlan(
     id: id,
     profileId: profileId,
@@ -1759,6 +1865,7 @@ class LabPlan {
     deleted: deleted ?? this.deleted,
     items: items ?? this.items,
     tierTradeoffs: tierTradeoffs ?? this.tierTradeoffs,
+    coverage: coverage ?? this.coverage,
   );
 
   factory LabPlan.fromMap(Map<String, Object?> map, List<LabPlanItem> items) =>
@@ -1785,6 +1892,7 @@ class LabPlan {
         deleted: _boolFromDb(map['deleted']),
         items: items,
         tierTradeoffs: _tierTexts(map['tier_tradeoffs_json']),
+        coverage: _coverage(map['coverage_json']),
       );
 }
 
