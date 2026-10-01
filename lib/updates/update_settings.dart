@@ -44,14 +44,25 @@ class UpdateSettings {
     this.githubRepository = defaultUpdateRepository,
     this.serverUrl = '',
     this.autoCheck = true,
+    this.autoInstall = false,
   });
 
   final UpdateSourceKind source;
   final String githubRepository;
   final String serverUrl;
 
-  /// Whether the app looks for an update by itself when it starts.
+  /// Whether the app looks for an update by itself when it is opened.
   final bool autoCheck;
+
+  /// Auto-update: download a new release and install it without a tap.
+  ///
+  /// Off by default, because it replaces the running app. Where Android would
+  /// still ask for confirmation it degrades to looking only; see
+  /// `UpdateController.installsInBackground`.
+  final bool autoInstall;
+
+  /// Auto-update has to look before it can fetch, so it implies the check.
+  bool get checksAutomatically => autoCheck || autoInstall;
 
   bool get isConfigured => switch (source) {
     UpdateSourceKind.github =>
@@ -64,11 +75,13 @@ class UpdateSettings {
     String? githubRepository,
     String? serverUrl,
     bool? autoCheck,
+    bool? autoInstall,
   }) => UpdateSettings(
     source: source ?? this.source,
     githubRepository: githubRepository ?? this.githubRepository,
     serverUrl: serverUrl ?? this.serverUrl,
     autoCheck: autoCheck ?? this.autoCheck,
+    autoInstall: autoInstall ?? this.autoInstall,
   );
 }
 
@@ -80,6 +93,7 @@ class UpdateSettingsStore {
   static const _repository = 'update_github_repository';
   static const _serverUrl = 'update_server_url';
   static const _autoCheck = 'update_auto_check';
+  static const _autoInstall = 'update_auto_install';
   static const _lastChecked = 'update_last_checked_at';
 
   Future<UpdateSettings> load() async {
@@ -94,6 +108,7 @@ class UpdateSettingsStore {
           preferences.getString(_repository) ?? fallback.githubRepository,
       serverUrl: preferences.getString(_serverUrl) ?? fallback.serverUrl,
       autoCheck: preferences.getBool(_autoCheck) ?? fallback.autoCheck,
+      autoInstall: preferences.getBool(_autoInstall) ?? fallback.autoInstall,
     );
   }
 
@@ -103,6 +118,7 @@ class UpdateSettingsStore {
     await preferences.setString(_repository, settings.githubRepository);
     await preferences.setString(_serverUrl, settings.serverUrl);
     await preferences.setBool(_autoCheck, settings.autoCheck);
+    await preferences.setBool(_autoInstall, settings.autoInstall);
   }
 
   Future<DateTime?> lastCheckedAt() async {

@@ -165,6 +165,13 @@ class AppController extends ChangeNotifier {
 
   bool initialized = false;
   bool busy = false;
+
+  /// Whether restarting the app now would throw something away: an operation
+  /// still running — a lab plan, an advisor answer, a sync, an import — or a
+  /// generated lab plan that has not been saved. Auto-update waits for this,
+  /// because installing replaces the process.
+  bool get workInFlight => busy || _autoSyncInFlight || draftLabPlan != null;
+
   bool appearanceSaving = false;
   AppearanceSettings appearanceSettings = AppearanceSettings.defaults;
   InitialSetupProgress initialSetupProgress =

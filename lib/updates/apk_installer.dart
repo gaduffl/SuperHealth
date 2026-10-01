@@ -18,9 +18,32 @@ enum InstallEventKind {
   /// The person dismissed the confirmation sheet.
   cancelled,
 
+  /// An unattended install that Android still wanted confirmed. The sheet was
+  /// declined rather than put over whatever the person is doing, and the
+  /// session given up.
+  confirmationRequired,
+
   /// Android refused: a signature that does not match, a downgrade, a corrupt
   /// package, no space.
   failed,
+}
+
+/// Whether Android installs an update of this app without its confirmation
+/// sheet and, if not, which condition on this device stands in the way.
+enum SilentInstall {
+  supported,
+
+  /// Android 11 or older, which confirms every install.
+  androidTooOld,
+
+  /// "Install unknown apps" is off for SuperHealth.
+  installNotAllowed,
+
+  /// Another app store has claimed this app's updates (Android 14+).
+  anotherStore,
+
+  /// Not reported, or a reason this build has no name for.
+  unavailable,
 }
 
 class InstallEvent {
@@ -45,11 +68,20 @@ abstract class ApkInstaller {
   /// Opens the system page where that switch lives.
   Future<void> openInstallPermissionSettings();
 
+  /// Whether an install would skip Android's confirmation sheet. The same
+  /// question the platform answers when the session is committed, asked first
+  /// so auto-update never commits one that would need a sheet.
+  Future<SilentInstall> silentInstallSupport();
+
   /// Streams [apk] into a package-installer session and commits it.
+  ///
+  /// [unattended] marks an install nobody tapped: if Android wants it
+  /// confirmed after all, the sheet is declined instead of shown and
+  /// [InstallEventKind.confirmationRequired] reported.
   ///
   /// Returns once the session is committed; what happens next arrives on
   /// [events].
-  Future<void> install(File apk);
+  Future<void> install(File apk, {bool unattended = false});
 
   Stream<InstallEvent> get events;
 }
@@ -94,9 +126,21 @@ class MethodChannelApkInstaller implements ApkInstaller {
       _invoke<void>('openInstallPermissionSettings');
 
   @override
-  Future<void> install(File apk) async {
+  Future<SilentInstall> silentInstallSupport() async {
+    final reason = await _invoke<String>('silentInstallSupport');
+    return SilentInstall.values.firstWhere(
+      (value) => value.name == reason,
+      orElse: () => SilentInstall.unavailable,
+    );
+  }
+
+  @override
+  Future<void> install(File apk, {bool unattended = false}) async {
     try {
-      await _channel.invokeMethod<void>('install', {'path': apk.path});
+      await _channel.invokeMethod<void>('install', {
+        'path': apk.path,
+        'unattended': unattended,
+      });
     } on PlatformException catch (error) {
       throw UpdateException(
         error.code == 'permission'
@@ -129,6 +173,7 @@ class MethodChannelApkInstaller implements ApkInstaller {
       'awaitingConfirmation' => InstallEventKind.awaitingConfirmation,
       'success' => InstallEventKind.success,
       'cancelled' => InstallEventKind.cancelled,
+      'confirmationRequired' => InstallEventKind.confirmationRequired,
       _ => InstallEventKind.failed,
     };
     _events.add(InstallEvent(kind, message is String ? message : null));

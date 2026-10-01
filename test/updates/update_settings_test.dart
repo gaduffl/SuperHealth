@@ -57,6 +57,26 @@ void main() {
     );
   });
 
+  test(
+    'auto update is off by default, survives a reload, and implies the check',
+    () async {
+      expect((await UpdateSettingsStore().load()).autoInstall, isFalse);
+
+      await UpdateSettingsStore().save(
+        const UpdateSettings(autoCheck: false, autoInstall: true),
+      );
+      final loaded = await UpdateSettingsStore().load();
+      expect(loaded.autoInstall, isTrue);
+      expect(loaded.autoCheck, isFalse, reason: 'its own choice is kept');
+      expect(loaded.checksAutomatically, isTrue);
+      expect(
+        loaded.copyWith(serverUrl: 'https://x.example').autoInstall,
+        isTrue,
+        reason: 'editing the source carries it',
+      );
+    },
+  );
+
   test('saved settings and the last check survive a reload', () async {
     final store = UpdateSettingsStore();
     await store.save(

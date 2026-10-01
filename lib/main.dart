@@ -127,7 +127,13 @@ void main() {
           Directory('${(await getTemporaryDirectory()).path}/updates'),
     ),
     sourceFactory: updateSourceFactoryFor(updateDio),
+    workInFlight: () =>
+        appHasWorkInProgress(controller, rootNavigatorKey.currentState),
+    workChanges: controller,
   );
+  // App-wide rather than in the Settings card: auto-update installs on the way
+  // to the background whichever screen is showing.
+  AppLifecycleListener(onStateChange: updateController.lifecycleChanged);
 
   runApp(
     MultiProvider(

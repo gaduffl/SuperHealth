@@ -107,12 +107,17 @@ class FakeInstaller implements ApkInstaller {
     this.version = const AppVersion(name: '0.42.0', build: 71),
     this.allowed = true,
     this.supported = true,
+    this.silent = SilentInstall.unavailable,
   });
 
   AppVersion version;
   bool allowed;
   bool supported;
+  SilentInstall silent;
   final installed = <File>[];
+
+  /// Parallel to [installed]: whether each install was committed unattended.
+  final unattended = <bool>[];
   var permissionPageOpened = 0;
   Object? installError;
   final _events = StreamController<InstallEvent>.broadcast();
@@ -128,16 +133,27 @@ class FakeInstaller implements ApkInstaller {
   @override
   Future<AppVersion> installedVersion() async => version;
 
+  /// Runs while the permission question is in flight, so a test can land an
+  /// event in the middle of an install.
+  Future<void> Function()? whileAskingPermission;
+
   @override
-  Future<bool> canInstallPackages() async => allowed;
+  Future<bool> canInstallPackages() async {
+    await whileAskingPermission?.call();
+    return allowed;
+  }
 
   @override
   Future<void> openInstallPermissionSettings() async => permissionPageOpened++;
 
   @override
-  Future<void> install(File apk) async {
+  Future<SilentInstall> silentInstallSupport() async => silent;
+
+  @override
+  Future<void> install(File apk, {bool unattended = false}) async {
     if (installError case final Object error) throw error;
     installed.add(apk);
+    this.unattended.add(unattended);
   }
 }
 
