@@ -17,6 +17,7 @@ import '../domain/entities.dart';
 import '../workspace/safe_workspace_service.dart';
 import 'common.dart';
 import 'interaction_findings_view.dart';
+import 'record_lookup_labels.dart';
 
 class AdvisorScreen extends StatefulWidget {
   const AdvisorScreen({super.key});
@@ -704,34 +705,16 @@ class _AdvisorProgressLineState extends State<_AdvisorProgressLine> {
     super.dispose();
   }
 
-  String _tool(AppLocalizations strings, String name) => switch (name) {
-    'biomarker_history' => strings.pick(
-      'biomarker history',
-      'Biomarker-Verlauf',
-    ),
-    'lab_report' => strings.pick('lab report', 'Laborbefund'),
-    'supplement_details' => strings.pick('product details', 'Produktdetails'),
-    'supplement_intakes' => strings.pick('logged doses', 'erfasste Einnahmen'),
-    'exposure_before' => strings.pick(
-      'what was taken before a draw',
-      'Einnahmen vor einer Blutabnahme',
-    ),
-    'health_events' => strings.pick('symptoms and tags', 'Symptome und Tags'),
-    'search_records' => strings.pick('search', 'Suche'),
-    'biomarker_catalog' => strings.pick('test catalog', 'Testkatalog'),
-    _ => name,
-  };
-
   @override
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
     final controller = widget.controller;
     final progress = controller.advisorProgress;
     final activity = progress?.activity;
-    final tools = {
-      for (final tool in progress?.tools ?? const <String>[])
-        _tool(strings, tool),
-    }.join(', ');
+    final tools = recordLookupSummary(
+      strings,
+      progress?.tools ?? const <String>[],
+    );
     final stage = switch (progress?.stage) {
       null || AdvisorStage.preparing => strings.pick(
         'Reading your record…',

@@ -18,7 +18,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 14;
+  static const schemaVersion = 15;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -404,7 +404,8 @@ class AppDatabase {
           verification_citations_json TEXT NOT NULL DEFAULT '[]',
           verified_at TEXT,
           deleted INTEGER NOT NULL DEFAULT 0,
-          tier_tradeoffs_json TEXT NOT NULL DEFAULT '{}'
+          tier_tradeoffs_json TEXT NOT NULL DEFAULT '{}',
+          coverage_json TEXT
         )
       ''');
 
@@ -715,6 +716,13 @@ class AppDatabase {
         'ALTER TABLE biomarker_lists ADD COLUMN due_interval_days INTEGER',
       );
       await _backfillListIntervals(db);
+    }
+    if (oldVersion < 15) {
+      // Nullable on purpose, and left null for every existing plan. Null says
+      // "never checked"; an empty list says "checked, and the record held
+      // nothing to account for". A default of '[]' would have made every old
+      // plan claim the second.
+      await db.execute('ALTER TABLE lab_plans ADD COLUMN coverage_json TEXT');
     }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;

@@ -198,9 +198,14 @@ class ExposureAnalysis {
     );
   }
 
+  static bool isCurrentMedication(NamedHealthRecord record, DateTime now) =>
+      isCurrentRecord(record, now);
+
   /// `active` and `monitoring` are ongoing; `resolved` and `paused` are not.
-  /// An end date in the past overrides a status nobody updated.
-  static bool isCurrentMedication(NamedHealthRecord record, DateTime now) {
+  /// An end date in the past overrides a status nobody updated. The same rule
+  /// for every kind of record, so a condition is current exactly when a
+  /// medicine with the same status and dates would be.
+  static bool isCurrentRecord(NamedHealthRecord record, DateTime now) {
     final status = record.status.trim().toLowerCase();
     if (status != 'active' && status != 'monitoring') return false;
     final end = record.endDate;

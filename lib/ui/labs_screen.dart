@@ -35,6 +35,8 @@ import 'interaction_findings_view.dart';
 import 'lab_price_screen.dart';
 import 'lab_report_screen.dart';
 import 'dose_underlay.dart';
+import 'plan_coverage_view.dart';
+import 'record_lookup_labels.dart';
 import 'temporary_biomarker_resolution_screen.dart';
 
 String _labsText(BuildContext context, String english, String german) =>
@@ -45,11 +47,13 @@ class _LabPlannerOptions {
     required this.targetDate,
     required this.priorities,
     required this.includeOverdueBiomarkers,
+    required this.wholeRecord,
   });
 
   final DateTime? targetDate;
   final String priorities;
   final bool includeOverdueBiomarkers;
+  final bool wholeRecord;
 }
 
 /// Translates a Today tile's deep link into the catalog's status filter.
@@ -692,6 +696,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                   survivesBackground: controller.labPlanSurvivesBackground,
                   activity: controller.labPlanActivity,
                   activityAt: controller.labPlanActivityAt,
+                  tools: controller.labPlanTools,
                 ),
               if (!hasOrderableBiomarkers)
                 EmptyState(
@@ -1151,11 +1156,14 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
   }
 
   Future<void> _generate(BuildContext context, AppController controller) async {
+    final provider =
+        (controller.labPlannerSettings ?? controller.advisorSettings)?.provider;
     final options = await _plannerOptions(
       context,
       title: _labsText(context, 'Plan a lab visit', 'Laborbesuch planen'),
       actionLabel: _labsText(context, 'Generate draft', 'Entwurf erstellen'),
       actionIcon: Icons.auto_awesome,
+      toolLoop: provider != null && providerSupportsClientTools(provider),
     );
     if (options == null || !context.mounted) return;
     try {
@@ -1163,6 +1171,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
         targetDate: options.targetDate,
         priorities: options.priorities,
         includeOverdueBiomarkers: options.includeOverdueBiomarkers,
+        wholeRecord: options.wholeRecord,
         notice: LongTaskNotice(
           title: _labsText(
             context,
@@ -1181,16 +1190,22 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     }
   }
 
+  /// [toolLoop] is whether the configured provider can look details up on
+  /// the device. Only then is there a choice about the full package: without
+  /// a loop, and in an export, it is always sent.
   Future<_LabPlannerOptions?> _plannerOptions(
     BuildContext context, {
     required String title,
     required String actionLabel,
     required IconData actionIcon,
     bool exporting = false,
+    bool toolLoop = false,
   }) async {
     final priorities = TextEditingController();
     DateTime? targetDate;
     var includeOverdueBiomarkers = true;
+    var wholeRecord = false;
+    final digestOnly = toolLoop && !exporting;
     final approved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -1260,26 +1275,56 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                 onChanged: (value) =>
                     setState(() => includeOverdueBiomarkers = value),
               ),
+              if (digestOnly)
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: wholeRecord,
+                  title: Text(
+                    _labsText(context, 'Whole-record review', 'Gesamtprüfung'),
+                  ),
+                  subtitle: Text(
+                    _labsText(
+                      context,
+                      'Also send every row of your record. Several times the cost and time.',
+                      'Sendet zusätzlich jede Zeile deiner Daten. Ein Vielfaches an Kosten und Zeit.',
+                    ),
+                  ),
+                  onChanged: (value) => setState(() => wholeRecord = value),
+                ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.lock_outline),
                 title: Text(
-                  _labsText(
-                    context,
-                    'Complete active-profile context',
-                    'Vollständiger Kontext des aktiven Profils',
-                  ),
+                  digestOnly && !wholeRecord
+                      ? _labsText(
+                          context,
+                          'Every entry in your record',
+                          'Jeder Eintrag deiner Daten',
+                        )
+                      : _labsText(
+                          context,
+                          'Complete active-profile context',
+                          'Vollständiger Kontext des aktiven Profils',
+                        ),
                 ),
                 subtitle: Text(
-                  _labsText(
-                    context,
-                    exporting
-                        ? 'The text file contains sensitive health data. You choose where to send it.'
-                        : 'No silent truncation; only the configured provider receives it.',
-                    exporting
-                        ? 'Die Textdatei enthält sensible Gesundheitsdaten. Du entscheidest, wohin du sie sendest.'
-                        : 'Keine stille Kürzung; nur der konfigurierte Anbieter erhält den Kontext.',
-                  ),
+                  exporting
+                      ? _labsText(
+                          context,
+                          'The text file contains sensitive health data. You choose where to send it.',
+                          'Die Textdatei enthält sensible Gesundheitsdaten. Du entscheidest, wohin du sie sendest.',
+                        )
+                      : digestOnly && !wholeRecord
+                      ? _labsText(
+                          context,
+                          'The planner gets a summary that names every entry and looks details up on this device. Only the configured provider receives it.',
+                          'Der Planer erhält eine Zusammenfassung, die jeden Eintrag nennt, und schlägt Details auf diesem Gerät nach. Nur der konfigurierte Anbieter erhält sie.',
+                        )
+                      : _labsText(
+                          context,
+                          'No silent truncation; only the configured provider receives it.',
+                          'Keine stille Kürzung; nur der konfigurierte Anbieter erhält den Kontext.',
+                        ),
                 ),
               ),
             ],
@@ -1303,6 +1348,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
             targetDate: targetDate,
             priorities: priorities.text,
             includeOverdueBiomarkers: includeOverdueBiomarkers,
+            wholeRecord: wholeRecord,
           )
         : null;
     priorities.dispose();
@@ -2917,6 +2963,7 @@ class _DraftPlanCard extends StatelessWidget {
             blockingIssues: generation.verification.blockingIssues,
             citations: generation.citations,
           ),
+          PlanCoveragePanel(plan: generation.plan),
           _PlanTiers(plan: generation.plan),
           const SizedBox(height: 10),
           Row(
@@ -2985,6 +3032,10 @@ class _SavedPlanCard extends StatelessWidget {
           warnings: plan.verificationWarnings,
           blockingIssues: const [],
           citations: plan.verificationCitations,
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: PlanCoveragePanel(plan: plan),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -4032,6 +4083,7 @@ class _LabPlanProgressCard extends StatefulWidget {
     required this.survivesBackground,
     required this.activity,
     required this.activityAt,
+    this.tools = const [],
   });
 
   final LabPlanStage stage;
@@ -4046,6 +4098,9 @@ class _LabPlanProgressCard extends StatefulWidget {
 
   /// When [activity] last moved, for the quiet check.
   final DateTime? activityAt;
+
+  /// Lookups running on the device between two rounds of a call.
+  final List<String> tools;
 
   @override
   State<_LabPlanProgressCard> createState() => _LabPlanProgressCardState();
@@ -4084,13 +4139,21 @@ class _LabPlanProgressCardState extends State<_LabPlanProgressCard> {
     final quietFor = widget.activityAt == null
         ? 0
         : now.difference(widget.activityAt!).inSeconds;
-    final stages = LabPlanStage.values;
-    // The repair pass only happens when a draft fails validation, so counting
-    // it into the total would understate progress on every healthy run.
-    final ordinal = widget.stage == LabPlanStage.repairingDraft
+    // The repair and the coverage follow-up only happen when a draft needs
+    // them, so counting either into the total would understate progress on
+    // every healthy run. Each sits where the draft does.
+    const optional = {
+      LabPlanStage.repairingDraft,
+      LabPlanStage.completingCoverage,
+    };
+    final stages = [
+      for (final stage in LabPlanStage.values)
+        if (!optional.contains(stage)) stage,
+    ];
+    final ordinal = optional.contains(widget.stage)
         ? stages.indexOf(LabPlanStage.drafting) + 1
         : stages.indexOf(widget.stage) + 1;
-    final total = stages.length - 1;
+    final total = stages.length;
 
     return Card(
       color: scheme.secondaryContainer,
@@ -4133,6 +4196,19 @@ class _LabPlanProgressCardState extends State<_LabPlanProgressCard> {
                 minHeight: 5,
               ),
             ),
+            if (widget.tools.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                _labsText(
+                  context,
+                  'Looking up: ${recordLookupSummary(AppLocalizations.of(context), widget.tools)}',
+                  'Schlägt nach: ${recordLookupSummary(AppLocalizations.of(context), widget.tools)}',
+                ),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.onSecondaryContainer,
+                ),
+              ),
+            ],
             if (activity != null) ...[
               const SizedBox(height: 10),
               Text(

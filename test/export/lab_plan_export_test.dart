@@ -212,6 +212,57 @@ void main() {
     });
   });
 
+  test(
+    'an export carries what the plan accounted for, gaps included',
+    () async {
+      // The reader of an exported plan cannot open the screen's coverage panel,
+      // so an item nobody judged must not vanish on the way out.
+      final service = LabPlanExportService();
+      final plan = _plan(coverage: _coverage);
+
+      final json =
+          jsonDecode(
+                utf8.decode(
+                  (await service.build(plan, LabPlanExportFormat.json)).bytes,
+                ),
+              )
+              as Map<String, Object?>;
+      final coverage = json['coverage']! as List;
+      expect(coverage.map((entry) => (entry as Map)['verdict']), [
+        'addressed',
+        'notConsidered',
+      ]);
+      expect((coverage.first as Map)['tests'], ['ApoB']);
+
+      final csv = utf8.decode(
+        (await service.build(plan, LabPlanExportFormat.csv)).bytes,
+      );
+      expect(csv, contains('Record item'));
+      expect(csv, contains('not considered'));
+      expect(csv, contains('Hashimoto'));
+
+      final pdf = await service.build(plan, LabPlanExportFormat.pdf);
+      expect(pdf.bytes, isNotEmpty);
+    },
+  );
+
+  test('a plan made before coverage says so in every format', () async {
+    final service = LabPlanExportService();
+    final json =
+        jsonDecode(
+              utf8.decode(
+                (await service.build(_plan(), LabPlanExportFormat.json)).bytes,
+              ),
+            )
+            as Map<String, Object?>;
+    expect(json.containsKey('coverage'), isTrue);
+    expect(json['coverage'], isNull);
+    final csv = utf8.decode(
+      (await service.build(_plan(), LabPlanExportFormat.csv)).bytes,
+    );
+    expect(csv, contains('Not recorded for this plan'));
+  });
+
   test('the PDF still builds with the tradeoff block in it', () async {
     // The block is laid out inside a MultiPage, where an unbounded child is a
     // build-time failure rather than a visual one.
@@ -225,6 +276,23 @@ void main() {
   });
 }
 
+const _coverage = [
+  PlanCoverage(
+    id: 'exp:biotin',
+    kind: 'substance',
+    label: 'Biotin',
+    verdict: PlanCoverageVerdict.addressed,
+    biomarkerIds: ['bio-ApoB'],
+    why: '72 Std. vorher pausieren.',
+  ),
+  PlanCoverage(
+    id: 'hashi',
+    kind: 'condition',
+    label: 'Hashimoto',
+    verdict: PlanCoverageVerdict.notConsidered,
+  ),
+];
+
 LabPlan _plan({
   Map<LabTier, String> tradeoffs = const {
     LabTier.core: 'Lp(a) is lifelong and was measured last year.',
@@ -232,6 +300,7 @@ LabPlan _plan({
   },
   Set<String> checked = const {},
   String preparation = '',
+  List<PlanCoverage>? coverage,
 }) {
   final now = DateTime(2026, 1, 1);
   LabPlanItem item(String name, LabTier tier, double? price) => LabPlanItem(
@@ -260,5 +329,6 @@ LabPlan _plan({
       item('Omega-3', LabTier.comprehensive, 40),
     ],
     tierTradeoffs: tradeoffs,
+    coverage: coverage,
   );
 }

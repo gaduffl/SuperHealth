@@ -65,6 +65,7 @@ const _jsonListColumns = <String>{
   'citations_json',
   'verification_warnings_json',
   'verification_citations_json',
+  'coverage_json',
 };
 final _isoInstantPattern = RegExp(
   r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$',
@@ -210,7 +211,8 @@ void _validateJsonListContents(String table, String column, String value) {
   if (decoded is! List) {
     throw FormatException('$table.$column must contain a JSON list.');
   }
-  final expectsObjects = column == 'ingredients_json';
+  final expectsObjects =
+      column == 'ingredients_json' || column == 'coverage_json';
   final valid = expectsObjects
       ? decoded.every((item) => item is Map)
       : decoded.every((item) => item is String);
@@ -2423,6 +2425,17 @@ class HealthRepository {
         throw ArgumentError(
           'A reviewed or external lab plan requires its provider, model, context hash, review summary, and recorded time.',
         );
+      }
+    }
+    final coverageIds = <String>{};
+    for (final entry in plan.coverage ?? const <PlanCoverage>[]) {
+      if (entry.kind.isEmpty || entry.label.isEmpty) {
+        throw ArgumentError(
+          'A lab-plan coverage entry needs a kind and label.',
+        );
+      }
+      if (!coverageIds.add(entry.id)) {
+        throw ArgumentError('A lab plan covers each item only once.');
       }
     }
   }

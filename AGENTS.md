@@ -46,7 +46,7 @@ Flutter SDK path — do not commit a machine-specific rewrite of it.
 | `lib/analysis/` | `correlation_service.dart`, `supplement_insights.dart`, `exposure_analysis.dart`, `interaction_findings.dart` — all derived numbers |
 | `lib/domain/interaction_rules.dart` | The curated interaction table; `biomarker_concepts.dart` and `medication_catalog.dart` are the vocabularies it names tests and drugs by |
 | `lib/app/app_controller.dart` | `ChangeNotifier` holding loaded state; screens read it, mutate through it |
-| `lib/ai/` | Provider clients and their tool loops, the advisor (digest, tools, review), context builder, parsing, lab planner |
+| `lib/ai/` | Provider clients and their tool loops, the advisor (digest, tools, review), context builder, parsing, lab planner and its coverage (`plan_coverage.dart`) |
 | `lib/sync/`, `lib/backup/` | OneDrive snapshot sync, portable backup/restore |
 | `lib/ui/` | Screens, dialogs, and `design.dart`/`charts.dart` visual vocabulary |
 | `test/` | Mirrors `lib/` one directory per layer |
@@ -566,7 +566,10 @@ off for the advisor's repair pass moved the prefix at position zero: a measured
 run wrote 313k tokens and then read back **nothing** on a repair issued seconds
 later with the same key and the same context. Suppressing one search bought a
 second full prefill of the whole package. Change the trailing prompt on a
-retry; never the tools, the system prompt, or the schema.
+retry; never the tools, the system prompt, or the schema. The planner's format
+repair is the one deliberate exception: it turns web search off, because on
+Anthropic a search also switches off the schema the repair exists to satisfy.
+Its coverage follow-up is a retry like any other and keeps the draft's settings.
 
 **A cache that expires before the user replies is not a cache.** The default
 prompt cache lives in memory for a few minutes — shorter than reading a
@@ -584,9 +587,11 @@ success, ask where the user sees the thing they just did.
 
 **The advisor is where prompt caching pays, not the lab planner.** A tool loop
 re-sends the digest on every round and a chat on every turn; the planner runs
-twice and stops. The planner keys on the catalog fingerprint; the advisor keys
-on a hash of the profile (`advisorCacheKeyFor`), because its digest changes with
-every logged dose and a content-derived key would send each turn to a cold node.
+two or three calls and stops. A planner run that sends the package keys on the
+catalog fingerprint; a digest-only run keys on a hash of the profile
+(`labPlanDigestCacheKeyFor`), as the advisor does (`advisorCacheKeyFor`),
+because the digest changes with every logged dose and a content-derived key
+would send each call to a cold node.
 Both go through `ProviderRequest.cacheKey`, which is bounded by construction — a
 key one character over the limit fails the whole call before a token.
 
@@ -605,8 +610,11 @@ paragraphs govern preamble, restating the question, closing offers of help, and
 repeated disclaimers — never the safety rules, which sit above them unchanged
 and are asserted in `test/ai/answer_brevity_test.dart`. `briefAnswers` adds the
 easy-mode plain-language rule on top; it does not subtract from anything. The
-coverage receipt is exempted explicitly, or the model trades it away for length
-and every answer fails validation instead of being short.
+advisor's review block, and the planner's coverage array and receipt, are
+exempted explicitly, or the model trades them away for length and the output
+fails validation instead of being short. The planner's prompt carries no
+answer-length rule at all: a plan is one JSON object whose fields have their
+own writing rules.
 
 **Never discard a provider error payload you do not recognise.** The OpenAI
 handler read only `event['message']`, so a nested shape produced the literal
@@ -660,11 +668,13 @@ identifies a body of evidence: the receipt validates against it and the prompt
 cache key is derived from it. An instant-based bound made two builds a second
 apart disagree, and the repository tests caught it.
 
-**A generation is three sequential full-context model calls, not one.** Draft,
-optional repair, then an independent verification that re-sends the entire
-candidate — plus a token-count round trip and, on the file path, a context
-upload. Minutes is the expected cost, not a symptom. Before treating slowness as
-a bug, check whether the byte counts were moving.
+**A generation is two to three sequential model calls, not one.** Draft, at
+most one extra call — a format repair or a coverage follow-up, never both — then
+an independent verification that re-sends the entire candidate. A digest-only
+run sends the digest each time and looks the rest up; a run that sends the
+package adds a token-count round trip and, on the file path, a context upload.
+Minutes is the expected cost, not a symptom. Before treating slowness as a bug,
+check whether the byte counts were moving.
 
 **Backgrounding does not stop a Dart isolate; a sleeping device and a reclaimed
 process do.** `LongTaskGuard` answers both — a wakelock against sleep, a
@@ -822,9 +832,12 @@ dropped, never created.
 
 **The AI context is scoped per flow.** `HealthContextScope.labPlanning` carries
 the whole biomarker catalog because the planner must be able to propose and
-price a test never run; `advisory` carries only measured markers, and is what a
-whole-record review sends; `agent` is the unwindowed record the advisor's digest
-and tools read on the device, and is never sent as a whole. Supplements are
+price a test never run, and is what a planner run sends when it sends the
+package; `advisory` carries only measured markers, and is what an advisor
+whole-record review sends; `agent` is the unwindowed record both digests and
+the tools read on the device, and is never sent as a whole. The planner's
+digest carries the catalog itself, as `test_catalog`, because choosing from it
+is the job. Supplements are
 filtered to the active profile, and the raw inventory ledger is not shipped at
 all — `household_stock_levels` carries the useful part in one row per item. One
 shared context could not serve both flows without wasting most of it on
@@ -838,7 +851,11 @@ recall is worst at. The advisor now answers from `ClinicalDigest`, which lists
 *every entity* (each medication, condition, product, substance, measured
 biomarker, lab comment and symptom series) and abbreviates only detail, plus
 read-only tools for that detail. An agent that searches from nothing never
-thinks to look for biotin; one that is shown every entity does not have to.
+thinks to look for biotin; one that is shown every entity does not have to. The
+lab planner works the same way on OpenAI and Anthropic: its digest
+(`ClinicalDigestPurpose.labPlanner`) is the advisor's plus the whole catalog,
+and its tools are the advisor's. A provider without a tool loop, and a
+whole-record review, also get the package.
 Completeness is pinned by `test/ai/clinical_digest_test.dart` — a new kind of
 record means a new digest section and a new assertion there, and free text goes
 in verbatim.
@@ -886,6 +903,32 @@ four cache breakpoints: system, digest, package, and one that moves to the
 newest tool results — move it, never add another. A provider whose loop is not
 verified (Gemini) gets no tools and the full package instead, so it never
 answers from less than it used to.
+
+**A plan proves what it considered, item by item.** The planner's checklist is
+the advisor's — every current substance, medicine and finding — plus every
+current condition, goal and family history entry and every overdue list test
+the plan is free to leave out (a mandatory one is enforced by validation
+instead). The plan's `coverage` answers each id once: `addressed`, naming
+planned tests, or `not_needed`, with a reason. `assessPlanCoverage` rejects a
+verdict that cites a test the plan does not contain — "addressed by ferritin"
+without ferritin would tell the reader something false — and never throws:
+gaps get one follow-up naming them (unless a repair already ran), then are
+stored as `notConsidered` and shown first, in the error colour, on screen and
+in every export. A follow-up that fails, cannot be read, or covers less is
+discarded, never the draft. The reviewer sees every claim, gaps included, and
+blocks or warns on the ones the record contradicts.
+
+**Never checked and checked-empty are different facts.** `lab_plans
+.coverage_json` is nullable on purpose: null is a plan made before coverage
+existed, `[]` is one checked against a record with nothing current. The v15
+migration leaves existing plans null; a `'[]'` default would have made every
+old plan claim it had been checked.
+
+**The receipt proves the package was opened, so it exists only when a package
+is sent.** A digest-only plan has no `context_receipt` in its schema or prompt,
+and its `contextHash` is `digest:<sha256>` so the two hashes are never
+mistaken for each other. Coverage carries the proof the receipt used to: what
+was considered, rather than what was opened.
 
 **A deterministic preparation beats a remembered one.** Rules whose timing
 changes a result carry a `PreparationNote`; `withFindingPreparation` writes it
@@ -940,6 +983,9 @@ which remain unexamined rather than known-good:
   scripted-stream tests (`test/ai/provider_tool_loop_test.dart`), which prove the
   app sends what it intends, not that a provider accepts it — the first real
   turn on each provider is the verification. Gemini has no tool loop at all.
+  The lab planner adds schema-constrained output to the same loop, a
+  combination no live call has exercised either; the first digest-only plan on
+  each provider is its verification.
 - Foreground-service behaviour on a real device. `LongTaskGuard`'s bookkeeping is
   tested against injected seams, but the service actually starting, surviving
   Doze, and stopping cleanly has never run anywhere: CI builds the APK and never

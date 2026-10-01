@@ -44,6 +44,7 @@ void main() {
             );
             await db.execute(legacyBiomarkerListsTable);
             await db.execute(legacyBiomarkerListItemsTable);
+            await db.execute(legacyLabPlansV12Table);
             for (final id in ['annual', 'tie', 'checklist']) {
               await db.insert('biomarker_lists', {
                 'id': id,
