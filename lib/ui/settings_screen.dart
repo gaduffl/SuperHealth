@@ -19,6 +19,7 @@ import '../reminders/reminder_planner.dart';
 import '../reminders/reminder_service.dart';
 import '../sync/one_drive_service.dart';
 import '../sync/restore_sync_gate.dart';
+import '../updates/update_controller.dart';
 import 'common.dart';
 import 'dialogs.dart';
 import 'initial_setup_widgets.dart';
@@ -127,6 +128,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final controller = context.watch<AppController>();
     final visibility = controller.visibility;
     final strings = AppLocalizations.of(context);
+    // Asked of Android, never written here: a literal in this file read 0.5.0
+    // for dozens of releases. Without a number rather than with a wrong one when
+    // the platform has not answered (or there is no updater, as under test).
+    final installed = context.watch<UpdateController?>()?.installedVersion;
+    final version = installed == null ? '' : ' $installed';
     final oneDriveReady =
         _oneDriveSignedIn == true &&
         (_oneDriveMode == OneDriveStorageMode.appFolder ||
@@ -858,8 +864,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Text(
               _settingsText(
                 context,
-                'SuperHealth 0.5.0 · Personal-use Android build',
-                'SuperHealth 0.5.0 · Android-Build für den persönlichen Gebrauch',
+                'SuperHealth$version · Personal-use Android build',
+                'SuperHealth$version · Android-Build für den persönlichen Gebrauch',
               ),
               textAlign: TextAlign.center,
             ),
