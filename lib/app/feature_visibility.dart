@@ -23,6 +23,7 @@ class FeatureVisibility {
     required this.multipleAiRoles,
     required this.maintenanceTools,
     required this.deviceBackup,
+    required this.appUpdates,
     required this.pastDayEditing,
     required this.remindersOnByDefault,
     required this.calmShell,
@@ -43,6 +44,7 @@ class FeatureVisibility {
       multipleAiRoles = true,
       maintenanceTools = true,
       deviceBackup = true,
+      appUpdates = true,
       pastDayEditing = true,
       remindersOnByDefault = false,
       calmShell = false,
@@ -67,6 +69,10 @@ class FeatureVisibility {
       // Device-wide, covering every profile: it belongs to whoever set the
       // device up, not to each person on it.
       deviceBackup = false,
+      // Device-wide like the backup: which build the phone runs, and where it
+      // is fetched from, is for whoever set the device up. A person who only
+      // takes doses is never asked to approve an install.
+      appUpdates = false,
       pastDayEditing = false,
       // The one thing easy mode turns *on*. A reminder that defaults to off is
       // why a schedule produces nothing, and hiding the switch instead of
@@ -94,6 +100,9 @@ class FeatureVisibility {
   final bool maintenanceTools;
 
   final bool deviceBackup;
+
+  /// The in-app updater: its Settings card and the badge that points at it.
+  final bool appUpdates;
 
   /// Whether days other than today can be reviewed and filled in.
   final bool pastDayEditing;

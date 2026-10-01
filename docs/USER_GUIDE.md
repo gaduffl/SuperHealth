@@ -92,6 +92,10 @@ Elsewhere:
 
 The advisor may read text files in its profile workspace and propose a create, replace, or delete. A proposal is inert until the app shows its exact operation, path, and complete content and you confirm it. Approved changes are also uploaded to OneDrive when connected. The workspace cannot modify the health database.
 
+## Updating the app
+
+**Settings → App updates** shows the installed version and a **Check for updates** button. When a newer build exists, **Download and install** fetches it, checks its size and checksum, and opens Android's install dialog; SuperHealth restarts afterwards. The first time, Android asks you to allow SuperHealth to install apps — the card opens that page and carries on when you return. A private GitHub repository needs an access token, entered under **Update source**. Setup and the manifest format for a self-hosted server are in [Updates](UPDATES.md). The card is hidden in easy mode.
+
 ## Safety
 
 SuperHealth is a personal research and planning tool. Do not use it to diagnose illness or to start, stop, or change prescription medication without a qualified clinician. Seek urgent medical care for red-flag or emergency symptoms.

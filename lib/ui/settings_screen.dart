@@ -24,6 +24,7 @@ import 'dialogs.dart';
 import 'initial_setup_widgets.dart';
 import 'sync_conflicts_screen.dart';
 import 'unit_migration_screen.dart';
+import 'update_section.dart';
 
 String _settingsText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
@@ -614,6 +615,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ],
+          if (visibility.appUpdates) const AppUpdateSection(),
           SectionHeader(
             title: _settingsText(
               context,

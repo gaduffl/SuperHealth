@@ -28,6 +28,13 @@
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!--
+      Lets the in-app updater hand a downloaded APK to Android's package
+      installer. On Android 8+ this only declares the capability: the person
+      still has to switch on "install unknown apps" for SuperHealth, which the
+      updater sends them to when it is off.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
         android:label="SuperHealth"
         android:name="${applicationName}"
@@ -72,6 +79,14 @@
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+        <!--
+          Receives the PackageInstaller session result, including the system's
+          confirmation screen, which this receiver has to start. Not exported:
+          the PendingIntent that targets it is explicit.
+        -->
+        <receiver
+            android:name=".InstallStatusReceiver"
+            android:exported="false" />
         <!--
           Holds process priority while a lab plan generates. Nothing runs inside
           it — the work stays on the main isolate, which is where the database

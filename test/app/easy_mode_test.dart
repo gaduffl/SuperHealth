@@ -13,6 +13,7 @@ void main() {
       expect(easy.symptomsAndTags, isFalse);
       expect(easy.biomarkerCatalogAdmin, isFalse);
       expect(easy.deviceBackup, isFalse);
+      expect(easy.appUpdates, isFalse);
       expect(easy.maintenanceTools, isFalse);
     });
 
@@ -76,6 +77,7 @@ void main() {
         full.multipleAiRoles,
         full.maintenanceTools,
         full.deviceBackup,
+        full.appUpdates,
         full.pastDayEditing,
       ]) {
         expect(visible, isTrue);

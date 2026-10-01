@@ -48,6 +48,7 @@ Flutter SDK path — do not commit a machine-specific rewrite of it.
 | `lib/app/app_controller.dart` | `ChangeNotifier` holding loaded state; screens read it, mutate through it |
 | `lib/ai/` | Provider clients and their tool loops, the advisor (digest, tools, review), context builder, parsing, lab planner and its coverage (`plan_coverage.dart`) |
 | `lib/sync/`, `lib/backup/` | OneDrive snapshot sync, portable backup/restore |
+| `lib/updates/` | In-app updater: release sources, verified download, the Android install seam, `UpdateController` |
 | `lib/ui/` | Screens, dialogs, and `design.dart`/`charts.dart` visual vocabulary |
 | `test/` | Mirrors `lib/` one directory per layer |
 
@@ -709,6 +710,39 @@ matching `FOREGROUND_SERVICE_*` permission in
 manifest contributes neither the service nor the typed permission, and the
 failure is silent at build time and fatal at runtime.
 
+**An update is code the phone will run, so the updater trusts nothing it was
+not told to.** Every URL — the manifest, the asset, *each redirect hop* — must be
+`https`. The access token goes on the first request only: GitHub answers an asset
+request with a signed URL on another host, and a bearer token forwarded there is a
+leak and, for object storage, a rejected request. `UpdateSource.downloadHeaders`
+owns that decision because only the source knows which host the token belongs to;
+`UpdateDownloader` never holds the token. The cached file name is built from the
+parsed version, never from the server's asset name. A manifest without a `sha256`
+is rejected, because a plain file server publishes nothing else that vouches for
+the bytes; Android's same-key signature check is the backstop, not the first line.
+
+**The build number decides what is newer, not the dotted name.** Android enforces
+`versionCode` alone, so `AppVersion` orders by it whenever both sides carry one.
+`0.50.0+70` is not an update to `0.42.0+71`. This is also why every PR bumps both
+halves of `version:`.
+
+**Updater state is a `ChangeNotifier` beside `AppController`, not inside it.** It
+holds no health data and is device-level, so it is provided separately in `main.dart`
+and read as `UpdateController?` — absent in a test that does not care, in which case
+`AppUpdateSection` draws nothing. It is gated by `FeatureVisibility.appUpdates`
+(off in easy mode, like the backup: whoever sets the device up presses it), and the
+Settings tab badge is gated by the same flag, so a hidden card never advertises
+itself. The failure type is an enum, never prose; the one UI file phrases it in both
+languages.
+
+**The updater's Kotlin is not compiled by `flutter test`.** `ApkUpdater.kt` and
+`InstallStatusReceiver.kt` only build in the release APK step, so an error there
+shows up after merge. The channel name must match
+`MethodChannelApkInstaller.channelName`, the receiver needs its `<receiver>`
+declaration, and `REQUEST_INSTALL_PACKAGES` must stay in the manifest. The install
+is a `PackageInstaller` session streamed from the app's cache — do not replace it
+with an `ACTION_VIEW` intent, which needs a `FileProvider` and exposes the file.
+
 **Easy mode is per profile, and its capabilities live in one place.**
 `FeatureVisibility` names every difference; screens ask it (`controller
 .visibility.stockManagement`) rather than testing `easyMode` inline, because
@@ -990,3 +1024,9 @@ which remain unexamined rather than known-good:
   tested against injected seams, but the service actually starting, surviving
   Doze, and stopping cleanly has never run anywhere: CI builds the APK and never
   installs it. Treat the first report from a device as the real verification.
+- The in-app updater on a device. The Dart side is tested against scripted HTTP and
+  a fake installer, which prove the app verifies and hands over what it intends. The
+  `PackageInstaller` session, the confirmation sheet launched from the receiver, the
+  `USER_ACTION_NOT_REQUIRED` hint, and the "install unknown apps" round trip have
+  never run on a device or even compiled in CI before the first release. The first
+  real update on each Android version is the verification.

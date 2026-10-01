@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -22,6 +26,10 @@ import 'import/legacy_import_service.dart';
 import 'reminders/reminder_service.dart';
 import 'sync/one_drive_service.dart';
 import 'sync/snapshot_service.dart';
+import 'updates/apk_installer.dart';
+import 'updates/update_controller.dart';
+import 'updates/update_downloader.dart';
+import 'updates/update_settings.dart';
 import 'workspace/safe_workspace_service.dart';
 
 void main() {
@@ -102,11 +110,34 @@ void main() {
     advisorTraceStore: advisorTraceStore,
   );
 
+  final updateDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 30),
+      // A stalled transfer, not a slow one: the timer restarts with each chunk.
+      receiveTimeout: const Duration(seconds: 60),
+    ),
+  );
+  final updateController = UpdateController(
+    installer: MethodChannelApkInstaller(),
+    settingsStore: UpdateSettingsStore(),
+    tokenStore: UpdateTokenStore(),
+    downloader: UpdateDownloader(
+      dio: updateDio,
+      directory: () async =>
+          Directory('${(await getTemporaryDirectory()).path}/updates'),
+    ),
+    sourceFactory: updateSourceFactoryFor(updateDio),
+  );
+
   runApp(
-    ChangeNotifierProvider.value(
-      value: controller,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: controller),
+        ChangeNotifierProvider.value(value: updateController),
+      ],
       child: const SuperHealthApp(),
     ),
   );
   controller.initialize();
+  unawaited(updateController.checkInBackground());
 }
