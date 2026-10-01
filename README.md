@@ -14,12 +14,13 @@ SuperHealth is a private, Android-first personal health companion combining supp
 - Separate model configuration for PDF parsing and the main advisor.
 - OneDrive snapshot and lab-PDF sync through a dedicated SuperHealth Microsoft identity, using either a private AppFolder or an explicitly selected shared family folder.
 - Previewed import of existing Supplement Manager and Biomarkers JSON data, personal target overrides, and SHA-256-matched report PDFs with deterministic deduplication, audit history, and rollback support.
+- In-app updates: checks GitHub Releases (private repositories via a token) or a release manifest on your own server, verifies the APK, and installs it through Android's package installer. See [Updates](docs/UPDATES.md).
 - A profile-scoped advisor workspace. The AI may read workspace text and propose file changes, but every create, replace, or delete requires an exact user preview and confirmation.
 
 ## Privacy and safety model
 
 - SQLite is local-first and every health row is profile-scoped.
-- API keys and OneDrive tokens use Android secure storage and are never synchronized, exported, or placed in AI context.
+- API keys, OneDrive tokens and update access tokens use Android secure storage and are never synchronized, exported, or placed in AI context.
 - The advisor receives a serialized, read-only active-profile snapshot. No AI service is given a database or repository handle.
 - Complete health context is never silently truncated. The app uses a hashed, section-receipted provider file when inline context would not fit and rejects a response that cannot prove complete coverage.
 - Private OneDrive mode requests only `Files.ReadWrite.AppFolder`. Shared-family mode requests delegated `Files.ReadWrite`, lists folders solely for explicit selection, and constrains all app file operations to a `SuperHealth` subfolder beneath the selected folder.

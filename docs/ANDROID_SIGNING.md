@@ -48,6 +48,10 @@ Repository contents remain read-only during pull-request verification. Only
 the `main`-only release job receives `contents: write`, which it uses to create
 the version tag and upload the APK.
 
+The in-app updater ([Updates](UPDATES.md)) downloads these release assets, so the
+same stable key matters twice: Android refuses to install an update signed with
+a different key over the installed app.
+
 The connected ChatGPT GitHub integration cannot create Actions secrets, so this
 one security-sensitive setup must be run by the repository owner.
 

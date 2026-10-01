@@ -15,6 +15,7 @@ import '../ui/design.dart';
 import '../ui/settings_screen.dart';
 import '../ui/stock_overview_panel.dart';
 import '../ui/tracking_screen.dart';
+import '../updates/update_controller.dart';
 import 'app_controller.dart';
 import 'app_localizations.dart';
 import 'app_theme.dart';
@@ -279,6 +280,9 @@ class _HomeShellBody extends StatelessWidget {
     final navigation = context.watch<ShellNavigation>();
     final strings = AppLocalizations.of(context);
     final visibility = controller.visibility;
+    final updateAvailable =
+        visibility.appUpdates &&
+        (context.watch<UpdateController?>()?.updateAvailable ?? false);
     final index = navigation.tabIndex;
     final tabs = shellTabsFor(easyMode: visibility.calmShell);
     // A destination that is not in the bar can only be reached by a deep link,
@@ -307,7 +311,13 @@ class _HomeShellBody extends StatelessWidget {
         label: strings.advisor,
       ),
       BottomNavigationBarItem(
-        icon: Icon(Icons.settings),
+        // A new build is the one thing worth interrupting for here, and the
+        // card that acts on it lives under Settings.
+        icon: Badge(
+          isLabelVisible: updateAvailable,
+          smallSize: 8,
+          child: const Icon(Icons.settings),
+        ),
         label: strings.settings,
       ),
     ];
