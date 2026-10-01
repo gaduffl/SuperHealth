@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -60,16 +61,18 @@ class ApkUpdater(
         when (call.method) {
             "installedVersion" -> installedVersion(result)
             "canInstallPackages" -> result.success(canInstallPackages())
+            "silentInstallSupport" -> result.success(silentInstallSupport())
             "openInstallPermissionSettings" -> openInstallPermissionSettings(result)
             "install" -> {
                 val path = call.argument<String>("path")
+                val unattended = call.argument<Boolean>("unattended") ?: false
                 if (path == null) {
                     result.error("argument", "Missing APK path.", null)
                 } else if (!canInstallPackages()) {
                     result.error("permission", "Installing apps is not allowed.", null)
                 } else {
                     // Copying tens of megabytes into the session is not main-thread work.
-                    worker.execute { install(File(path), result) }
+                    worker.execute { install(File(path), unattended, result) }
                 }
             }
             else -> result.notImplemented()
@@ -97,6 +100,39 @@ class ApkUpdater(
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
             activity.packageManager.canRequestPackageInstalls()
 
+    /**
+     * Whether Android will install an update of this app without its
+     * confirmation sheet and, if not, which condition is missing. These are the
+     * conditions of `SessionParams.setRequireUserAction` that depend on the
+     * device rather than on the build, so the app can say what auto-update can
+     * do here instead of committing a session and finding out.
+     *
+     * Not checked: the target-SDK floor, which each Android release raises and
+     * a current build meets.
+     */
+    private fun silentInstallSupport(): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return "androidTooOld"
+        if (activity.checkSelfPermission(UPDATE_WITHOUT_USER_ACTION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return "permissionMissing"
+        }
+        if (!canInstallPackages()) return "installNotAllowed"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14 lets a store claim an app's updates; every other
+            // installer then has to ask, this app updating itself included.
+            val owner = try {
+                activity.packageManager
+                    .getInstallSourceInfo(activity.packageName)
+                    .updateOwnerPackageName
+            } catch (ignored: Exception) {
+                null
+            }
+            if (owner != null && owner != activity.packageName) return "anotherStore"
+        }
+        return "supported"
+    }
+
     private fun openInstallPermissionSettings(result: MethodChannel.Result) {
         try {
             val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -114,7 +150,7 @@ class ApkUpdater(
         }
     }
 
-    private fun install(apk: File, result: MethodChannel.Result) {
+    private fun install(apk: File, unattended: Boolean, result: MethodChannel.Result) {
         val installer = activity.packageManager.packageInstaller
         var sessionId = -1
         try {
@@ -131,9 +167,11 @@ class ApkUpdater(
             params.setAppPackageName(activity.packageName)
             params.setSize(apk.length())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // The person has just tapped "install"; where Android allows it
-                // (a later update of an app this one installed), skip a second
-                // confirmation sheet.
+                // Either the person has just tapped "install" or they switched
+                // on auto-update; a sheet asking again adds nothing. Android
+                // honours this only for an app updating itself (or one it
+                // installed) that declares UPDATE_PACKAGES_WITHOUT_USER_ACTION,
+                // and shows the sheet otherwise.
                 params.setRequireUserAction(
                     PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED,
                 )
@@ -151,6 +189,7 @@ class ApkUpdater(
                 // required: the installer adds the status extras to it.
                 val intent = Intent(activity, InstallStatusReceiver::class.java)
                     .setAction(InstallStatusReceiver.ACTION)
+                    .putExtra(InstallStatusReceiver.EXTRA_UNATTENDED, unattended)
                 val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                     (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         PendingIntent.FLAG_MUTABLE
@@ -176,5 +215,10 @@ class ApkUpdater(
     companion object {
         /** Must match `MethodChannelApkInstaller.channelName` in Dart. */
         const val CHANNEL = "com.gaduffl.super_health/updater"
+
+        // By name rather than through Manifest.permission: the constant is
+        // newer than this app's minSdk, and the string is all the check needs.
+        private const val UPDATE_WITHOUT_USER_ACTION =
+            "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"
     }
 }

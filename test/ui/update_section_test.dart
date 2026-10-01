@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:super_health/app/app_localizations.dart';
 import 'package:super_health/ui/update_section.dart';
+import 'package:super_health/updates/apk_installer.dart';
 import 'package:super_health/updates/app_version.dart';
 import 'package:super_health/updates/update_controller.dart';
 import 'package:super_health/updates/update_downloader.dart';
@@ -195,6 +196,8 @@ void main() {
 
     expect(find.text('App-Updates'), findsOneWidget);
     expect(find.text('Nach Updates suchen'), findsOneWidget);
+    expect(find.text('Automatische Updates'), findsOneWidget);
+    expect(find.textContaining('Automatic'), findsNothing);
     expect(find.text('Update-Quelle'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('update-check')));
     await tester.pumpAndSettle();
@@ -280,6 +283,99 @@ void main() {
 
       expect(controller.settings.githubRepository, 'someone/else');
       expect(tokens.values, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'auto update is a labelled checkbox on the card that says what it will do',
+    (tester) async {
+      installer.silent = SilentInstall.supported;
+      final controller = build();
+      await pump(tester, controller);
+
+      final box = find.byKey(const ValueKey('update-auto-install'));
+      expect(
+        find.descendant(of: box, matching: find.text('Auto update')),
+        findsOneWidget,
+      );
+      expect(tester.widget<CheckboxListTile>(box).value, isFalse);
+      expect(
+        find.textContaining(
+          'installs them while SuperHealth is in the '
+          'background',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.runAsync(() async {
+        await tester.tap(box);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pumpAndSettle();
+
+      expect(controller.settings.autoInstall, isTrue);
+      expect(tester.widget<CheckboxListTile>(box).value, isTrue);
+      expect(
+        find.textContaining('It installs the next time you leave SuperHealth'),
+        findsOneWidget,
+      );
+      expect(installer.installed, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'where Android insists on its sheet, the box says it only looks',
+    (tester) async {
+      installer.silent = SilentInstall.androidTooOld;
+      await pump(tester, build());
+
+      expect(
+        find.text(
+          'Android 11 and older confirm every install. So auto update only '
+          'looks for new versions here, and you install them.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'a tap that installs without a sheet warns that the app will close',
+    (tester) async {
+      installer.silent = SilentInstall.supported;
+      final controller = build();
+      await pump(tester, controller);
+      await tester.tap(find.byKey(const ValueKey('update-check')));
+      await tester.pumpAndSettle();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const ValueKey('update-install')));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.textContaining('SuperHealth closes when'), findsOneWidget);
+      expect(find.textContaining('Confirm the installation'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'while auto update is on, the source dialog cannot switch the check off',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({'update_auto_install': true});
+      await pump(tester, build());
+      await tester.tap(find.text('Update source'));
+      await tester.pumpAndSettle();
+
+      final check = tester.widget<SwitchListTile>(
+        find.byKey(const ValueKey('update-auto-check')),
+      );
+      expect(check.value, isTrue);
+      expect(check.onChanged, isNull);
+      expect(
+        find.textContaining('Auto update is on, and it looks'),
+        findsOneWidget,
+      );
     },
   );
 }

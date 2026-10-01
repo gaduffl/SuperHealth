@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:ui' show AppLifecycleState;
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:super_health/updates/apk_installer.dart';
@@ -31,15 +33,21 @@ void main() {
     notes: 'Fixes',
   );
 
-  UpdateController build() => UpdateController(
+  UpdateController build({
+    bool Function()? workInFlight,
+    Listenable? workChanges,
+    HttpClientAdapter? http,
+  }) => UpdateController(
     installer: installer,
     settingsStore: UpdateSettingsStore(),
     tokenStore: tokens,
     downloader: UpdateDownloader(
-      dio: dioFor(adapter),
+      dio: Dio()..httpClientAdapter = http ?? adapter,
       directory: () async => dir,
     ),
     sourceFactory: (_, _) => source,
+    workInFlight: workInFlight,
+    workChanges: workChanges,
     clock: () => now,
   );
 
@@ -396,6 +404,238 @@ void main() {
     expect(controller.progress, isNull);
   });
 
+  test(
+    'returning to the app looks for an update again, at most once an hour',
+    () async {
+      final controller = build();
+      await controller.checkInBackground();
+      expect(source.fetches, 1);
+
+      await controller.lifecycleChanged(AppLifecycleState.paused);
+      await controller.lifecycleChanged(AppLifecycleState.resumed);
+      expect(source.fetches, 1, reason: 'within the hour');
+
+      now = now.add(UpdateController.autoCheckInterval);
+      await controller.lifecycleChanged(AppLifecycleState.resumed);
+      expect(source.fetches, 2);
+    },
+  );
+
+  test(
+    'a tap that Android can install without its sheet says installing, not "confirm"',
+    () async {
+      installer.silent = SilentInstall.supported;
+      final controller = build();
+      await controller.checkForUpdates();
+      await controller.downloadAndInstall();
+
+      expect(installer.unattended.single, isFalse);
+      expect(controller.phase, UpdatePhase.installing);
+    },
+  );
+
+  test(
+    'with auto update off, leaving the app fetches and installs nothing',
+    () async {
+      installer.silent = SilentInstall.supported;
+      final controller = build();
+      await controller.checkInBackground();
+      expect(controller.phase, UpdatePhase.available);
+
+      await controller.lifecycleChanged(AppLifecycleState.paused);
+      expect(adapter.requests, isEmpty);
+      expect(installer.installed, isEmpty);
+    },
+  );
+
+  group('auto update', () {
+    setUp(() => installer.silent = SilentInstall.supported);
+
+    test(
+      'downloads what the check finds, then installs only once the app is out of sight',
+      () async {
+        final controller = build();
+        await controller.setAutoInstall(true);
+
+        expect(controller.phase, UpdatePhase.readyToInstall);
+        expect(controller.installsInBackground, isTrue);
+        expect(installer.installed, isEmpty, reason: 'never in front of them');
+
+        await controller.lifecycleChanged(AppLifecycleState.inactive);
+        expect(
+          installer.installed,
+          isEmpty,
+          reason: 'a dialog or the shade over the app is not leaving it',
+        );
+
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        expect(installer.installed, hasLength(1));
+        expect(installer.unattended.single, isTrue);
+        expect(installer.installed.single.readAsBytesSync(), bytes);
+        expect(controller.phase, UpdatePhase.installing);
+      },
+    );
+
+    test(
+      'waits for work in flight, and installs when it ends in the background',
+      () async {
+        final work = ValueNotifier(true);
+        final controller = build(
+          workInFlight: () => work.value,
+          workChanges: work,
+        );
+        await controller.setAutoInstall(true);
+
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        expect(
+          installer.installed,
+          isEmpty,
+          reason: 'a lab plan is generating',
+        );
+
+        await controller.lifecycleChanged(AppLifecycleState.resumed);
+        work.value = false;
+        await Future<void>.delayed(Duration.zero);
+        expect(installer.installed, isEmpty, reason: 'back in front of them');
+
+        work.value = true;
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        work.value = false;
+        await Future<void>.delayed(Duration.zero);
+        expect(installer.installed, hasLength(1));
+        expect(installer.unattended.single, isTrue);
+      },
+    );
+
+    test(
+      'where Android would show its sheet, it only looks: nothing is downloaded or installed',
+      () async {
+        installer.silent = SilentInstall.androidTooOld;
+        final controller = build();
+        await controller.setAutoInstall(true);
+
+        expect(controller.phase, UpdatePhase.available);
+        expect(controller.installsInBackground, isFalse);
+        expect(
+          adapter.requests,
+          isEmpty,
+          reason:
+              'a download that can only end in a sheet repeats every launch',
+        );
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        expect(installer.installed, isEmpty);
+      },
+    );
+
+    test(
+      'an install Android still wanted confirmed is not retried; the button installs it',
+      () async {
+        final controller = build();
+        await controller.setAutoInstall(true);
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        installer.emit(
+          const InstallEvent(InstallEventKind.confirmationRequired),
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(controller.phase, UpdatePhase.readyToInstall);
+        expect(controller.installsInBackground, isFalse);
+
+        await controller.lifecycleChanged(AppLifecycleState.resumed);
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        expect(
+          installer.installed,
+          hasLength(1),
+          reason: 'not committed and declined on every trip away',
+        );
+
+        await controller.lifecycleChanged(AppLifecycleState.resumed);
+        await controller.installDownloaded();
+        expect(installer.installed, hasLength(2));
+        expect(installer.unattended.last, isFalse, reason: 'a tap may ask');
+      },
+    );
+
+    test(
+      'leaving the app in the middle of a tapped install does not start a second one',
+      () async {
+        final controller = build();
+        await controller.setAutoInstall(true);
+        installer.whileAskingPermission = () async {
+          installer.whileAskingPermission = null;
+          await controller.lifecycleChanged(AppLifecycleState.paused);
+        };
+
+        await controller.installDownloaded();
+        expect(installer.installed, hasLength(1));
+        expect(installer.unattended.single, isFalse);
+      },
+    );
+
+    test(
+      'a later check of the release already downloaded keeps it ready, without fetching it again',
+      () async {
+        final controller = build();
+        await controller.setAutoInstall(true);
+        final downloads = adapter.requests.length;
+
+        now = now.add(UpdateController.autoCheckInterval);
+        await controller.lifecycleChanged(AppLifecycleState.resumed);
+
+        expect(source.fetches, 2);
+        expect(controller.phase, UpdatePhase.readyToInstall);
+        expect(adapter.requests, hasLength(downloads));
+      },
+    );
+
+    test(
+      'turning it on carries on with a release that is already known',
+      () async {
+        final controller = build();
+        await controller.checkForUpdates();
+        expect(adapter.requests, isEmpty);
+
+        await controller.setAutoInstall(true);
+        expect(controller.phase, UpdatePhase.readyToInstall);
+        expect(adapter.requests, isNotEmpty);
+      },
+    );
+
+    test(
+      'a lost connection is as quiet as the check; a corrupt download is shown',
+      () async {
+        final offline = build(http: _OfflineAdapter());
+        await offline.setAutoInstall(true);
+        expect(offline.phase, UpdatePhase.available);
+        expect(offline.failure, isNull);
+
+        adapter = FakeAdapter({_apkUrl: Reply(200, bytes: List.filled(64, 7))});
+        now = now.add(UpdateController.autoCheckInterval);
+        final corrupt = build();
+        await corrupt.setAutoInstall(true);
+        expect(corrupt.phase, UpdatePhase.failed);
+        expect(corrupt.failure!.kind, UpdateFailureKind.checksumMismatch);
+        await corrupt.lifecycleChanged(AppLifecycleState.paused);
+        expect(installer.installed, isEmpty);
+      },
+    );
+  });
+
   // Silences "unused" for Dio import used by the adapter helpers above.
   test('dio helper is wired', () => expect(dioFor(adapter), isA<Dio>()));
+}
+
+class _OfflineAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async => throw DioException.connectionError(
+    requestOptions: options,
+    reason: 'offline',
+  );
+
+  @override
+  void close({bool force = false}) {}
 }

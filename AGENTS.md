@@ -742,12 +742,42 @@ itself. The failure type is an enum, never prose; the one UI file phrases it in 
 languages.
 
 **The updater's Kotlin is not compiled by `flutter test`.** `ApkUpdater.kt` and
-`InstallStatusReceiver.kt` only build in the release APK step, so an error there
-shows up after merge. The channel name must match
-`MethodChannelApkInstaller.channelName`, the receiver needs its `<receiver>`
-declaration, and `REQUEST_INSTALL_PACKAGES` must stay in the manifest. The install
-is a `PackageInstaller` session streamed from the app's cache — do not replace it
-with an `ACTION_VIEW` intent, which needs a `FileProvider` and exposes the file.
+`InstallStatusReceiver.kt` only build in CI's APK step, after every Dart check has
+passed, and a sandbox without an Android SDK cannot compile them at all. The
+channel name must match `MethodChannelApkInstaller.channelName`, the receiver needs
+its `<receiver>` declaration, and `REQUEST_INSTALL_PACKAGES` must stay in the
+manifest. The install is a `PackageInstaller` session streamed from the app's cache
+— do not replace it with an `ACTION_VIEW` intent, which needs a `FileProvider` and
+exposes the file.
+
+**Android skips its install sheet only for a build that already declares
+`UPDATE_PACKAGES_WITHOUT_USER_ACTION`.** `USER_ACTION_NOT_REQUIRED` on the
+session is a request, and without that manifest permission Android ignores it and
+shows the sheet anyway — which is how the updater shipped asking three times per
+update. The permission is checked on the *installing* build, so the update
+that first brings it in still asks; every later one does not.
+`silentInstallSupport()` reports the device-side conditions (Android 12+,
+"install unknown apps" on, no other store owning updates on 14+) so the app can
+say what auto-update will do instead of committing a session to find out.
+
+**Auto-update installs on the way out, never in front of the person.** A silent
+install replaces the process: the app simply vanishes, along with whatever was on
+screen. So an unattended install is committed only on `hidden`/`paused`, and only
+while `appHasWorkInProgress` is false — `AppController.workInFlight` (anything
+`busy`, an automatic sync, or an unsaved `draftLabPlan`, a paid result that lives
+only in memory) or anything open over the home screen, which is what
+`rootNavigatorKey` exists to ask. Work ending while the app is in the background
+re-triggers it through `workChanges`. The lifecycle is observed in `main.dart`,
+not by the Settings card, which is not on screen when the person leaves.
+
+**An unattended install never puts a sheet on screen.** Auto-update downloads
+only where `silentInstallSupport()` says the install can be silent; elsewhere it
+only looks, because a download that can only end in a sheet is discarded by the
+next launch and fetched again. If Android still wants confirmation, the receiver
+abandons the session instead of starting the sheet — from the background Android
+would block it, and on an older one it would cover another app — and the
+controller stops trying unattended until the person installs with the button or
+re-ticks the box.
 
 **Easy mode is per profile, and its capabilities live in one place.**
 `FeatureVisibility` names every difference; screens ask it (`controller
@@ -1032,7 +1062,10 @@ which remain unexamined rather than known-good:
   installs it. Treat the first report from a device as the real verification.
 - The in-app updater on a device. The Dart side is tested against scripted HTTP and
   a fake installer, which prove the app verifies and hands over what it intends. The
-  `PackageInstaller` session, the confirmation sheet launched from the receiver, the
-  `USER_ACTION_NOT_REQUIRED` hint, and the "install unknown apps" round trip have
-  never run on a device or even compiled in CI before the first release. The first
-  real update on each Android version is the verification.
+  attended path — the `PackageInstaller` session, the confirmation sheet launched
+  from the receiver, the "install unknown apps" round trip — has worked on the
+  owner's phone. Installing without the sheet, the unattended install on the way to
+  the background, the receiver declining a sheet for one, and whether Play Protect
+  still asks to scan when the system sheet is skipped have never run on a device.
+  The first update *after* the one that adds `UPDATE_PACKAGES_WITHOUT_USER_ACTION`
+  is the verification.

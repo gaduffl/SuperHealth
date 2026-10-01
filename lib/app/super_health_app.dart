@@ -21,6 +21,19 @@ import 'app_localizations.dart';
 import 'app_theme.dart';
 import 'shell_navigation.dart';
 
+/// The app's one navigator, so code outside the widget tree can ask whether
+/// anything is open over the home screen.
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Whether replacing the app now would cut off something the person is in the
+/// middle of: work [controller] is doing or holding unsaved, or anything open
+/// over the home screen — a form, a review, a sheet. Auto-update installs only
+/// when this is false.
+bool appHasWorkInProgress(
+  AppController controller,
+  NavigatorState? navigator,
+) => controller.workInFlight || (navigator?.canPop() ?? false);
+
 class SuperHealthApp extends StatelessWidget {
   const SuperHealthApp({super.key});
 
@@ -33,6 +46,7 @@ class SuperHealthApp extends StatelessWidget {
     // phone. Switching profiles therefore rebuilds both themes.
     final calm = controller.visibility.calmShell;
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       onGenerateTitle: (context) => AppLocalizations.of(context).appName,
       debugShowCheckedModeBanner: false,
       locale: appearance.language.locale,

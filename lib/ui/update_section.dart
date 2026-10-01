@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../app/app_localizations.dart';
+import '../updates/apk_installer.dart';
 import '../updates/update_controller.dart';
 import '../updates/update_models.dart';
 import '../updates/update_settings.dart';
@@ -16,33 +17,8 @@ String _t(BuildContext context, String english, String german) =>
 /// Renders nothing when no [UpdateController] is provided or the platform has
 /// no installer to hand an APK to, so a build that cannot update never shows a
 /// button that cannot work.
-class AppUpdateSection extends StatefulWidget {
+class AppUpdateSection extends StatelessWidget {
   const AppUpdateSection({super.key});
-
-  @override
-  State<AppUpdateSection> createState() => _AppUpdateSectionState();
-}
-
-class _AppUpdateSectionState extends State<AppUpdateSection>
-    with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      context.read<UpdateController?>()?.onResumed();
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -139,7 +115,8 @@ class _UpdateCard extends StatelessWidget {
                   const SizedBox(height: 12),
                   LinearProgressIndicator(value: controller.progress),
                 ],
-                if (phase == UpdatePhase.awaitingConfirmation) ...[
+                if (phase == UpdatePhase.awaitingConfirmation ||
+                    phase == UpdatePhase.installing) ...[
                   const SizedBox(height: 12),
                   const LinearProgressIndicator(),
                 ],
@@ -186,6 +163,15 @@ class _UpdateCard extends StatelessWidget {
             ),
           ),
           const Divider(height: 1),
+          CheckboxListTile(
+            key: const ValueKey('update-auto-install'),
+            value: controller.settings.autoInstall,
+            onChanged: (value) => controller.setAutoInstall(value ?? false),
+            secondary: const Icon(Icons.autorenew),
+            title: Text(_t(context, 'Auto update', 'Automatische Updates')),
+            subtitle: Text(_autoInstallSummary(context)),
+          ),
+          const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.tune_outlined),
             title: Text(_t(context, 'Update source', 'Update-Quelle')),
@@ -217,6 +203,7 @@ class _UpdateCard extends StatelessWidget {
           ),
         ];
       case UpdatePhase.awaitingConfirmation:
+      case UpdatePhase.installing:
         return const [];
       case UpdatePhase.needsPermission:
         return [
@@ -293,6 +280,15 @@ class _UpdateCard extends StatelessWidget {
         'Downloading ${_progressText(controller)}',
         'Lade herunter ${_progressText(controller)}',
       ),
+      UpdatePhase.readyToInstall when controller.installsInBackground => _t(
+        context,
+        'Version ${update?.version} is downloaded and verified. It installs '
+            'the next time you leave SuperHealth with nothing open or in '
+            'progress.',
+        'Version ${update?.version} ist geladen und geprüft. Sie wird '
+            'installiert, sobald du SuperHealth verlässt, während nichts '
+            'geöffnet ist oder läuft.',
+      ),
       UpdatePhase.readyToInstall => _t(
         context,
         'Version ${update?.version} is downloaded and verified.',
@@ -305,12 +301,77 @@ class _UpdateCard extends StatelessWidget {
         'Bestätige die Installation im Android-Dialog. SuperHealth startet '
             'danach neu.',
       ),
+      UpdatePhase.installing => _t(
+        context,
+        'Installing version ${update?.version}. SuperHealth closes when '
+            'Android is done — open it again to use the new version.',
+        'Version ${update?.version} wird installiert. SuperHealth schließt '
+            'sich danach – öffne die App erneut, um die neue Version zu '
+            'nutzen.',
+      ),
       UpdatePhase.failed => _t(
         context,
         'The update did not complete.',
         'Das Update wurde nicht abgeschlossen.',
       ),
     };
+  }
+
+  /// Says what auto-update will actually do on this phone. Where Android
+  /// insists on its sheet, the box still looks for updates, and saying only
+  /// "auto update" would promise installs that never come.
+  String _autoInstallSummary(BuildContext context) {
+    final silent = controller.silentInstall;
+    final declined = controller.unattendedDeclined;
+    if (silent == SilentInstall.supported && !declined) {
+      return _t(
+        context,
+        'Downloads new versions by itself and installs them while '
+            'SuperHealth is in the background — never while a lab plan, an '
+            'advisor answer or a sync is running, or something is open.',
+        'Lädt neue Versionen selbst und installiert sie, während SuperHealth '
+            'im Hintergrund ist – nie während ein Laborplan, eine Antwort der '
+            'Beratung oder eine Synchronisierung läuft oder etwas geöffnet ist.',
+      );
+    }
+    final reason = declined
+        ? _t(
+            context,
+            'Android wanted the last update confirmed after all.',
+            'Android wollte das letzte Update doch bestätigt haben.',
+          )
+        : switch (silent) {
+            SilentInstall.androidTooOld => _t(
+              context,
+              'Android 11 and older confirm every install.',
+              'Android 11 und älter lässt jede Installation bestätigen.',
+            ),
+            SilentInstall.installNotAllowed => _t(
+              context,
+              'SuperHealth is not yet allowed to install apps.',
+              'SuperHealth darf noch keine Apps installieren.',
+            ),
+            SilentInstall.anotherStore => _t(
+              context,
+              'Another app store manages SuperHealth’s updates on this '
+                  'phone, so Android asks before each install.',
+              'Ein anderer App-Store verwaltet die Updates von SuperHealth '
+                  'auf diesem Gerät, daher fragt Android vor jeder '
+                  'Installation.',
+            ),
+            SilentInstall.supported || SilentInstall.unavailable => _t(
+              context,
+              'Android asks before each install on this phone.',
+              'Android fragt auf diesem Gerät vor jeder Installation.',
+            ),
+          };
+    final consequence = _t(
+      context,
+      'So auto update only looks for new versions here, and you install them.',
+      'Automatische Updates suchen hier daher nur nach neuen Versionen; '
+          'installieren musst du sie selbst.',
+    );
+    return '$reason $consequence';
   }
 
   String _sourceSummary(BuildContext context) {
@@ -551,6 +612,7 @@ class _UpdateSourceDialogState extends State<_UpdateSourceDialog> {
   @override
   Widget build(BuildContext context) {
     final github = _source == UpdateSourceKind.github;
+    final autoInstall = widget.controller.settings.autoInstall;
     return AlertDialog(
       title: Text(_t(context, 'Update source', 'Update-Quelle')),
       content: SingleChildScrollView(
@@ -670,24 +732,37 @@ class _UpdateSourceDialogState extends State<_UpdateSourceDialog> {
                 ),
               ),
             SwitchListTile(
+              key: const ValueKey('update-auto-check'),
               contentPadding: EdgeInsets.zero,
-              value: _autoCheck,
-              onChanged: (value) => setState(() => _autoCheck = value),
+              // Auto-update has to look before it can fetch, so while it is on
+              // this switch is on too — and cannot be turned off from here.
+              value: autoInstall || _autoCheck,
+              onChanged: autoInstall
+                  ? null
+                  : (value) => setState(() => _autoCheck = value),
               title: Text(
                 _t(
                   context,
-                  'Check when the app starts',
-                  'Beim Start nach Updates suchen',
+                  'Check when the app opens',
+                  'Beim Öffnen nach Updates suchen',
                 ),
               ),
               subtitle: Text(
-                _t(
-                  context,
-                  'Only looks for a new version. Nothing is downloaded or '
-                      'installed without your tap.',
-                  'Sucht nur nach einer neuen Version. Ohne dein Tippen wird '
-                      'nichts geladen oder installiert.',
-                ),
+                autoInstall
+                    ? _t(
+                        context,
+                        'Auto update is on, and it looks for new versions '
+                            'by itself.',
+                        'Automatische Updates sind an und suchen selbst nach '
+                            'neuen Versionen.',
+                      )
+                    : _t(
+                        context,
+                        'Only looks for a new version. Nothing is downloaded '
+                            'or installed without your tap.',
+                        'Sucht nur nach einer neuen Version. Ohne dein Tippen '
+                            'wird nichts geladen oder installiert.',
+                      ),
               ),
             ),
           ],
