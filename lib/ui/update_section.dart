@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../app/app_localizations.dart';
 import '../updates/apk_installer.dart';
+import '../updates/app_version.dart';
 import '../updates/update_controller.dart';
 import '../updates/update_models.dart';
 import '../updates/update_settings.dart';
@@ -11,6 +14,100 @@ import 'common.dart';
 
 String _t(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
+
+/// What Android shows once an update has closed SuperHealth in front of the
+/// person: the way back, one tap away.
+UpdateNotice updateNoticeFor(AppLocalizations strings, AppVersion version) =>
+    UpdateNotice(
+      channelName: strings.pick('App updates', 'App-Updates'),
+      title: strings.pick(
+        'SuperHealth was updated',
+        'SuperHealth wurde aktualisiert',
+      ),
+      body: strings.pick(
+        'Version ${version.name} is installed. Tap to open it again.',
+        'Version ${version.name} ist installiert. Tippe, um sie wieder zu '
+            'öffnen.',
+      ),
+      versionCode: version.build ?? 0,
+    );
+
+/// Announces an update about to install in front of the person, with the
+/// countdown and a way to put it off. The app closes when Android installs, so
+/// without this the update would look like a crash.
+///
+/// Draws nothing unless a countdown is running.
+class UpdateCountdownBanner extends StatelessWidget {
+  const UpdateCountdownBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<UpdateController?>();
+    if (controller == null || controller.installCountdown == null) {
+      return const SizedBox.shrink();
+    }
+    return _CountdownBanner(controller: controller);
+  }
+}
+
+class _CountdownBanner extends StatefulWidget {
+  const _CountdownBanner({required this.controller});
+
+  final UpdateController controller;
+
+  @override
+  State<_CountdownBanner> createState() => _CountdownBannerState();
+}
+
+class _CountdownBannerState extends State<_CountdownBanner> {
+  late final Timer _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // Only redraws the number; the controller decides when the time is up.
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _tick.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final left = controller.installCountdown ?? Duration.zero;
+    final seconds = (left.inMilliseconds / 1000).ceil();
+    final version = controller.available?.version.name ?? '';
+    return MaterialBanner(
+      key: const ValueKey('update-countdown'),
+      leading: const Icon(Icons.system_update),
+      content: Text(
+        _t(
+          context,
+          'Updating to version $version in $seconds s. SuperHealth closes '
+              'while Android installs it.',
+          'Update auf Version $version in $seconds s. SuperHealth schließt '
+              'sich, während Android es installiert.',
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('update-later'),
+          onPressed: controller.postponeInstall,
+          child: Text(_t(context, 'Later', 'Später')),
+        ),
+        TextButton(
+          key: const ValueKey('update-now'),
+          onPressed: controller.installNow,
+          child: Text(_t(context, 'Update now', 'Jetzt aktualisieren')),
+        ),
+      ],
+    );
+  }
+}
 
 /// The "App updates" block of Settings.
 ///
@@ -280,14 +377,24 @@ class _UpdateCard extends StatelessWidget {
         'Downloading ${_progressText(controller)}',
         'Lade herunter ${_progressText(controller)}',
       ),
-      UpdatePhase.readyToInstall when controller.installsInBackground => _t(
+      UpdatePhase.readyToInstall
+          when controller.installsAutomatically &&
+              controller.installPostponed =>
+        _t(
+          context,
+          'Version ${update?.version} is downloaded and verified. It installs '
+              'when you leave SuperHealth.',
+          'Version ${update?.version} ist geladen und geprüft. Sie wird '
+              'installiert, wenn du SuperHealth verlässt.',
+        ),
+      UpdatePhase.readyToInstall when controller.installsAutomatically => _t(
         context,
         'Version ${update?.version} is downloaded and verified. It installs '
-            'the next time you leave SuperHealth with nothing open or in '
-            'progress.',
+            'as soon as nothing is open or in progress, with a short notice '
+            'first.',
         'Version ${update?.version} ist geladen und geprüft. Sie wird '
-            'installiert, sobald du SuperHealth verlässt, während nichts '
-            'geöffnet ist oder läuft.',
+            'installiert, sobald nichts geöffnet ist oder läuft – mit kurzer '
+            'Vorwarnung.',
       ),
       UpdatePhase.readyToInstall => _t(
         context,
@@ -324,14 +431,18 @@ class _UpdateCard extends StatelessWidget {
     final silent = controller.silentInstall;
     final declined = controller.unattendedDeclined;
     if (silent == SilentInstall.supported && !declined) {
+      final notice = controller.installNotice.inSeconds;
       return _t(
         context,
-        'Downloads new versions by itself and installs them while '
-            'SuperHealth is in the background — never while a lab plan, an '
-            'advisor answer or a sync is running, or something is open.',
-        'Lädt neue Versionen selbst und installiert sie, während SuperHealth '
-            'im Hintergrund ist – nie während ein Laborplan, eine Antwort der '
-            'Beratung oder eine Synchronisierung läuft oder etwas geöffnet ist.',
+        'Downloads new versions by itself and installs them, also while you '
+            'use SuperHealth: a $notice-second notice comes first, and you '
+            'can put it off. Never while a lab plan, an advisor answer or a '
+            'sync is running, or something is open.',
+        'Lädt neue Versionen selbst und installiert sie, auch während du '
+            'SuperHealth nutzt: Vorher kommt eine Ankündigung mit $notice '
+            'Sekunden Vorlauf, die du verschieben kannst. Nie während ein '
+            'Laborplan, eine Antwort der Beratung oder eine Synchronisierung '
+            'läuft oder etwas geöffnet ist.',
       );
     }
     final reason = declined

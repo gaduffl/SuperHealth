@@ -54,10 +54,10 @@ enum UpdatePhase {
 /// Looks for a newer release, downloads it, and hands it to Android.
 ///
 /// By default nothing is fetched or installed without a tap; the automatic
-/// check only *looks*. Auto-update is the opt-in exception, and even then the
-/// install waits until the app is out of sight with no work in flight:
-/// installing replaces the running process, and doing that while someone is
-/// mid-entry, or mid lab plan, throws their work away.
+/// check only *looks*. Auto-update is the opt-in exception. Installing replaces
+/// the running process, so even then it never installs with work in flight —
+/// mid-entry, or mid lab plan, that would throw the work away — and in front of
+/// the person only after a countdown they can postpone.
 class UpdateController extends ChangeNotifier {
   UpdateController({
     required this.installer,
@@ -67,9 +67,13 @@ class UpdateController extends ChangeNotifier {
     required this.sourceFactory,
     bool Function()? workInFlight,
     this._workChanges,
+    bool Function()? installInFront,
+    this.installNotice = const Duration(seconds: 10),
+    this._noticeFor,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now,
-       _workInFlight = workInFlight ?? _nothingInFlight {
+       _workInFlight = workInFlight ?? _nothingInFlight,
+       _installInFront = installInFront ?? _always {
     _events = installer.events.listen(_onInstallEvent);
     _workChanges?.addListener(_onWorkChanged);
   }
@@ -86,7 +90,21 @@ class UpdateController extends ChangeNotifier {
   final bool Function() _workInFlight;
   final Listenable? _workChanges;
 
+  /// Whether auto-update may install while the app is on screen. False in
+  /// easy mode: the person using it did not choose updates, and an app that
+  /// closes under them reads as broken.
+  final bool Function() _installInFront;
+
+  /// How long the "updating in N s" banner shows before an install in front
+  /// of the person, so the app closing is announced rather than a surprise.
+  final Duration installNotice;
+
+  /// The notification that brings the person back once an install has closed
+  /// the app in front of them, in their language.
+  final UpdateNotice Function(AppVersion version)? _noticeFor;
+
   static bool _nothingInFlight() => false;
+  static bool _always() => true;
 
   /// A relaunch or return to the app inside this window does not re-ask the
   /// server: a few opens in an hour is a phone being fiddled with, not news.
@@ -108,6 +126,7 @@ class UpdateController extends ChangeNotifier {
   bool _hasToken = false;
   bool _loaded = false;
   Future<void>? _loading;
+  bool _disposed = false;
   SilentInstall _silentInstall = SilentInstall.unavailable;
 
   /// Starts true: the controller is built while the app launches on screen.
@@ -117,6 +136,13 @@ class UpdateController extends ChangeNotifier {
   /// "ready to install". Leaving the app in that moment must not start a
   /// second, unattended install of the same file.
   bool _tapped = false;
+
+  Timer? _countdown;
+  DateTime? _countdownEndsAt;
+
+  /// "Later" on the banner: no install in front of the person until they have
+  /// left the app and come back. Leaving still installs.
+  bool _postponed = false;
 
   /// Android wanted an unattended install confirmed after all. Remembered so
   /// that every later trip to the background does not commit and decline the
@@ -134,11 +160,21 @@ class UpdateController extends ChangeNotifier {
   bool get supported => installer.isSupported;
   SilentInstall get silentInstall => _silentInstall;
   bool get unattendedDeclined => _unattendedDeclined;
+  bool get installPostponed => _postponed;
+
+  /// Time left before an install in front of the person, or null when none is
+  /// counting down.
+  Duration? get installCountdown {
+    final ends = _countdownEndsAt;
+    if (ends == null) return null;
+    final left = ends.difference(_clock());
+    return left.isNegative ? Duration.zero : left;
+  }
 
   /// Whether auto-update will install by itself on this device. False while
   /// Android would show its sheet — a sheet nobody asked for must not appear
   /// over another app — in which case auto-update only looks, and says so.
-  bool get installsInBackground =>
+  bool get installsAutomatically =>
       _settings.autoInstall &&
       _silentInstall == SilentInstall.supported &&
       !_unattendedDeclined;
@@ -346,11 +382,12 @@ class UpdateController extends ChangeNotifier {
     final file = _downloaded;
     if (file == null) return;
     if (!await _installAllowed()) return;
+    _cancelCountdown();
     _phase = UpdatePhase.installing;
     _failure = null;
     notifyListeners();
     try {
-      await installer.install(file);
+      await installer.install(file, notice: _notice());
       // The commit succeeded. Where Android will show its sheet, its own event
       // normally lands first, but if it is late the person still sees that
       // something is waiting on them rather than a button that did nothing.
@@ -371,11 +408,25 @@ class UpdateController extends ChangeNotifier {
     if (!enabled) return;
     // A fresh opt-in is a fresh try, in case Android's answer has changed.
     _unattendedDeclined = false;
+    _postponed = false;
     if (_available == null) {
       await checkInBackground();
     } else {
       await _advanceAutomatically();
     }
+  }
+
+  /// "Later" on the banner.
+  void postponeInstall() {
+    _postponed = true;
+    _cancelCountdown();
+    notifyListeners();
+  }
+
+  /// "Update now" on the banner: skip the rest of the countdown.
+  Future<void> installNow() async {
+    _cancelCountdown();
+    if (_readyToInstallUnattended) await _commitUnattended();
   }
 
   /// Fed from the app's lifecycle in `main.dart`, so it runs whichever screen
@@ -385,7 +436,9 @@ class UpdateController extends ChangeNotifier {
     switch (state) {
       case AppLifecycleState.resumed:
         _foreground = true;
+        _postponed = false;
         await onResumed();
+        await _installUnattended();
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
         _foreground = false;
@@ -397,43 +450,101 @@ class UpdateController extends ChangeNotifier {
   }
 
   /// Auto-update's next step from wherever things stand: fetch the release it
-  /// knows about, then install it once the app is out of sight.
+  /// knows about, then install it as soon as nothing is in progress.
   ///
   /// Only where the install can be silent. A download that could only end in
   /// a sheet would be fetched again on every launch, because a new process
   /// starts by discarding what the last one left behind.
   Future<void> _advanceAutomatically() async {
-    if (!installsInBackground || busy) return;
+    if (!installsAutomatically || busy) return;
     if (_phase == UpdatePhase.available && !await _fetch(automatic: true)) {
       return;
     }
     await _installUnattended();
   }
 
-  /// Installs the downloaded release without a tap, if this is a moment that
-  /// may: auto-update can install here, the app is out of sight, and nothing
-  /// is running that the restart would cut off.
+  /// Whether the downloaded release may be installed without a tap now, as
+  /// far as the update and the person's work are concerned. Where the person
+  /// is decides how: at once from the background, after a countdown in front.
+  bool get _readyToInstallUnattended =>
+      _downloaded != null &&
+      _phase == UpdatePhase.readyToInstall &&
+      !_tapped &&
+      installsAutomatically &&
+      !_workInFlight();
+
   Future<void> _installUnattended() async {
-    final file = _downloaded;
-    if (file == null ||
-        _phase != UpdatePhase.readyToInstall ||
-        _tapped ||
-        _foreground ||
-        !installsInBackground ||
-        _workInFlight()) {
+    if (!_readyToInstallUnattended) {
+      // Something opened or started during the countdown: wait for it.
+      _cancelCountdown();
       return;
     }
+    if (!_foreground) {
+      _cancelCountdown();
+      return _commitUnattended();
+    }
+    if (_postponed || !_installInFront()) return;
+    _startCountdown();
+  }
+
+  void _startCountdown() {
+    if (_countdown != null) return;
+    _countdownEndsAt = _clock().add(installNotice);
+    _countdown = Timer(installNotice, () {
+      _countdown = null;
+      _countdownEndsAt = null;
+      unawaited(_countdownElapsed());
+    });
+    notifyListeners();
+  }
+
+  Future<void> _countdownElapsed() async {
+    // Checked again: the profile may have switched to easy mode meanwhile.
+    final mayInstall =
+        _readyToInstallUnattended &&
+        (!_foreground || (!_postponed && _installInFront()));
+    if (mayInstall) {
+      await _commitUnattended();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  void _cancelCountdown() {
+    final countdown = _countdown;
+    if (countdown == null) return;
+    countdown.cancel();
+    _countdown = null;
+    _countdownEndsAt = null;
+    notifyListeners();
+  }
+
+  Future<void> _commitUnattended() async {
+    final file = _downloaded!;
     _phase = UpdatePhase.installing;
     _failure = null;
     notifyListeners();
     try {
-      await installer.install(file, unattended: true);
+      await installer.install(file, unattended: true, notice: _notice());
     } on UpdateException catch (error) {
       _fail(error);
     }
   }
 
-  void _onWorkChanged() => unawaited(_installUnattended());
+  /// Only for an install in front of the person: that is the one that closes
+  /// the app under them. One that runs while they are elsewhere has nothing
+  /// to bring them back from.
+  UpdateNotice? _notice() {
+    final version = _available?.version;
+    if (!_foreground || version == null) return null;
+    return _noticeFor?.call(version);
+  }
+
+  // Deferred: a route change is reported from inside the navigator's own
+  // update, where a listener rebuilding widgets would throw.
+  void _onWorkChanged() => scheduleMicrotask(() {
+    if (!_disposed) unawaited(_installUnattended());
+  });
 
   void cancelDownload() => _cancelToken?.cancel();
 
@@ -547,6 +658,8 @@ class UpdateController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _countdown?.cancel();
     _cancelToken?.cancel();
     _workChanges?.removeListener(_onWorkChanged);
     unawaited(_events.cancel());

@@ -46,6 +46,27 @@ enum SilentInstall {
   unavailable,
 }
 
+/// The notification Android posts once an install has closed the app in front
+/// of the person, so they get back with a tap. Written in their language by
+/// the caller: the new process that posts it has no Flutter engine to ask.
+class UpdateNotice {
+  const UpdateNotice({
+    required this.channelName,
+    required this.title,
+    required this.body,
+    required this.versionCode,
+  });
+
+  /// How the notification's channel is listed in Android's settings.
+  final String channelName;
+  final String title;
+  final String body;
+
+  /// The build being installed. A replacement by anything older — a manual
+  /// downgrade, another install — posts nothing.
+  final int versionCode;
+}
+
 class InstallEvent {
   const InstallEvent(this.kind, [this.message]);
 
@@ -77,11 +98,16 @@ abstract class ApkInstaller {
   ///
   /// [unattended] marks an install nobody tapped: if Android wants it
   /// confirmed after all, the sheet is declined instead of shown and
-  /// [InstallEventKind.confirmationRequired] reported.
+  /// [InstallEventKind.confirmationRequired] reported. [notice], when given,
+  /// is posted by the new build once it has replaced this one.
   ///
   /// Returns once the session is committed; what happens next arrives on
   /// [events].
-  Future<void> install(File apk, {bool unattended = false});
+  Future<void> install(
+    File apk, {
+    bool unattended = false,
+    UpdateNotice? notice,
+  });
 
   Stream<InstallEvent> get events;
 }
@@ -135,11 +161,21 @@ class MethodChannelApkInstaller implements ApkInstaller {
   }
 
   @override
-  Future<void> install(File apk, {bool unattended = false}) async {
+  Future<void> install(
+    File apk, {
+    bool unattended = false,
+    UpdateNotice? notice,
+  }) async {
     try {
       await _channel.invokeMethod<void>('install', {
         'path': apk.path,
         'unattended': unattended,
+        if (notice != null) ...{
+          'noticeChannel': notice.channelName,
+          'noticeTitle': notice.title,
+          'noticeBody': notice.body,
+          'noticeVersionCode': notice.versionCode,
+        },
       });
     } on PlatformException catch (error) {
       throw UpdateException(

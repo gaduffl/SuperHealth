@@ -18,6 +18,7 @@ import 'ai/provider_clients.dart';
 import 'analysis/correlation_service.dart';
 import 'backup/portable_backup_service.dart';
 import 'app/app_controller.dart';
+import 'app/app_localizations.dart';
 import 'app/super_health_app.dart';
 import 'data/app_database.dart';
 import 'data/health_repository.dart';
@@ -30,6 +31,7 @@ import 'updates/apk_installer.dart';
 import 'updates/update_controller.dart';
 import 'updates/update_downloader.dart';
 import 'updates/update_settings.dart';
+import 'ui/update_section.dart';
 import 'workspace/safe_workspace_service.dart';
 
 void main() {
@@ -129,10 +131,15 @@ void main() {
     sourceFactory: updateSourceFactoryFor(updateDio),
     workInFlight: () =>
         appHasWorkInProgress(controller, rootNavigatorKey.currentState),
-    workChanges: controller,
+    workChanges: Listenable.merge([controller, rootRouteChanges]),
+    installInFront: () => controller.visibility.appUpdates,
+    noticeFor: (version) => updateNoticeFor(
+      AppLocalizations.resolve(controller.appearanceSettings.language.locale),
+      version,
+    ),
   );
-  // App-wide rather than in the Settings card: auto-update installs on the way
-  // to the background whichever screen is showing.
+  // App-wide rather than in the Settings card: auto-update acts on leaving and
+  // returning whichever screen is showing.
   AppLifecycleListener(onStateChange: updateController.lifecycleChanged);
 
   runApp(

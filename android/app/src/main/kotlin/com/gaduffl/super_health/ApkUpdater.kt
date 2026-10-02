@@ -66,13 +66,21 @@ class ApkUpdater(
             "install" -> {
                 val path = call.argument<String>("path")
                 val unattended = call.argument<Boolean>("unattended") ?: false
+                val notice = call.argument<String>("noticeTitle")?.let { title ->
+                    UpdatedReceiver.Notice(
+                        channelName = call.argument<String>("noticeChannel") ?: title,
+                        title = title,
+                        body = call.argument<String>("noticeBody") ?: "",
+                        versionCode = call.argument<Number>("noticeVersionCode")?.toLong() ?: 0L,
+                    )
+                }
                 if (path == null) {
                     result.error("argument", "Missing APK path.", null)
                 } else if (!canInstallPackages()) {
                     result.error("permission", "Installing apps is not allowed.", null)
                 } else {
                     // Copying tens of megabytes into the session is not main-thread work.
-                    worker.execute { install(File(path), unattended, result) }
+                    worker.execute { install(File(path), unattended, notice, result) }
                 }
             }
             else -> result.notImplemented()
@@ -150,7 +158,12 @@ class ApkUpdater(
         }
     }
 
-    private fun install(apk: File, unattended: Boolean, result: MethodChannel.Result) {
+    private fun install(
+        apk: File,
+        unattended: Boolean,
+        notice: UpdatedReceiver.Notice?,
+        result: MethodChannel.Result,
+    ) {
         val installer = activity.packageManager.packageInstaller
         var sessionId = -1
         try {
@@ -197,10 +210,12 @@ class ApkUpdater(
                         0
                     })
                 val pending = PendingIntent.getBroadcast(activity, sessionId, intent, flags)
+                UpdatedReceiver.remember(activity, notice)
                 session.commit(pending.intentSender)
             }
             main.post { result.success(null) }
         } catch (error: Exception) {
+            UpdatedReceiver.forget(activity)
             if (sessionId != -1) {
                 try {
                     installer.abandonSession(sessionId)

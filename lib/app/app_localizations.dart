@@ -20,6 +20,18 @@ class AppLocalizations {
   static AppLocalizations forLocale(Locale locale) =>
       locale.languageCode == 'de' ? german : english;
 
+  /// The strings the widget tree shows, for text that leaves the app where
+  /// there is no BuildContext — a notification Android posts after this
+  /// process has gone. A null [chosen] follows the system, resolved exactly as
+  /// MaterialApp resolves it, because the app sets no resolution callback.
+  static AppLocalizations resolve(Locale? chosen) => forLocale(
+    chosen ??
+        basicLocaleListResolution(
+          WidgetsBinding.instance.platformDispatcher.locales,
+          supportedLocales,
+        ),
+  );
+
   static const english = AppLocalizations._(_english);
   static const german = AppLocalizations._(_german);
 
