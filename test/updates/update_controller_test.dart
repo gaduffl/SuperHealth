@@ -36,20 +36,35 @@ void main() {
   UpdateController build({
     bool Function()? workInFlight,
     Listenable? workChanges,
+    bool Function()? installInFront,
+    Duration installNotice = const Duration(seconds: 10),
     HttpClientAdapter? http,
-  }) => UpdateController(
-    installer: installer,
-    settingsStore: UpdateSettingsStore(),
-    tokenStore: tokens,
-    downloader: UpdateDownloader(
-      dio: Dio()..httpClientAdapter = http ?? adapter,
-      directory: () async => dir,
-    ),
-    sourceFactory: (_, _) => source,
-    workInFlight: workInFlight,
-    workChanges: workChanges,
-    clock: () => now,
-  );
+  }) {
+    final controller = UpdateController(
+      installer: installer,
+      settingsStore: UpdateSettingsStore(),
+      tokenStore: tokens,
+      downloader: UpdateDownloader(
+        dio: Dio()..httpClientAdapter = http ?? adapter,
+        directory: () async => dir,
+      ),
+      sourceFactory: (_, _) => source,
+      workInFlight: workInFlight,
+      workChanges: workChanges,
+      installInFront: installInFront,
+      installNotice: installNotice,
+      noticeFor: (version) => UpdateNotice(
+        channelName: 'App updates',
+        title: 'Updated',
+        body: 'Version ${version.name}',
+        versionCode: version.build ?? 0,
+      ),
+      clock: () => now,
+    );
+    // A countdown left running would fire into the next test.
+    addTearDown(controller.dispose);
+    return controller;
+  }
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -452,14 +467,15 @@ void main() {
     setUp(() => installer.silent = SilentInstall.supported);
 
     test(
-      'downloads what the check finds, then installs only once the app is out of sight',
+      'downloads what the check finds; leaving the app installs it at once, without a notice',
       () async {
         final controller = build();
         await controller.setAutoInstall(true);
 
         expect(controller.phase, UpdatePhase.readyToInstall);
-        expect(controller.installsInBackground, isTrue);
-        expect(installer.installed, isEmpty, reason: 'never in front of them');
+        expect(controller.installsAutomatically, isTrue);
+        expect(controller.installCountdown, isNotNull);
+        expect(installer.installed, isEmpty, reason: 'not without warning');
 
         await controller.lifecycleChanged(AppLifecycleState.inactive);
         expect(
@@ -473,6 +489,149 @@ void main() {
         expect(installer.unattended.single, isTrue);
         expect(installer.installed.single.readAsBytesSync(), bytes);
         expect(controller.phase, UpdatePhase.installing);
+        expect(controller.installCountdown, isNull);
+        expect(
+          installer.notices.single,
+          isNull,
+          reason: 'nothing closed in front of them to come back from',
+        );
+      },
+    );
+
+    test(
+      'in front of the person it installs once the countdown runs out, and says how to get back',
+      () async {
+        final controller = build(
+          installNotice: const Duration(milliseconds: 20),
+        );
+        await controller.setAutoInstall(true);
+        expect(controller.installCountdown, const Duration(milliseconds: 20));
+        expect(installer.installed, isEmpty);
+
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(installer.installed, hasLength(1));
+        expect(installer.unattended.single, isTrue);
+        expect(controller.installCountdown, isNull);
+        final notice = installer.notices.single!;
+        expect(notice.versionCode, 72);
+        expect(notice.body, contains('0.43.0'));
+      },
+    );
+
+    test(
+      'Later holds it off until the person leaves; leaving still installs',
+      () async {
+        final open = ValueNotifier(false);
+        final controller = build(
+          workInFlight: () => open.value,
+          workChanges: open,
+          installNotice: const Duration(milliseconds: 20),
+        );
+        await controller.setAutoInstall(true);
+        controller.postponeInstall();
+
+        expect(controller.installCountdown, isNull);
+        expect(controller.installPostponed, isTrue);
+        // A dialog opened and closed: the next look must still respect Later.
+        open.value = true;
+        open.value = false;
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.installCountdown, isNull);
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(installer.installed, isEmpty);
+
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        expect(installer.installed, hasLength(1));
+      },
+    );
+
+    test(
+      'Later lasts until the person comes back, then it asks again',
+      () async {
+        final work = ValueNotifier(false);
+        final controller = build(workInFlight: () => work.value);
+        await controller.setAutoInstall(true);
+        controller.postponeInstall();
+
+        work.value = true;
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        expect(installer.installed, isEmpty, reason: 'a lab plan is running');
+        work.value = false;
+        await controller.lifecycleChanged(AppLifecycleState.resumed);
+
+        expect(controller.installPostponed, isFalse);
+        expect(controller.installCountdown, isNotNull);
+      },
+    );
+
+    test(
+      'something opening during the countdown stops it; closing it starts over',
+      () async {
+        final open = ValueNotifier(false);
+        final controller = build(
+          workInFlight: () => open.value,
+          workChanges: open,
+          installNotice: const Duration(milliseconds: 20),
+        );
+        await controller.setAutoInstall(true);
+        expect(controller.installCountdown, isNotNull);
+
+        open.value = true;
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.installCountdown, isNull);
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(installer.installed, isEmpty, reason: 'a form is open');
+
+        open.value = false;
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.installCountdown, isNotNull);
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(installer.installed, hasLength(1));
+      },
+    );
+
+    test('Update now skips the rest of the countdown', () async {
+      final controller = build();
+      await controller.setAutoInstall(true);
+      await controller.installNow();
+
+      expect(installer.installed, hasLength(1));
+      expect(installer.notices.single, isNotNull);
+      expect(controller.installCountdown, isNull);
+    });
+
+    test(
+      'where it may not interrupt — easy mode — it only installs on the way out',
+      () async {
+        final controller = build(
+          installInFront: () => false,
+          installNotice: const Duration(milliseconds: 20),
+        );
+        await controller.setAutoInstall(true);
+
+        expect(controller.phase, UpdatePhase.readyToInstall);
+        expect(controller.installCountdown, isNull);
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(installer.installed, isEmpty);
+
+        await controller.lifecycleChanged(AppLifecycleState.paused);
+        expect(installer.installed, hasLength(1));
+      },
+    );
+
+    test(
+      'a tap on Install mid-countdown ends the countdown, and only it installs',
+      () async {
+        final controller = build(
+          installNotice: const Duration(milliseconds: 20),
+        );
+        await controller.setAutoInstall(true);
+        await controller.installDownloaded();
+        expect(controller.installCountdown, isNull);
+
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(installer.installed, hasLength(1));
+        expect(installer.unattended.single, isFalse);
       },
     );
 
@@ -496,7 +655,12 @@ void main() {
         await controller.lifecycleChanged(AppLifecycleState.resumed);
         work.value = false;
         await Future<void>.delayed(Duration.zero);
-        expect(installer.installed, isEmpty, reason: 'back in front of them');
+        expect(
+          installer.installed,
+          isEmpty,
+          reason: 'back in front of them, so it counts down first',
+        );
+        expect(controller.installCountdown, isNotNull);
 
         work.value = true;
         await controller.lifecycleChanged(AppLifecycleState.paused);
@@ -515,7 +679,7 @@ void main() {
         await controller.setAutoInstall(true);
 
         expect(controller.phase, UpdatePhase.available);
-        expect(controller.installsInBackground, isFalse);
+        expect(controller.installsAutomatically, isFalse);
         expect(
           adapter.requests,
           isEmpty,
@@ -539,7 +703,7 @@ void main() {
         await Future<void>.delayed(Duration.zero);
 
         expect(controller.phase, UpdatePhase.readyToInstall);
-        expect(controller.installsInBackground, isFalse);
+        expect(controller.installsAutomatically, isFalse);
 
         await controller.lifecycleChanged(AppLifecycleState.resumed);
         await controller.lifecycleChanged(AppLifecycleState.paused);

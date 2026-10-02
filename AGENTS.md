@@ -760,15 +760,38 @@ that first brings it in still asks; every later one does not.
 "install unknown apps" on, no other store owning updates on 14+) so the app can
 say what auto-update will do instead of committing a session to find out.
 
-**Auto-update installs on the way out, never in front of the person.** A silent
-install replaces the process: the app simply vanishes, along with whatever was on
-screen. So an unattended install is committed only on `hidden`/`paused`, and only
-while `appHasWorkInProgress` is false — `AppController.workInFlight` (anything
-`busy`, an automatic sync, or an unsaved `draftLabPlan`, a paid result that lives
-only in memory) or anything open over the home screen, which is what
-`rootNavigatorKey` exists to ask. Work ending while the app is in the background
-re-triggers it through `workChanges`. The lifecycle is observed in `main.dart`,
-not by the Settings card, which is not on screen when the person leaves.
+**Auto-update never installs over work, and never unannounced in front of the
+person.** A silent install replaces the process: the app simply vanishes, along
+with whatever was on screen. So an unattended install waits while
+`appHasWorkInProgress` is true — `AppController.workInFlight` (anything `busy`,
+an automatic sync, or an unsaved `draftLabPlan`, a paid result that lives only in
+memory) or anything open over the home screen, which is what `rootNavigatorKey`
+exists to ask. `workChanges` merges the controller with `rootRouteChanges`, so
+work ending *or a dialog closing* makes it look again; without the route
+observer a ready update would wait for some unrelated notification. On the way
+to the background (`hidden`/`paused`) it installs at once. In front of the
+person it first runs `installNotice` (10 s) behind `UpdateCountdownBanner`,
+with Later and Update now: anything opening during the countdown cancels it,
+and Later holds until the person has left and come back — leaving still
+installs. Easy mode never installs in front (`installInFront` reads
+`visibility.appUpdates`): its person did not choose updates. The lifecycle is
+observed in `main.dart`, not by the Settings card, which is not on screen when
+the person leaves.
+
+**Nothing can reopen the app after it updates itself, so a notification does.**
+The installing process is gone, and Android lets no background process start an
+activity — `MY_PACKAGE_REPLACED` included. What Android does do is start the
+*new* build for that broadcast, so the old one leaves the notice text in native
+`SharedPreferences` (written with `commit()`, before the session is committed,
+because the commit can end the process) and `UpdatedReceiver` posts "updated —
+tap to open". Only an install in front of the person leaves one: one that ran
+while they were elsewhere closed nothing under them. The text arrives from Dart
+already in their language (`AppLocalizations.resolve` repeats MaterialApp's own
+resolution of "system"), because the receiver has no engine to ask. A failed,
+cancelled or declined install forgets it, a replacement by an older build posts
+nothing, and `MainActivity.onResume` dismisses it however the person came back.
+The `app_updated` channel is silent and high-importance by creation — changing
+either means a new channel id.
 
 **An unattended install never puts a sheet on screen.** Auto-update downloads
 only where `silentInstallSupport()` says the install can be silent; elsewhere it
@@ -1064,8 +1087,9 @@ which remain unexamined rather than known-good:
   a fake installer, which prove the app verifies and hands over what it intends. The
   attended path — the `PackageInstaller` session, the confirmation sheet launched
   from the receiver, the "install unknown apps" round trip — has worked on the
-  owner's phone. Installing without the sheet, the unattended install on the way to
-  the background, the receiver declining a sheet for one, and whether Play Protect
-  still asks to scan when the system sheet is skipped have never run on a device.
-  The first update *after* the one that adds `UPDATE_PACKAGES_WITHOUT_USER_ACTION`
-  is the verification.
+  owner's phone. Installing without the sheet, the unattended install (on the way to
+  the background and after the in-app countdown), the receiver declining a sheet
+  for one, the "updated — tap to open" notification posted from
+  `MY_PACKAGE_REPLACED`, and whether Play Protect still asks to scan when the system
+  sheet is skipped have never run on a device. The first update *after* the one
+  that adds `UPDATE_PACKAGES_WITHOUT_USER_ACTION` is the verification.

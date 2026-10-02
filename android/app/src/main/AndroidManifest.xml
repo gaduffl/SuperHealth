@@ -99,6 +99,19 @@
             android:name=".InstallStatusReceiver"
             android:exported="false" />
         <!--
+          Posts "SuperHealth was updated - tap to open" from the new build, after
+          an install that closed the app in front of the person. Android starts
+          the replacing build itself for MY_PACKAGE_REPLACED, so it needs no
+          export.
+        -->
+        <receiver
+            android:name=".UpdatedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <!--
           Holds process priority while a lab plan generates. Nothing runs inside
           it — the work stays on the main isolate, which is where the database
           and secure storage are.

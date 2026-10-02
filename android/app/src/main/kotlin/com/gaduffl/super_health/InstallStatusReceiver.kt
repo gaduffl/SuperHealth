@@ -29,6 +29,7 @@ class InstallStatusReceiver : BroadcastReceiver() {
                     // session is given up; the app offers the update with a
                     // button instead.
                     abandon(context, intent)
+                    UpdatedReceiver.forget(context)
                     listener?.invoke("confirmationRequired", null)
                     return
                 }
@@ -48,8 +49,14 @@ class InstallStatusReceiver : BroadcastReceiver() {
             }
             PackageInstaller.STATUS_SUCCESS -> listener?.invoke("success", null)
             // The person backed out of the system sheet — not an error.
-            PackageInstaller.STATUS_FAILURE_ABORTED -> listener?.invoke("cancelled", message)
-            else -> listener?.invoke("failed", message ?: "Install failed (status $status).")
+            PackageInstaller.STATUS_FAILURE_ABORTED -> {
+                UpdatedReceiver.forget(context)
+                listener?.invoke("cancelled", message)
+            }
+            else -> {
+                UpdatedReceiver.forget(context)
+                listener?.invoke("failed", message ?: "Install failed (status $status).")
+            }
         }
     }
 

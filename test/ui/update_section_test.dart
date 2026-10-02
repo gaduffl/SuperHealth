@@ -23,11 +23,11 @@ void main() {
   late Directory dir;
   final bytes = List<int>.generate(32, (i) => i);
 
-  UpdateController build() {
+  UpdateController build({DateTime Function()? clock}) {
     final adapter = FakeAdapter({
       'https://api.github.com/a': Reply(200, bytes: bytes),
     });
-    return UpdateController(
+    final controller = UpdateController(
       installer: installer,
       settingsStore: UpdateSettingsStore(),
       tokenStore: tokens,
@@ -36,13 +36,18 @@ void main() {
         directory: () async => dir,
       ),
       sourceFactory: (_, _) => source,
+      clock: clock,
     );
+    // Auto-update starts a real countdown timer; it must not outlive the test.
+    addTearDown(controller.dispose);
+    return controller;
   }
 
   Future<void> pump(
     WidgetTester tester,
     UpdateController? controller, {
     Locale locale = const Locale('en'),
+    Widget body = const SingleChildScrollView(child: AppUpdateSection()),
   }) async {
     Widget scope(Widget child) => controller == null
         ? child
@@ -58,9 +63,7 @@ void main() {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          home: const Scaffold(
-            body: SingleChildScrollView(child: AppUpdateSection()),
-          ),
+          home: Scaffold(body: body),
         ),
       ),
     );
@@ -301,8 +304,7 @@ void main() {
       expect(tester.widget<CheckboxListTile>(box).value, isFalse);
       expect(
         find.textContaining(
-          'installs them while SuperHealth is in the '
-          'background',
+          'also while you use SuperHealth: a 10-second notice comes first',
         ),
         findsOneWidget,
       );
@@ -316,7 +318,7 @@ void main() {
       expect(controller.settings.autoInstall, isTrue);
       expect(tester.widget<CheckboxListTile>(box).value, isTrue);
       expect(
-        find.textContaining('It installs the next time you leave SuperHealth'),
+        find.textContaining('It installs as soon as nothing is open'),
         findsOneWidget,
       );
       expect(installer.installed, isEmpty);
@@ -375,6 +377,116 @@ void main() {
       expect(
         find.textContaining('Auto update is on, and it looks'),
         findsOneWidget,
+      );
+    },
+  );
+
+  group('the countdown banner', () {
+    final fixed = DateTime.utc(2026, 10, 2, 12);
+
+    Future<UpdateController> counting(
+      WidgetTester tester, {
+      Locale locale = const Locale('en'),
+    }) async {
+      installer.silent = SilentInstall.supported;
+      final controller = build(clock: () => fixed);
+      await pump(
+        tester,
+        controller,
+        locale: locale,
+        body: const UpdateCountdownBanner(),
+      );
+      await tester.runAsync(() => controller.setAutoInstall(true));
+      await tester.pump();
+      return controller;
+    }
+
+    testWidgets('draws nothing while no install is counting down', (
+      tester,
+    ) async {
+      await pump(tester, build(), body: const UpdateCountdownBanner());
+      expect(find.byKey(const ValueKey('update-countdown')), findsNothing);
+    });
+
+    testWidgets('announces the version, the seconds left and the app closing', (
+      tester,
+    ) async {
+      await counting(tester);
+
+      expect(
+        find.text(
+          'Updating to version 0.43.0 in 10 s. SuperHealth closes while '
+          'Android installs it.',
+        ),
+        findsOneWidget,
+      );
+      expect(installer.installed, isEmpty);
+    });
+
+    testWidgets('Later puts it off and takes the banner away', (tester) async {
+      final controller = await counting(tester);
+      await tester.tap(find.byKey(const ValueKey('update-later')));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('update-countdown')), findsNothing);
+      expect(controller.installPostponed, isTrue);
+      expect(installer.installed, isEmpty);
+    });
+
+    testWidgets('Update now installs without waiting out the countdown', (
+      tester,
+    ) async {
+      await counting(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const ValueKey('update-now')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+
+      expect(installer.installed, hasLength(1));
+      expect(installer.unattended.single, isTrue);
+      expect(find.byKey(const ValueKey('update-countdown')), findsNothing);
+    });
+
+    testWidgets('speaks German to a German reader', (tester) async {
+      await counting(tester, locale: const Locale('de'));
+
+      expect(
+        find.text(
+          'Update auf Version 0.43.0 in 10 s. SuperHealth schließt sich, '
+          'während Android es installiert.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Später'), findsOneWidget);
+      expect(find.text('Jetzt aktualisieren'), findsOneWidget);
+    });
+  });
+
+  test('the notice that brings the person back is in their language', () {
+    final version = AppVersion.tryParse('0.45.0+76')!;
+    final english = updateNoticeFor(AppLocalizations.english, version);
+    final german = updateNoticeFor(AppLocalizations.german, version);
+
+    expect(english.title, 'SuperHealth was updated');
+    expect(english.body, contains('0.45.0'));
+    expect(english.versionCode, 76);
+    expect(german.title, 'SuperHealth wurde aktualisiert');
+    expect(german.channelName, 'App-Updates');
+  });
+
+  testWidgets(
+    'outside the widget tree, "system" resolves to what the app shows',
+    (tester) async {
+      tester.platformDispatcher.localesTestValue = const [Locale('de', 'AT')];
+      addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+      expect(AppLocalizations.resolve(null), same(AppLocalizations.german));
+
+      tester.platformDispatcher.localesTestValue = const [Locale('fr')];
+      expect(AppLocalizations.resolve(null), same(AppLocalizations.english));
+      expect(
+        AppLocalizations.resolve(const Locale('de')),
+        same(AppLocalizations.german),
       );
     },
   );

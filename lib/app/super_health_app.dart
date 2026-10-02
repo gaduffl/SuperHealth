@@ -15,6 +15,7 @@ import '../ui/design.dart';
 import '../ui/settings_screen.dart';
 import '../ui/stock_overview_panel.dart';
 import '../ui/tracking_screen.dart';
+import '../ui/update_section.dart';
 import '../updates/update_controller.dart';
 import 'app_controller.dart';
 import 'app_localizations.dart';
@@ -24,6 +25,29 @@ import 'shell_navigation.dart';
 /// The app's one navigator, so code outside the widget tree can ask whether
 /// anything is open over the home screen.
 final rootNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Says when something opens or closes over the home screen. Auto-update
+/// waits while anything is open; without this, closing the last dialog would
+/// leave a ready update waiting for some unrelated change to look again.
+final rootRouteChanges = RouteChanges();
+
+class RouteChanges extends NavigatorObserver with ChangeNotifier {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      notifyListeners();
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      notifyListeners();
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      notifyListeners();
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      notifyListeners();
+}
 
 /// Whether replacing the app now would cut off something the person is in the
 /// middle of: work [controller] is doing or holding unsaved, or anything open
@@ -47,6 +71,7 @@ class SuperHealthApp extends StatelessWidget {
     final calm = controller.visibility.calmShell;
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
+      navigatorObservers: [rootRouteChanges],
       onGenerateTitle: (context) => AppLocalizations.of(context).appName,
       debugShowCheckedModeBanner: false,
       locale: appearance.language.locale,
@@ -427,7 +452,16 @@ class _HomeShellBody extends StatelessWidget {
               )
             : null,
       ),
-      body: visibility.calmShell ? BlossomBackground(child: body) : body,
+      body: Column(
+        children: [
+          // In the shell, not over every route: with anything open on top,
+          // auto-update does not count down at all.
+          const UpdateCountdownBanner(),
+          Expanded(
+            child: visibility.calmShell ? BlossomBackground(child: body) : body,
+          ),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: barIndex,
         onTap: (position) => navigation.selectTab(tabs[position]),

@@ -16,4 +16,22 @@ class MainActivity : FlutterActivity() {
         updater = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
+
+    override fun onResume() {
+        super.onResume()
+        visible = true
+        // However they came back, "tap to open" has done its job.
+        UpdatedReceiver.dismiss(this)
+    }
+
+    override fun onPause() {
+        visible = false
+        super.onPause()
+    }
+
+    companion object {
+        /** Read by [UpdatedReceiver], which runs in this process when one is alive. */
+        @Volatile
+        var visible = false
+    }
 }

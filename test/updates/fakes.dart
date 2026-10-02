@@ -149,11 +149,19 @@ class FakeInstaller implements ApkInstaller {
   @override
   Future<SilentInstall> silentInstallSupport() async => silent;
 
+  /// Parallel to [installed]: the notice each install asked Android to post.
+  final notices = <UpdateNotice?>[];
+
   @override
-  Future<void> install(File apk, {bool unattended = false}) async {
+  Future<void> install(
+    File apk, {
+    bool unattended = false,
+    UpdateNotice? notice,
+  }) async {
     if (installError case final Object error) throw error;
     installed.add(apk);
     this.unattended.add(unattended);
+    notices.add(notice);
   }
 }
 

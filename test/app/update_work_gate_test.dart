@@ -61,6 +61,37 @@ void main() {
       expect(inProgress(), isFalse);
     },
   );
+
+  testWidgets(
+    'opening and closing something over the home screen is reported, so a waiting update looks again',
+    (tester) async {
+      final changes = RouteChanges();
+      addTearDown(changes.dispose);
+      var reported = 0;
+      changes.addListener(() => reported++);
+      final navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          navigatorObservers: [changes],
+          home: const Scaffold(body: Text('home')),
+        ),
+      );
+      final atHome = reported;
+
+      showDialog<void>(
+        context: navigator.currentContext!,
+        builder: (_) => const AlertDialog(content: Text('form')),
+      );
+      await tester.pumpAndSettle();
+      expect(reported, greaterThan(atHome));
+
+      final whileOpen = reported;
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(reported, greaterThan(whileOpen));
+    },
+  );
 }
 
 AppController _controller() {
