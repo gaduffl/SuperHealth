@@ -727,10 +727,10 @@ the bytes; Android's same-key signature check is the backstop, not the first lin
 halves of `version:`.
 
 **The app's version is read from the installed package, never written in a
-widget.** Settings' About line carried a literal `0.5.0` through dozens of
-releases, so it described no build anyone had. `UpdateController.installedVersion`
-(Android's `versionName` + `versionCode`, printed as `0.43.1+73`) is the one source;
-when it is unavailable the line drops the number instead of showing a stale one.
+widget.** A literal `0.5.0` once sat in Settings through dozens of releases and
+described no build anyone had. `UpdateController.installedVersion` (Android's
+`versionName` + `versionCode`, printed as `0.43.1+73`) is the one source, shown on
+the updater card; Settings no longer carries a separate About footer.
 
 **Updater state is a `ChangeNotifier` beside `AppController`, not inside it.** It
 holds no health data and is device-level, so it is provided separately in `main.dart`

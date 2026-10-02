@@ -109,34 +109,6 @@ void main() {
     );
   });
 
-  testWidgets('the About line shows the installed build, not a literal', (
-    tester,
-  ) async {
-    useTallScreen(tester);
-    final controller = updates();
-    await pumpSettings(tester, easy: false, updates: controller);
-    await tester.runAsync(controller.load);
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text('SuperHealth 0.42.0+71 · Personal-use Android build'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('0.5.0'), findsNothing);
-  });
-
-  testWidgets('the About line omits the number rather than guess one', (
-    tester,
-  ) async {
-    useTallScreen(tester);
-    await pumpSettings(tester, easy: false);
-
-    expect(
-      find.text('SuperHealth · Personal-use Android build'),
-      findsOneWidget,
-    );
-  });
-
   testWidgets('easy mode never shows the updater', (tester) async {
     useTallScreen(tester);
     await pumpSettings(tester, easy: true, updates: updates());
