@@ -1,4 +1,10 @@
-enum AiProvider { openai, anthropic, gemini }
+/// `chatgpt` is a ChatGPT subscription signed in on OpenAI's own page rather
+/// than an API key. It speaks the same Responses API as `openai`, but against
+/// the backend Codex uses, with its own catalog — and the same model name has
+/// different capabilities there (a 272k window, no code interpreter, no file
+/// upload). That is why it is a provider of its own rather than an OpenAI
+/// sign-in option: every capability lookup is keyed by provider and model.
+enum AiProvider { openai, anthropic, gemini, chatgpt }
 
 class AiModelInfo {
   const AiModelInfo({
@@ -297,14 +303,71 @@ class TokenUsage {
 /// Versioned from provider documentation. Unknown models intentionally receive
 /// no reasoning/tool controls until their support is known.
 class ProviderCapabilityRegistry {
-  static const version = '2026-09-30';
+  static const version = '2026-10-03';
 
   ModelCapabilities forModel(AiProvider provider, String model) =>
       switch (provider) {
         AiProvider.openai => _openAi(model),
         AiProvider.anthropic => _anthropic(model),
         AiProvider.gemini => _gemini(model),
+        AiProvider.chatgpt => _chatGpt(model),
       };
+
+  /// The models a ChatGPT subscription offers, in the order Codex lists them.
+  ///
+  /// Curated rather than fetched: the subscription's model endpoint filters by
+  /// client version, and an app that is not Codex has no honest version to
+  /// send. Every entry here has capabilities in [_chatGpt].
+  static const chatGptModels = [
+    'gpt-6.1-sol',
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.5',
+  ];
+
+  /// From the catalog Codex ships for the subscription backend, not from the
+  /// API documentation: the same names run with a 272k window there, against
+  /// 1.05M on the API, and with neither a code interpreter nor file upload.
+  /// So the lossless file path the planner falls back on for a large package
+  /// does not exist here, and a whole-record run that does not fit says so
+  /// instead of truncating.
+  ModelCapabilities _chatGpt(String id) {
+    if (const {
+      'gpt-6.1-sol',
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+    }.contains(id)) {
+      return const ModelCapabilities(
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+        webSearch: true,
+        structuredOutput: true,
+        contextWindowTokens: 272000,
+      );
+    }
+    if (const {'gpt-6-luna', 'gpt-5.6-luna'}.contains(id)) {
+      return const ModelCapabilities(
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+        webSearch: true,
+        structuredOutput: true,
+        contextWindowTokens: 272000,
+      );
+    }
+    if (id == 'gpt-5.5') {
+      return const ModelCapabilities(
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+        webSearch: true,
+        structuredOutput: true,
+        contextWindowTokens: 272000,
+      );
+    }
+    return const ModelCapabilities();
+  }
 
   ModelCapabilities _openAi(String id) {
     if (const {'gpt-6-sol', 'gpt-6-luna'}.contains(id)) {

@@ -828,9 +828,7 @@ ${_schemaInstructions(withReceipt: context != null)}
     await report(LabPlanStage.preparingContext);
     final key = await _keyStore.read(settings.provider);
     if (key == null || key.trim().isEmpty) {
-      throw StateError(
-        'Add a ${settings.provider.name} API key in Settings first.',
-      );
+      throw StateError(ApiKeyStore.missingCredentialMessage(settings.provider));
     }
     final record = await _record(profileId);
     final findings = record.findings;

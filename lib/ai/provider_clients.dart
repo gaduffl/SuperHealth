@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
 import 'ai_models.dart';
+import 'chatgpt_auth.dart';
 
 class AiProviderException implements Exception {
   const AiProviderException(this.message, {this.statusCode});
@@ -244,25 +245,34 @@ abstract class AiProviderClient {
 }
 
 class AiProviderClientFactory {
-  AiProviderClientFactory({Dio? dio, ProviderCapabilityRegistry? capabilities})
-    : _dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              connectTimeout: const Duration(seconds: 30),
-              receiveTimeout: const Duration(minutes: 10),
-              sendTimeout: const Duration(minutes: 3),
-            ),
-          ),
-      _capabilities = capabilities ?? ProviderCapabilityRegistry();
+  AiProviderClientFactory({
+    Dio? dio,
+    ProviderCapabilityRegistry? capabilities,
+    this._chatGpt,
+  }) : _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               connectTimeout: const Duration(seconds: 30),
+               receiveTimeout: const Duration(minutes: 10),
+               sendTimeout: const Duration(minutes: 3),
+             ),
+           ),
+       _capabilities = capabilities ?? ProviderCapabilityRegistry();
 
   final Dio _dio;
   final ProviderCapabilityRegistry _capabilities;
+  final ChatGptSessionSource? _chatGpt;
 
   AiProviderClient create(AiProvider provider) => switch (provider) {
     AiProvider.openai => OpenAiClient(_dio, _capabilities),
     AiProvider.anthropic => AnthropicClient(_dio, _capabilities),
     AiProvider.gemini => GeminiClient(_dio, _capabilities),
+    AiProvider.chatgpt => ChatGptSubscriptionClient(
+      _dio,
+      _capabilities,
+      _chatGpt,
+    ),
   };
 }
 
@@ -273,7 +283,7 @@ class AiProviderClientFactory {
 /// format would break the advisor outright. A provider without a loop gets
 /// the full evidence package beside the digest instead of tools.
 bool providerSupportsClientTools(AiProvider provider) => switch (provider) {
-  AiProvider.openai || AiProvider.anthropic => true,
+  AiProvider.openai || AiProvider.anthropic || AiProvider.chatgpt => true,
   AiProvider.gemini => false,
 };
 
@@ -775,8 +785,15 @@ class OpenAiClient extends _BaseClient {
     final refusals = <String>[];
     final output = raw['output'];
     if (output is List) {
-      for (final item in output.whereType<Map>()) {
-        if (item['type'] != null && item['type'] != 'message') continue;
+      final messages = [
+        for (final item in output.whereType<Map>())
+          if (item['type'] == null || item['type'] == 'message') item,
+      ];
+      // A `commentary` message is the model narrating its progress ("I'll
+      // check the intake history"). It reaches the reader only when there is
+      // nothing else, never glued onto the front of the answer.
+      final answers = messages.where((item) => item['phase'] != 'commentary');
+      for (final item in answers.isEmpty ? messages : answers) {
         final content = item['content'];
         if (content is! List) continue;
         for (final block in content.whereType<Map>()) {
@@ -844,18 +861,13 @@ class OpenAiClient extends _BaseClient {
     Map<String, Object?> body,
     ProviderActivityCallback? onActivity,
   ) async {
-    final response = await retryTransient(
-      () => dio.post<ResponseBody>(
-        '$_baseUrl/responses',
-        data: body,
-        options: _options(apiKey).copyWith(responseType: ResponseType.stream),
-      ),
-    );
+    final response = await _postResponses(apiKey, body);
     final streamBody = response.data;
     if (streamBody == null) {
       throw const AiProviderException('OpenAI returned an empty stream.');
     }
     final reporter = ActivityReporter(onActivity);
+    final items = <Object?>[];
     await for (final event in sseJsonEvents(streamBody)) {
       switch (event['type']) {
         case 'response.output_text.delta':
@@ -864,9 +876,21 @@ class OpenAiClient extends _BaseClient {
         // the only account this provider gives of what it is doing.
         case 'response.reasoning_summary_text.delta':
           reporter.addThinking(event['delta']?.toString() ?? '');
+        case 'response.output_item.done':
+          final item = event['item'];
+          if (item is Map) items.add(Map<String, Object?>.from(item));
         case 'response.completed' || 'response.incomplete':
           reporter.flush();
-          return objectMap(event['response']);
+          final completed = objectMap(event['response']);
+          // The subscription backend ends with a `response.completed` that
+          // carries only the id and usage; Codex reads its items from the
+          // `output_item.done` events alone. Without this every answer there
+          // would look empty.
+          final output = completed['output'];
+          if ((output is! List || output.isEmpty) && items.isNotEmpty) {
+            return {...completed, 'output': items};
+          }
+          return completed;
         // A failed response used to be returned like a successful one; the
         // caller then found no text and reported "OpenAI returned no text
         // output", throwing away the reason the API had just given.
@@ -885,6 +909,19 @@ class OpenAiClient extends _BaseClient {
       'OpenAI ended the stream without a final response.',
     );
   }
+
+  /// Opens the stream. The one place the subscription client differs on the
+  /// wire, so its endpoint, session and body rules stay out of the loop.
+  Future<Response<ResponseBody>> _postResponses(
+    String apiKey,
+    Map<String, Object?> body,
+  ) => retryTransient(
+    () => dio.post<ResponseBody>(
+      '$_baseUrl/responses',
+      data: body,
+      options: _options(apiKey).copyWith(responseType: ResponseType.stream),
+    ),
+  );
 
   Future<String> _uploadContext(String apiKey, String json) async {
     try {
@@ -910,6 +947,125 @@ class OpenAiClient extends _BaseClient {
       providerError('OpenAI context upload', error);
     }
   }
+}
+
+/// A ChatGPT subscription, through the backend the Codex CLI uses.
+///
+/// The wire format is the Responses API [OpenAiClient] already speaks, so the
+/// loop, streaming and tool round trips are inherited rather than copied — two
+/// copies of a tool loop drift. Everything that differs lives in
+/// [_postResponses]: the endpoint, a rotating session instead of a key, and the
+/// body rules in [subscriptionRequestBody].
+class ChatGptSubscriptionClient extends OpenAiClient {
+  ChatGptSubscriptionClient(
+    super.dio,
+    super.capabilityRegistry,
+    this._sessions,
+  );
+
+  static const baseUrl = 'https://chatgpt.com/backend-api/codex';
+
+  /// Names this app on every request. Codex sends its own name here, and
+  /// sending Codex's would pass SuperHealth off as OpenAI's client.
+  static const originator = 'superhealth';
+
+  final ChatGptSessionSource? _sessions;
+
+  @override
+  AiProvider get provider => AiProvider.chatgpt;
+
+  /// No file upload or code interpreter on the subscription; the capability
+  /// registry already says so, and this keeps [validate] refusing even a
+  /// model added there by mistake.
+  @override
+  bool get supportsContextFile => false;
+
+  /// The curated catalog, without a request: see
+  /// [ProviderCapabilityRegistry.chatGptModels] for why it is not fetched.
+  @override
+  Future<List<AiModelInfo>> listModels(String apiKey) async => [
+    for (final id in ProviderCapabilityRegistry.chatGptModels)
+      AiModelInfo(id: id, displayName: id, provider: provider),
+  ];
+
+  /// [apiKey] is ignored. The session is resolved per request because the
+  /// access token rotates, and a plan that outlives it needs the new one.
+  @override
+  Future<Response<ResponseBody>> _postResponses(
+    String apiKey,
+    Map<String, Object?> body,
+  ) async {
+    final sessions = _sessions;
+    if (sessions == null) {
+      throw const ChatGptAuthException(ChatGptAuthFailure.notSignedIn);
+    }
+    final wire = subscriptionRequestBody(body);
+    Future<Response<ResponseBody>> send(ChatGptSession session) =>
+        retryTransient(
+          () => dio.post<ResponseBody>(
+            '$baseUrl/responses',
+            data: wire,
+            options: Options(
+              headers: {
+                'Authorization': 'Bearer ${session.accessToken}',
+                'ChatGPT-Account-ID': ?session.accountId,
+                'originator': originator,
+                'Accept': 'text/event-stream',
+                'Content-Type': 'application/json',
+              },
+              responseType: ResponseType.stream,
+            ),
+          ),
+        );
+    try {
+      return await send(await sessions.session());
+    } on DioException catch (error) {
+      // A token can be revoked before its `exp`, as Codex also assumes: one
+      // forced renewal and one retry, and a second 401 is reported as is.
+      if (error.response?.statusCode != 401) rethrow;
+      return send(await sessions.session(forceRefresh: true));
+    }
+  }
+}
+
+/// The Responses body as the subscription backend takes it.
+///
+/// It refuses `max_output_tokens`, because the plan sets the output budget, and
+/// has no `prompt_cache_retention`. An unsupported parameter fails the whole
+/// call, so both are dropped rather than sent; `prompt_cache_key` stays, as
+/// Codex sends it too. Messages go as typed content parts, the only shape
+/// Codex uses there. The API's string shorthand is not something to discover
+/// the backend tolerates halfway through a plan.
+Map<String, Object?> subscriptionRequestBody(Map<String, Object?> body) {
+  final wire = Map<String, Object?>.from(body)
+    ..remove('max_output_tokens')
+    ..remove('prompt_cache_retention');
+  final input = body['input'];
+  if (input is List) {
+    wire['input'] = [for (final item in input) _typedMessage(item)];
+  }
+  return wire;
+}
+
+/// Rewrites a `{role, content: "text"}` turn into Codex's typed message.
+/// Items that already carry a `type` — the model's own output echoed back,
+/// tool results — pass through untouched, because they are only valid
+/// verbatim.
+Object? _typedMessage(Object? item) {
+  if (item is! Map || item.containsKey('type')) return item;
+  final role = item['role'];
+  final content = item['content'];
+  if (content is! String) return item;
+  return {
+    'type': 'message',
+    'role': role,
+    'content': [
+      {
+        'type': role == 'assistant' ? 'output_text' : 'input_text',
+        'text': content,
+      },
+    ],
+  };
 }
 
 class AnthropicClient extends _BaseClient {

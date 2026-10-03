@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'ai/advisor_service.dart';
 import 'ai/ai_settings.dart';
 import 'ai/api_key_store.dart';
+import 'ai/chatgpt_auth.dart';
 import 'ai/document_parsing_service.dart';
 import 'ai/health_context_builder.dart';
 import 'ai/ai_trace_store.dart';
@@ -39,9 +40,12 @@ void main() {
 
   final database = AppDatabase();
   final repository = HealthRepository(database);
-  final keyStore = ApiKeyStore();
+  // One instance for the whole app: it serialises token renewals, and two
+  // renewing side by side would revoke the session (see `ChatGptAuth`).
+  final chatGptAuth = ChatGptAuth();
+  final keyStore = ApiKeyStore(chatGpt: chatGptAuth);
   final settingsStore = AiSettingsStore();
-  final clientFactory = AiProviderClientFactory();
+  final clientFactory = AiProviderClientFactory(chatGpt: chatGptAuth);
   // The two flows take deliberately different slices of the record: the
   // planner needs catalog entries never measured, the advisor does not.
   final advisorContextBuilder = HealthContextBuilder(

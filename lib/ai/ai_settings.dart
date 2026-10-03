@@ -13,6 +13,15 @@ import 'ai_models.dart';
 /// the planner was not listening, except from the bill.
 enum AiTask { advisor, parsing, pricing, labPlanner }
 
+/// Whether [provider] can do [task] at all in this app.
+///
+/// Lab document parsing sends the PDF itself through each provider's own file
+/// input, and the ChatGPT subscription has no file upload. Settings offers only
+/// the providers this allows, so the gap is visible where the choice is made
+/// rather than discovered on the first import.
+bool providerServesTask(AiProvider provider, AiTask task) =>
+    !(provider == AiProvider.chatgpt && task == AiTask.parsing);
+
 class AiTaskSettings {
   const AiTaskSettings({
     required this.provider,

@@ -19,6 +19,7 @@ import '../reminders/reminder_planner.dart';
 import '../reminders/reminder_service.dart';
 import '../sync/one_drive_service.dart';
 import '../sync/restore_sync_gate.dart';
+import 'chatgpt_sign_in.dart';
 import 'common.dart';
 import 'dialogs.dart';
 import 'initial_setup_widgets.dart';
@@ -239,12 +240,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: _settingsText(context, 'AI providers', 'KI-Anbieter'),
             subtitle: _settingsText(
               context,
-              'Bring your own key; keys stay in encrypted device storage',
-              'Eigener API-Schlüssel; Schlüssel bleiben verschlüsselt auf dem Gerät',
+              'Bring your own key or sign in with ChatGPT; credentials stay in encrypted device storage',
+              'Eigener API-Schlüssel oder ChatGPT-Anmeldung; Zugangsdaten bleiben verschlüsselt auf dem Gerät',
             ),
           ),
           for (final provider in AiProvider.values)
-            _ApiKeyCard(provider: provider),
+            provider == AiProvider.chatgpt
+                ? const ChatGptSignInCard()
+                : _ApiKeyCard(provider: provider),
           SectionHeader(
             title: _settingsText(context, 'AI roles', 'KI-Rollen'),
             subtitle: _settingsText(
@@ -2770,7 +2773,7 @@ class _ApiKeyCardState extends State<_ApiKeyCard> {
     return Card(
       child: ExpansionTile(
         leading: Icon(configured ? Icons.key : Icons.key_off_outlined),
-        title: Text(_providerLabel(widget.provider)),
+        title: Text(_aiProviderLabel(context, widget.provider)),
         subtitle: Text(
           configured
               ? _settingsText(
@@ -2835,8 +2838,8 @@ class _ApiKeyCardState extends State<_ApiKeyCard> {
                                 content: Text(
                                   _settingsText(
                                     context,
-                                    '${_providerLabel(widget.provider)} key saved.',
-                                    '${_providerLabel(widget.provider)}-Schlüssel gespeichert.',
+                                    '${_aiProviderLabel(context, widget.provider)} key saved.',
+                                    '${_aiProviderLabel(context, widget.provider)}-Schlüssel gespeichert.',
                                   ),
                                 ),
                               ),
@@ -2858,13 +2861,19 @@ class _ApiKeyCardState extends State<_ApiKeyCard> {
       ),
     );
   }
-
-  String _providerLabel(AiProvider provider) => switch (provider) {
-    AiProvider.openai => 'OpenAI',
-    AiProvider.anthropic => 'Anthropic',
-    AiProvider.gemini => 'Google Gemini',
-  };
 }
+
+String _aiProviderLabel(BuildContext context, AiProvider provider) =>
+    switch (provider) {
+      AiProvider.openai => 'OpenAI',
+      AiProvider.anthropic => 'Anthropic',
+      AiProvider.gemini => 'Google Gemini',
+      AiProvider.chatgpt => _settingsText(
+        context,
+        'ChatGPT subscription',
+        'ChatGPT-Abo',
+      ),
+    };
 
 class _ModelConfigurationCard extends StatefulWidget {
   const _ModelConfigurationCard({
@@ -2934,7 +2943,8 @@ class _ModelConfigurationCardState extends State<_ModelConfigurationCard> {
         subtitle: Text(
           widget.settings == null
               ? _settingsText(context, 'Not configured', 'Nicht eingerichtet')
-              : '${widget.settings!.provider.name} · ${widget.settings!.model}',
+              : '${_aiProviderLabel(context, widget.settings!.provider)} · '
+                    '${widget.settings!.model}',
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
         children: [
@@ -2945,7 +2955,11 @@ class _ModelConfigurationCardState extends State<_ModelConfigurationCard> {
             ),
             items: [
               for (final provider in AiProvider.values)
-                DropdownMenuItem(value: provider, child: Text(provider.name)),
+                if (providerServesTask(provider, widget.task))
+                  DropdownMenuItem(
+                    value: provider,
+                    child: Text(_aiProviderLabel(context, provider)),
+                  ),
             ],
             onChanged: (value) => setState(() {
               _provider = value ?? _provider;

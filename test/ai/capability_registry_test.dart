@@ -5,7 +5,7 @@ void main() {
   final registry = ProviderCapabilityRegistry();
 
   test('registry records the documentation audit date', () {
-    expect(ProviderCapabilityRegistry.version, '2026-09-30');
+    expect(ProviderCapabilityRegistry.version, '2026-10-03');
   });
 
   test('documented model families expose only their audited controls', () {

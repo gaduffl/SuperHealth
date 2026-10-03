@@ -116,7 +116,7 @@ class SupplementLabelService {
     }
     final key = await _keyStore.read(settings.provider);
     if (key == null || key.isEmpty) {
-      throw StateError('Add a ${settings.provider.name} API key first.');
+      throw StateError(ApiKeyStore.missingCredentialMessage(settings.provider));
     }
     final capabilities = _capabilities.forModel(
       settings.provider,
