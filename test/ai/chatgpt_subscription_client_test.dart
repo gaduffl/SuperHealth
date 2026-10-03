@@ -21,12 +21,22 @@ class _Sessions implements ChatGptSessionSource {
   }
 }
 
+/// An HTTP error with its own body and headers.
+class _ErrorReply {
+  const _ErrorReply(this.status, this.body, {this.headers = const {}});
+
+  final int status;
+  final Map<String, Object?> body;
+  final Map<String, List<String>> headers;
+}
+
 /// Answers each request with the next scripted stream (or HTTP status) and
 /// keeps a deep copy of every request as it was sent.
 class _Script {
   _Script(this.replies);
 
-  /// A server-sent-event body, or an int for an HTTP error status.
+  /// A server-sent-event body, an int for an HTTP error status, or an
+  /// [_ErrorReply].
   final List<Object> replies;
   final bodies = <Map<String, Object?>>[];
   final headers = <Map<String, Object?>>[];
@@ -57,6 +67,24 @@ class _Script {
                   data: ResponseBody.fromString(
                     '{"error":{"message":"token expired"}}',
                     reply,
+                  ),
+                ),
+              ),
+            );
+            return;
+          }
+          if (reply is _ErrorReply) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.badResponse,
+                response: Response<ResponseBody>(
+                  requestOptions: options,
+                  statusCode: reply.status,
+                  headers: Headers.fromMap(reply.headers),
+                  data: ResponseBody.fromString(
+                    jsonEncode(reply.body),
+                    reply.status,
                   ),
                 ),
               ),
@@ -390,5 +418,116 @@ void main() {
         expect(providerServesTask(provider, task), isTrue);
       }
     }
+  });
+
+  const question = ProviderRequest(
+    model: 'gpt-5.5',
+    systemPrompt: 'system',
+    userPrompt: 'question',
+    contextJson: '{}',
+  );
+  final resetsAt = DateTime.utc(2026, 10, 3, 14, 30);
+
+  test('a usage limit fails at the first answer, carrying its reset and plan, '
+      'instead of being retried like a rate limit', () async {
+    final script = _Script([
+      _ErrorReply(429, {
+        'error': {
+          'type': 'usage_limit_reached',
+          'message': 'The usage limit has been reached',
+          'plan_type': 'plus',
+          'resets_at': resetsAt.millisecondsSinceEpoch ~/ 1000,
+        },
+      }),
+    ]);
+
+    await expectLater(
+      _client(script).respond('ignored', question),
+      throwsA(
+        isA<ProviderUsageLimitException>()
+            .having((error) => error.resetsAt, 'resetsAt', resetsAt)
+            .having((error) => error.planType, 'planType', 'plus')
+            .having((error) => error.statusCode, 'statusCode', 429),
+      ),
+    );
+    expect(script.bodies, hasLength(1));
+  });
+
+  test('a 429 that is not the usage limit is still retried and keeps the '
+      'provider\'s own message', () async {
+    final script = _Script([
+      const _ErrorReply(
+        429,
+        {
+          'error': {'message': 'Slow down for a moment.'},
+        },
+        headers: {
+          'retry-after': ['1'],
+        },
+      ),
+    ]);
+
+    await expectLater(
+      _client(script).respond('ignored', question),
+      throwsA(
+        isA<AiProviderException>()
+            .having(
+              (error) => error,
+              'type',
+              isNot(isA<ProviderUsageLimitException>()),
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              'Slow down for a moment.',
+            ),
+      ),
+    );
+    expect(script.bodies, hasLength(3), reason: 'two retries, as before');
+  });
+
+  test('a usage limit reported inside the stream is recognised too', () async {
+    final script = _Script([
+      _sse([
+        {
+          'type': 'response.failed',
+          'response': {
+            'status': 'failed',
+            'error': {
+              'code': 'usage_limit_reached',
+              'resets_at': resetsAt.millisecondsSinceEpoch ~/ 1000,
+            },
+          },
+        },
+      ]),
+    ]);
+
+    await expectLater(
+      _client(script).respond('ignored', question),
+      throwsA(
+        isA<ProviderUsageLimitException>().having(
+          (error) => error.resetsAt,
+          'resetsAt',
+          resetsAt,
+        ),
+      ),
+    );
+  });
+
+  test('only a usage-limit payload reads as one', () {
+    expect(
+      usageLimitFrom({
+        'error': {'type': 'rate_limit_exceeded', 'message': 'Slow down.'},
+      }),
+      isNull,
+    );
+    expect(usageLimitFrom('not a map'), isNull);
+    expect(usageLimitFrom(null), isNull);
+    final withoutReset = usageLimitFrom({
+      'error': {'type': 'usage_limit_reached'},
+    });
+    expect(withoutReset, isNotNull);
+    expect(withoutReset!.resetsAt, isNull);
+    expect(withoutReset.toString(), 'ChatGPT usage limit reached.');
   });
 }

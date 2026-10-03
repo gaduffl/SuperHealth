@@ -17,6 +17,72 @@ class AiProviderException implements Exception {
       statusCode == null ? message : '$message (HTTP $statusCode)';
 }
 
+/// A subscription's usage limit. It lasts until [resetsAt], so it is not a
+/// rate limit to wait out with a few retries, and a run that meets it partway
+/// keeps what it already has rather than losing it to the error.
+class ProviderUsageLimitException extends AiProviderException {
+  const ProviderUsageLimitException({
+    this.resetsAt,
+    this.planType,
+    String? message,
+  }) : super(message ?? 'The usage limit has been reached', statusCode: 429);
+
+  /// When the limit lifts, in UTC. Null when the provider did not say.
+  final DateTime? resetsAt;
+
+  /// As the provider names it: `plus`, `pro` and so on.
+  final String? planType;
+
+  /// English fallback for the services that only surface an error; the UI
+  /// phrases this case itself, in the reader's language and local time.
+  @override
+  String toString() {
+    final reset = resetsAt?.toLocal();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return reset == null
+        ? 'ChatGPT usage limit reached.'
+        : 'ChatGPT usage limit reached. It resets at '
+              '${reset.year}-${two(reset.month)}-${two(reset.day)} '
+              '${two(reset.hour)}:${two(reset.minute)}.';
+  }
+}
+
+/// The usage limit an error payload reports, or null for any other error.
+///
+/// Codex reads the same three places: an HTTP body's `error`, a stream `error`
+/// event's `error`, and a failed response's `response.error`. The reset comes
+/// as epoch seconds in `resets_at`.
+ProviderUsageLimitException? usageLimitFrom(Object? payload) {
+  Map<Object?, Object?>? child(Object? node, String key) {
+    final value = node is Map ? node[key] : null;
+    return value is Map ? value : null;
+  }
+
+  for (final error in [
+    child(payload, 'error'),
+    child(child(payload, 'response'), 'error'),
+  ]) {
+    if (error == null) continue;
+    if (error['type'] != 'usage_limit_reached' &&
+        error['code'] != 'usage_limit_reached') {
+      continue;
+    }
+    final resetsAt = error['resets_at'];
+    final message = error['message']?.toString().trim();
+    return ProviderUsageLimitException(
+      resetsAt: resetsAt is num
+          ? DateTime.fromMillisecondsSinceEpoch(
+              resetsAt.toInt() * 1000,
+              isUtc: true,
+            )
+          : null,
+      planType: error['plan_type']?.toString(),
+      message: message == null || message.isEmpty ? null : message,
+    );
+  }
+  return null;
+}
+
 /// The most specific description available for a provider error payload.
 ///
 /// Providers nest the reason differently — top level, under `error`, under
@@ -896,13 +962,18 @@ class OpenAiClient extends _BaseClient {
         // output", throwing away the reason the API had just given.
         case 'response.failed':
           reporter.flush();
-          throw AiProviderException(
-            describeProviderError(event, 'OpenAI reported a failed response.'),
-          );
+          throw usageLimitFrom(event) ??
+              AiProviderException(
+                describeProviderError(
+                  event,
+                  'OpenAI reported a failed response.',
+                ),
+              );
         case 'error':
-          throw AiProviderException(
-            describeProviderError(event, 'OpenAI reported a stream error.'),
-          );
+          throw usageLimitFrom(event) ??
+              AiProviderException(
+                describeProviderError(event, 'OpenAI reported a stream error.'),
+              );
       }
     }
     throw const AiProviderException(
@@ -1000,23 +1071,48 @@ class ChatGptSubscriptionClient extends OpenAiClient {
       throw const ChatGptAuthException(ChatGptAuthFailure.notSignedIn);
     }
     final wire = subscriptionRequestBody(body);
-    Future<Response<ResponseBody>> send(ChatGptSession session) =>
-        retryTransient(
-          () => dio.post<ResponseBody>(
-            '$baseUrl/responses',
-            data: wire,
-            options: Options(
-              headers: {
-                'Authorization': 'Bearer ${session.accessToken}',
-                'ChatGPT-Account-ID': ?session.accountId,
-                'originator': originator,
-                'Accept': 'text/event-stream',
-                'Content-Type': 'application/json',
-              },
-              responseType: ResponseType.stream,
-            ),
+    Future<Response<ResponseBody>> post(ChatGptSession session) async {
+      try {
+        return await dio.post<ResponseBody>(
+          '$baseUrl/responses',
+          data: wire,
+          options: Options(
+            headers: {
+              'Authorization': 'Bearer ${session.accessToken}',
+              'ChatGPT-Account-ID': ?session.accountId,
+              'originator': originator,
+              'Accept': 'text/event-stream',
+              'Content-Type': 'application/json',
+            },
+            responseType: ResponseType.stream,
           ),
         );
+      } on DioException catch (error) {
+        if (error.response?.statusCode != 429) rethrow;
+        // Read before the retry policy sees it: a 429 is retried as a rate
+        // limit, but the usage limit lasts until its reset, and retrying it
+        // only adds seconds of waiting to an answer that cannot change.
+        final decoded = await decodeStreamError(error);
+        final limit = usageLimitFrom(decoded);
+        if (limit != null) throw limit;
+        // The body stream can be read once, so the decoded copy travels on
+        // for the provider error message.
+        throw DioException(
+          requestOptions: error.requestOptions,
+          response: Response<Object?>(
+            requestOptions: error.requestOptions,
+            statusCode: 429,
+            headers: error.response!.headers,
+            data: decoded,
+          ),
+          type: error.type,
+          error: error.error,
+        );
+      }
+    }
+
+    Future<Response<ResponseBody>> send(ChatGptSession session) =>
+        retryTransient(() => post(session));
     try {
       return await send(await sessions.session());
     } on DioException catch (error) {

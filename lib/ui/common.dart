@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/app_localizations.dart';
+import 'ai_error_text.dart';
 
 const _redactedErrorValue = '[redacted]';
 const _maxErrorMessageLength = 1200;
@@ -50,7 +51,7 @@ String sanitizeAppErrorMessage(String rawMessage) {
 
 Future<void> showAppError(BuildContext context, Object error) async {
   if (!context.mounted) return;
-  final message = sanitizeAppErrorMessage(error.toString());
+  final message = sanitizeAppErrorMessage(appErrorText(context, error));
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(content: Text(message)));
