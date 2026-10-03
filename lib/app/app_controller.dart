@@ -12,6 +12,7 @@ import '../ai/advisor_service.dart';
 import '../ai/ai_models.dart';
 import '../ai/ai_settings.dart';
 import '../ai/api_key_store.dart';
+import '../ai/chatgpt_auth.dart';
 import '../ai/document_parsing_service.dart';
 import '../ai/ai_trace.dart';
 import '../ai/ai_trace_store.dart';
@@ -125,7 +126,11 @@ class AppController extends ChangeNotifier {
        _syncStatusStore = syncStatusStore ?? SyncStatusStore(),
        _longTaskGuard = longTaskGuard ?? LongTaskGuard(),
        _labPlanTraceStore = labPlanTraceStore,
-       _advisorTraceStore = advisorTraceStore;
+       _advisorTraceStore = advisorTraceStore {
+    _chatGptChanges = keyStore.chatGpt?.changes.listen(
+      (_) => unawaited(_chatGptSessionChanged()),
+    );
+  }
 
   final AppDatabase _database;
 
@@ -318,6 +323,11 @@ class AppController extends ChangeNotifier {
 
   final Map<AiProvider, bool> hasApiKey = {};
   final Map<AiProvider, List<AiModelInfo>> availableModels = {};
+
+  /// The signed-in ChatGPT subscription, so Settings can say whose plan a run
+  /// counts against. Null when signed out.
+  ChatGptAccount? chatGptAccount;
+  StreamSubscription<void>? _chatGptChanges;
   ReminderPermissionStatus reminderPermissionStatus =
       ReminderPermissionStatus.unknown;
   String? reminderStatusMessage;
@@ -407,7 +417,16 @@ class AppController extends ChangeNotifier {
     for (final provider in AiProvider.values) {
       hasApiKey[provider] = await keyStore.hasKey(provider);
     }
+    chatGptAccount = await keyStore.chatGpt?.account();
     await refreshInitialSetupProgress();
+  }
+
+  Future<void> _chatGptSessionChanged() async {
+    try {
+      await refreshKeyStatus();
+    } on Object {
+      // Only the displayed status is stale; the sign-in itself has happened.
+    }
   }
 
   /// Refreshes device-local setup progress from persisted action facts and
@@ -2215,10 +2234,38 @@ class AppController extends ChangeNotifier {
     await refreshKeyStatus();
   }
 
+  ChatGptAuth get _chatGptAuth =>
+      keyStore.chatGpt ??
+      (throw StateError('ChatGPT sign-in is not set up in this build.'));
+
+  /// Asks OpenAI for a sign-in code. Nothing here holds `busy`: the code
+  /// waits up to fifteen minutes for someone to approve it in a browser, and
+  /// a busy flag held that long would grey out the app and hold back updates.
+  Future<ChatGptDeviceCode> startChatGptSignIn() =>
+      _chatGptAuth.startDeviceLogin();
+
+  /// Waits for [code] to be approved and stores the session. The status is
+  /// refreshed here so it is current when the dialog closes, rather than
+  /// whenever [ChatGptAuth.changes] is delivered.
+  Future<void> completeChatGptSignIn(
+    ChatGptDeviceCode code, {
+    bool Function()? isCancelled,
+  }) async {
+    await _chatGptAuth.completeDeviceLogin(code, isCancelled: isCancelled);
+    availableModels.remove(AiProvider.chatgpt);
+    await refreshKeyStatus();
+  }
+
+  Future<void> signOutChatGpt() async {
+    await keyStore.delete(AiProvider.chatgpt);
+    availableModels.remove(AiProvider.chatgpt);
+    await refreshKeyStatus();
+  }
+
   Future<List<AiModelInfo>> loadModels(AiProvider provider) async {
     final key = await keyStore.read(provider);
     if (key == null || key.isEmpty) {
-      throw StateError('Add a ${provider.name} API key first.');
+      throw StateError(ApiKeyStore.missingCredentialMessage(provider));
     }
     return _withBusy(() async {
       final models = await _clientFactory.create(provider).listModels(key);
@@ -2228,6 +2275,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> saveTaskSettings(AiTask task, AiTaskSettings settings) async {
+    if (!providerServesTask(settings.provider, task)) {
+      throw StateError('This provider cannot do this task in SuperHealth.');
+    }
     final capabilities = capabilityRegistry.forModel(
       settings.provider,
       settings.model,
@@ -3017,6 +3067,7 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    unawaited(_chatGptChanges?.cancel());
     unawaited(_database.close());
     super.dispose();
   }

@@ -320,7 +320,9 @@ Rules:
     }
     final key = await _keyStore.read(settings.provider);
     if (key == null) {
-      throw LabPriceException('Add a ${settings.provider.name} API key first.');
+      throw LabPriceException(
+        ApiKeyStore.missingCredentialMessage(settings.provider),
+      );
     }
     final client = _clientFactory.create(settings.provider);
     final batches = <List<Biomarker>>[

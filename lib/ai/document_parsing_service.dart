@@ -182,7 +182,7 @@ class DocumentParsingService {
     }
     final key = await _keyStore.read(settings.provider);
     if (key == null || key.isEmpty) {
-      throw StateError('Add a ${settings.provider.name} API key first.');
+      throw StateError(ApiKeyStore.missingCredentialMessage(settings.provider));
     }
     final capabilities = _capabilities.forModel(
       settings.provider,
@@ -220,6 +220,12 @@ class DocumentParsingService {
       ),
       AiProvider.anthropic => _parseAnthropic(key, settings, pdfBytes, prompt),
       AiProvider.gemini => _parseGemini(key, settings, pdfBytes, prompt),
+      // Settings never offers it here (see `providerServesTask`); this keeps
+      // a stored setting from an older build from failing obscurely.
+      AiProvider.chatgpt => throw StateError(
+        'A ChatGPT subscription cannot read PDF files. Choose an API-key '
+        'provider for the lab document parser in Settings.',
+      ),
     };
     return _decodeReport(
       responseText,

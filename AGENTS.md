@@ -46,7 +46,7 @@ Flutter SDK path — do not commit a machine-specific rewrite of it.
 | `lib/analysis/` | `correlation_service.dart`, `supplement_insights.dart`, `exposure_analysis.dart`, `interaction_findings.dart` — all derived numbers |
 | `lib/domain/interaction_rules.dart` | The curated interaction table; `biomarker_concepts.dart` and `medication_catalog.dart` are the vocabularies it names tests and drugs by |
 | `lib/app/app_controller.dart` | `ChangeNotifier` holding loaded state; screens read it, mutate through it |
-| `lib/ai/` | Provider clients and their tool loops, the advisor (digest, tools, review), context builder, parsing, lab planner and its coverage (`plan_coverage.dart`) |
+| `lib/ai/` | Provider clients and their tool loops, the ChatGPT subscription sign-in (`chatgpt_auth.dart`), the advisor (digest, tools, review), context builder, parsing, lab planner and its coverage (`plan_coverage.dart`) |
 | `lib/sync/`, `lib/backup/` | OneDrive snapshot sync, portable backup/restore |
 | `lib/updates/` | In-app updater: release sources, verified download, the Android install seam, `UpdateController` |
 | `lib/ui/` | Screens, dialogs, and `design.dart`/`charts.dart` visual vocabulary |
@@ -363,6 +363,42 @@ ran on whatever the advisor was set to — a user who picked a cheaper model for
 it had no way to find out except the bill. `AiTask.labPlanner` falls back to the
 advisor's settings on load, because that is what existing installs have been
 using and showing it is the truth.
+
+**A ChatGPT subscription is a provider of its own, not an OpenAI sign-in
+option.** It runs the same Responses API against the backend Codex uses, but the
+same model name has different capabilities there — a 272k window instead of
+1.05M, no code interpreter, no file upload — and every capability lookup is
+keyed by provider and model. So `AiProvider.chatgpt` has its own registry
+entries and a curated `chatGptModels` list; the backend's model endpoint filters
+by a Codex client version this app has no honest value for. With no file path,
+a whole-record run that does not fit says so rather than truncating, and the
+planner and advisor answer from the digest and tools. `ChatGptSubscriptionClient`
+inherits the OpenAI loop and overrides only `_postResponses`: endpoint, session,
+and `subscriptionRequestBody` (no `max_output_tokens`, no
+`prompt_cache_retention`, typed message parts). That backend's
+`response.completed` carries no output, so the shared stream loop collects items
+from `response.output_item.done`; drop that and every subscription answer reads
+as empty. Lab document parsing is excluded through `providerServesTask`, because
+it sends the PDF and the subscription takes no files. Requests carry
+`originator: superhealth` — never Codex's own name.
+
+**A Claude subscription is never a provider.** Anthropic's terms forbid
+third-party apps from offering Claude.ai login or holding its session tokens;
+the only legitimate route is the unmodified Claude Code binary, which an Android
+app cannot run. Do not add one by imitating Claude Code's client. Claude is
+reached with an API key.
+
+**Renewals of a rotating refresh token are serialised.** OpenAI rotates the
+refresh token on every use and treats a second use of the old one as theft
+(`refresh_token_reused`), ending the session. `ChatGptAuth` is one instance for
+the app, built in `main.dart`, and every caller shares the renewal in flight.
+A second instance, or a refresh outside it, signs the person out the first time
+two calls overlap. A permanent refresh failure clears the stored session and
+`changes` tells Settings, so it stops claiming a sign-in every request refuses;
+a transient failure keeps a still-valid token in use, since a server hiccup is
+not a sign-out. Device-code polling treats a dropped connection as "not yet":
+the person is in the browser approving the code, and Android may freeze the app
+until they return.
 
 **The verifier reviews the question that was asked.** `priorities` reaches both
 passes. It used to reach only the draft, so the reviewer saw tests omitted, found
@@ -1079,6 +1115,15 @@ which remain unexamined rather than known-good:
   The lab planner adds schema-constrained output to the same loop, a
   combination no live call has exercised either; the first digest-only plan on
   each provider is its verification.
+- The ChatGPT subscription against the live backend. The device-code flow, the
+  token exchange and refresh, the endpoint, the headers and the body rules are
+  taken from the Codex CLI's source and pinned by scripted tests
+  (`test/ai/chatgpt_auth_test.dart`, `chatgpt_subscription_client_test.dart`),
+  which prove what the app sends, not that OpenAI accepts it from an app that
+  is not Codex. No request from this app has reached `chatgpt.com`: the first
+  sign-in and the first plan are the verification. It also rests on Codex's
+  public client id, which OpenAI could change or restrict without notice, and
+  the curated model list and its 272k window go stale as the catalog moves.
 - Foreground-service behaviour on a real device. `LongTaskGuard`'s bookkeeping is
   tested against injected seams, but the service actually starting, surviving
   Doze, and stopping cleanly has never run anywhere: CI builds the APK and never

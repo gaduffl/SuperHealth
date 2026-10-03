@@ -879,7 +879,7 @@ This profile uses SuperHealth in simple mode. Answer in the language of the ques
   Future<String> _requiredKey(AiProvider provider) async {
     final key = await _keyStore.read(provider);
     if (key == null || key.trim().isEmpty) {
-      throw StateError('Add a ${provider.name} API key in Settings first.');
+      throw StateError(ApiKeyStore.missingCredentialMessage(provider));
     }
     return key;
   }
