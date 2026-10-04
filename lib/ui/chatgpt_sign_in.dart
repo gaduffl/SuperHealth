@@ -136,12 +136,10 @@ class ChatGptSignInCard extends StatelessWidget {
           ),
         );
       } else if (result != null && result != false) {
-        await showAppError(context, chatGptAuthErrorText(context, result));
+        await showAppError(context, result);
       }
     } on Object catch (error) {
-      if (context.mounted) {
-        await showAppError(context, chatGptAuthErrorText(context, error));
-      }
+      if (context.mounted) await showAppError(context, error);
     }
   }
 
@@ -158,53 +156,6 @@ class ChatGptSignInCard extends StatelessWidget {
 String _planLabel(String plan) => plan.isEmpty
     ? plan
     : '${plan[0].toUpperCase()}${plan.substring(1).replaceAll('_', ' ')}';
-
-/// A sign-in failure in the reader's language. Anything that is not a
-/// [ChatGptAuthException] is shown as it arrived.
-String chatGptAuthErrorText(BuildContext context, Object error) {
-  if (error is! ChatGptAuthException) return error.toString();
-  final text = switch (error.failure) {
-    ChatGptAuthFailure.deviceLoginUnavailable => _text(
-      context,
-      'OpenAI does not offer device-code sign-in right now. Try again later.',
-      'OpenAI bietet die Anmeldung per Gerätecode gerade nicht an. Versuche '
-          'es später erneut.',
-    ),
-    ChatGptAuthFailure.codeExpired => _text(
-      context,
-      'The code expired before it was approved. Start the sign-in again.',
-      'Der Code ist abgelaufen, bevor er bestätigt wurde. Starte die '
-          'Anmeldung erneut.',
-    ),
-    ChatGptAuthFailure.cancelled => _text(
-      context,
-      'Sign-in cancelled.',
-      'Anmeldung abgebrochen.',
-    ),
-    ChatGptAuthFailure.rejected => _text(
-      context,
-      'OpenAI refused the sign-in.',
-      'OpenAI hat die Anmeldung abgelehnt.',
-    ),
-    ChatGptAuthFailure.sessionExpired => _text(
-      context,
-      'The ChatGPT sign-in has expired. Sign in again.',
-      'Die ChatGPT-Anmeldung ist abgelaufen. Melde dich erneut an.',
-    ),
-    ChatGptAuthFailure.unreachable => _text(
-      context,
-      'OpenAI could not be reached. Check the connection and try again.',
-      'OpenAI ist nicht erreichbar. Prüfe die Verbindung und versuche es '
-          'erneut.',
-    ),
-    ChatGptAuthFailure.notSignedIn => _text(
-      context,
-      'Sign in with ChatGPT first.',
-      'Melde dich zuerst mit ChatGPT an.',
-    ),
-  };
-  return error.detail == null ? text : '$text (${error.detail})';
-}
 
 /// Shows the code and waits for it to be approved, closing itself when it is.
 ///

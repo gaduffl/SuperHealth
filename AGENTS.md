@@ -455,8 +455,27 @@ verification means the plan is *unverified* — which `approved: false` states
 and `canSave` already enforces — not that a complete, paid-for draft is
 worthless. `_verify` catches `LabPlanFormatException` and returns an
 unapproved verification carrying the parse error as a blocking issue, so the
-user can still read the plan. Everything else — a dropped connection, a refusal
-— is a failure of the *call* rather than of the answer, and still rethrows.
+user can still read the plan. A usage limit hit by the review is treated the
+same way, for the same reason: the draft came out of that allowance and is
+finished. Everything else — a dropped connection, a refusal — is a failure of
+the *call* rather than of the answer, and still rethrows.
+
+**A usage limit is not a rate limit.** The ChatGPT subscription answers an
+exhausted plan with HTTP 429 `usage_limit_reached` and a `resets_at`, and the
+limit lasts until then — hours, not the seconds `retryTransient` waits. So the
+subscription client reads a 429's body *before* the retry policy sees it and
+throws `ProviderUsageLimitException`, which is never retried; any other 429 is
+retried as before, with its decoded body passed on because a stream can be read
+once. The shared stream loop recognises the same error in a `response.failed`
+or `error` event. Nothing falls back to an API-key provider on its own: that
+would silently start spending money the person chose a subscription to avoid.
+
+**A known failure is phrased once, in `appErrorText`.** `showAppError` routes
+every error through it, so the usage limit (with its reset in local time, the
+date added when it is not today) and each `ChatGptAuthFailure` read the same in
+the advisor, the planner, price updates and sign-in, in both languages. Give a
+new failure type a typed exception and a case there rather than catching it
+screen by screen.
 
 **An unsaveable draft says why beside the button that will not save it.** The
 blocking issues used to live only in the collapsed "Plan notes" at the top of

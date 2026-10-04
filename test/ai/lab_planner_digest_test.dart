@@ -293,6 +293,53 @@ void main() {
     expect(review, contains('item marked not_considered'));
   });
 
+  test('a usage limit during the review keeps the finished draft, readable '
+      'but unverified', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    final client = _Client((request) {
+      if (request.userPrompt.contains('Independently verify')) {
+        throw ProviderUsageLimitException(
+          resetsAt: DateTime.utc(2026, 10, 3, 14, 30),
+        );
+      }
+      return _compliant(request);
+    });
+
+    final result = await _planner(
+      fixture,
+      client,
+    ).generate(profileId: fixture.profile.id, settings: openAi);
+
+    expect(client.calls, 2);
+    expect(result.plan.items, isNotEmpty);
+    expect(result.verification.approved, isFalse);
+    expect(result.verification.summary, contains('usage limit'));
+    expect(result.verification.blockingIssues.single, contains('Usage limit'));
+  });
+
+  test(
+    'a review that fails for any other reason still fails the run',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      final client = _Client((request) {
+        if (request.userPrompt.contains('Independently verify')) {
+          throw const AiProviderException('Connection dropped.');
+        }
+        return _compliant(request);
+      });
+
+      await expectLater(
+        _planner(
+          fixture,
+          client,
+        ).generate(profileId: fixture.profile.id, settings: openAi),
+        throwsA(isA<AiProviderException>()),
+      );
+    },
+  );
+
   test('coverage survives saving and reloading the plan', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
