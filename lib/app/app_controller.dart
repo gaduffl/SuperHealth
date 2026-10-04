@@ -295,6 +295,9 @@ class AppController extends ChangeNotifier {
   /// When the running generation started, so the screen can show elapsed time.
   /// A long wait with a moving number reads as work; a still one reads as a
   /// hang, and the two are otherwise indistinguishable.
+  ///
+  /// Non-null for exactly as long as a generation runs, which makes it the
+  /// claim [generateLabPlan] checks before starting another.
   DateTime? labPlanStartedAt;
 
   /// What the model is currently producing, or null before the first byte of
@@ -2455,20 +2458,34 @@ class AppController extends ChangeNotifier {
     if (settings == null) {
       throw StateError('Configure the lab planner model first.');
     }
+    // The screen disables "Plan" while anything is busy, so this is the
+    // backstop. Two overlapping runs would write one trace between them, drive
+    // one progress card, and the later to finish would silently replace the
+    // earlier one's draft.
+    if (labPlanStartedAt != null) {
+      throw StateError('A lab plan is already being generated.');
+    }
+    // Claimed before the first await, so a second call in the same frame
+    // already sees it, and on screen at once rather than after the log is
+    // tidied and the guard taken.
+    labPlanStartedAt = DateTime.now();
+    labPlanStage = LabPlanStage.preparingContext;
     return _withBusy(() async {
-      // Bound the log before the run appends to it, never after — trimming a
-      // finished run away is how the evidence for the last failure disappears.
+      var held = false;
       try {
-        await _labPlanTraceStore?.trim();
-      } on Object {
-        // A log that cannot be tidied must not stop a plan being generated.
-      }
-      labPlanStartedAt = DateTime.now();
-      // Minutes of work on the main isolate. Backgrounding the app does not
-      // stop it, but a sleeping device suspends it and a reclaimed process
-      // kills it outright — the guard answers both.
-      await _longTaskGuard.hold(notice);
-      try {
+        // Bound the log before the run appends to it, never after — trimming
+        // a finished run away is how the evidence for the last failure
+        // disappears.
+        try {
+          await _labPlanTraceStore?.trim();
+        } on Object {
+          // A log that cannot be tidied must not stop a plan being generated.
+        }
+        // Minutes of work on the main isolate. Backgrounding the app does not
+        // stop it, but a sleeping device suspends it and a reclaimed process
+        // kills it outright — the guard answers both.
+        await _longTaskGuard.hold(notice);
+        held = true;
         final result = await _labPlannerService.generate(
           profileId: _profileId,
           settings: settings,
@@ -2503,7 +2520,11 @@ class AppController extends ChangeNotifier {
         labPlanActivity = null;
         labPlanActivityAt = null;
         labPlanTools = const [];
-        await _longTaskGuard.release();
+        // Before the platform calls below, which may take seconds: the draft
+        // arriving and the progress card leaving belong in the same frame,
+        // not a draft shown under a card still saying the plan is being read.
+        notifyListeners();
+        if (held) await _longTaskGuard.release();
         // However this ended, the log now has something new to say about it.
         await refreshAiLogSummaries();
       }
@@ -3054,13 +3075,21 @@ class AppController extends ChangeNotifier {
     return stockUnit == doseUnit ? dose : null;
   }
 
+  /// Operations currently inside [_withBusy]. A count, not a flag: with a
+  /// flag the first of two overlapping operations to finish cleared [busy]
+  /// under the other — an automatic sync ending mid-plan re-enabled "Plan"
+  /// while the plan was still running, and told auto-update nothing was.
+  int _busyDepth = 0;
+
   Future<T> _withBusy<T>(Future<T> Function() action) async {
+    _busyDepth++;
     busy = true;
     notifyListeners();
     try {
       return await action();
     } finally {
-      busy = false;
+      _busyDepth--;
+      busy = _busyDepth > 0;
       notifyListeners();
     }
   }

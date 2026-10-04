@@ -726,6 +726,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
               else if (controller.draftLabPlan case final draft?)
                 _DraftPlanCard(
                   generation: draft,
+                  superseded: controller.labPlanStage != null,
                   onSave: () async {
                     try {
                       await controller.saveDraftLabPlan();
@@ -1164,6 +1165,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
       actionLabel: _labsText(context, 'Generate draft', 'Entwurf erstellen'),
       actionIcon: Icons.auto_awesome,
       toolLoop: provider != null && providerSupportsClientTools(provider),
+      replacing: controller.draftLabPlan,
     );
     if (options == null || !context.mounted) return;
     try {
@@ -1193,6 +1195,10 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
   /// [toolLoop] is whether the configured provider can look details up on
   /// the device. Only then is there a choice about the full package: without
   /// a loop, and in an export, it is always sent.
+  ///
+  /// [replacing] is the unsaved draft on screen, which the new one will
+  /// replace — said before the run starts, because afterwards the old draft
+  /// is simply gone and nothing records that it existed.
   Future<_LabPlannerOptions?> _plannerOptions(
     BuildContext context, {
     required String title,
@@ -1200,6 +1206,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     required IconData actionIcon,
     bool exporting = false,
     bool toolLoop = false,
+    LabPlanGeneration? replacing,
   }) async {
     final priorities = TextEditingController();
     DateTime? targetDate;
@@ -1327,6 +1334,31 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                         ),
                 ),
               ),
+              if (replacing != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.edit_note_outlined),
+                  title: Text(
+                    _labsText(
+                      context,
+                      'Replaces your unsaved draft',
+                      'Ersetzt deinen ungespeicherten Entwurf',
+                    ),
+                  ),
+                  subtitle: Text(
+                    replacing.canSave
+                        ? _labsText(
+                            context,
+                            'It stays readable until the new plan arrives, then it is discarded. Save it first to keep it.',
+                            'Er bleibt lesbar, bis der neue Plan da ist, und wird dann verworfen. Speichere ihn vorher, um ihn zu behalten.',
+                          )
+                        : _labsText(
+                            context,
+                            'It stays readable until the new plan arrives, then it is discarded.',
+                            'Er bleibt lesbar, bis der neue Plan da ist, und wird dann verworfen.',
+                          ),
+                  ),
+                ),
             ],
           ),
           actions: [
@@ -2923,11 +2955,18 @@ class _DraftPlanCard extends StatelessWidget {
     required this.generation,
     required this.onSave,
     required this.onExport,
+    this.superseded = false,
   });
 
   final LabPlanGeneration generation;
   final VoidCallback onSave;
   final VoidCallback onExport;
+
+  /// Whether a newer generation is running. The draft is kept on screen — it
+  /// was paid for, and a run that fails leaves it in place — but under the
+  /// progress card it read as that run's result arriving while the app still
+  /// said it was working.
+  final bool superseded;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -2945,16 +2984,36 @@ class _DraftPlanCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _labsText(
-                    context,
-                    'Unsaved draft · ${generation.plan.title}',
-                    'Ungespeicherter Entwurf · ${generation.plan.title}',
-                  ),
+                  superseded
+                      ? _labsText(
+                          context,
+                          'Previous draft · ${generation.plan.title}',
+                          'Vorheriger Entwurf · ${generation.plan.title}',
+                        )
+                      : _labsText(
+                          context,
+                          'Unsaved draft · ${generation.plan.title}',
+                          'Ungespeicherter Entwurf · ${generation.plan.title}',
+                        ),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
             ],
           ),
+          if (superseded)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _labsText(
+                  context,
+                  'From an earlier run. The plan being generated above replaces it when it arrives.',
+                  'Aus einem früheren Lauf. Der Plan, der oben erstellt wird, ersetzt ihn, sobald er fertig ist.',
+                ),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           _PlanNotes(
             status: generation.plan.status,
             approved: generation.verification.approved,
@@ -2966,6 +3025,8 @@ class _DraftPlanCard extends StatelessWidget {
           PlanCoveragePanel(plan: generation.plan),
           _PlanTiers(plan: generation.plan),
           const SizedBox(height: 10),
+          if (!generation.canSave)
+            _SaveBlockedNotice(verification: generation.verification),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
@@ -2986,6 +3047,92 @@ class _DraftPlanCard extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Why "Save plan" is disabled, beside the button that is.
+///
+/// The reason used to sit only inside the collapsed "Plan notes" at the top of
+/// the card, above the coverage panel and every tier, while the greyed-out
+/// button at the bottom said nothing — indistinguishable from saving being
+/// broken.
+class _SaveBlockedNotice extends StatelessWidget {
+  const _SaveBlockedNotice({required this.verification});
+
+  final LabPlanVerification verification;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final summary = verification.summary.trim();
+    return SurfaceCard(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      color: colors.errorContainer,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.gpp_bad_outlined, color: colors.onErrorContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _labsText(
+                    context,
+                    'Cannot be saved: the independent check rejected this draft',
+                    'Nicht speicherbar: Die unabhängige Prüfung hat diesen Entwurf abgelehnt',
+                  ),
+                  style: text.titleSmall?.copyWith(
+                    color: colors.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (summary.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              summary,
+              style: text.bodyMedium?.copyWith(color: colors.onErrorContainer),
+            ),
+          ],
+          for (final issue in verification.blockingIssues)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.block_outlined,
+                    size: 18,
+                    color: colors.onErrorContainer,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      issue,
+                      style: text.bodyMedium?.copyWith(
+                        color: colors.onErrorContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 6),
+          Text(
+            _labsText(
+              context,
+              'A rejected draft stays readable but is never stored as a plan. Generate again for one that passes.',
+              'Ein abgelehnter Entwurf bleibt lesbar, wird aber nie als Plan gespeichert. Erstelle einen neuen, der die Prüfung besteht.',
+            ),
+            style: text.bodySmall?.copyWith(color: colors.onErrorContainer),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SavedPlanCard extends StatelessWidget {
@@ -3071,11 +3218,17 @@ class _PlanNotes extends StatelessWidget {
     tilePadding: EdgeInsets.zero,
     title: Text(_labsText(context, 'Plan notes', 'Hinweise zum Plan')),
     subtitle: Text(
-      _labsText(
-        context,
-        '${warnings.length + blockingIssues.length} warning(s) · tap to open',
-        '${warnings.length + blockingIssues.length} Hinweis(e) · zum Öffnen tippen',
-      ),
+      !approved && status != 'external'
+          ? _labsText(
+              context,
+              'Rejected by the independent check · ${blockingIssues.length} blocking issue(s) · tap to open',
+              'Von der unabhängigen Prüfung abgelehnt · ${blockingIssues.length} blockierende(s) Problem(e) · zum Öffnen tippen',
+            )
+          : _labsText(
+              context,
+              '${warnings.length + blockingIssues.length} warning(s) · tap to open',
+              '${warnings.length + blockingIssues.length} Hinweis(e) · zum Öffnen tippen',
+            ),
     ),
     children: [
       ListTile(
