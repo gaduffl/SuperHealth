@@ -458,6 +458,24 @@ unapproved verification carrying the parse error as a blocking issue, so the
 user can still read the plan. Everything else — a dropped connection, a refusal
 — is a failure of the *call* rather than of the answer, and still rethrows.
 
+**An unsaveable draft says why beside the button that will not save it.** The
+blocking issues used to live only in the collapsed "Plan notes" at the top of
+the card, above every tier, while "Save plan" at the bottom simply greyed out —
+indistinguishable from saving being broken. `_SaveBlockedNotice` repeats the
+verdict and the blocking issues directly above the buttons. A draft from an
+earlier run that is still on screen while a new one generates is titled
+"Previous draft": under the progress card, "Unsaved draft" read as the running
+generation's result arriving while the app still said it was working.
+
+**`busy` is a count, and a lab plan claims `labPlanStartedAt` before its first
+await.** `_withBusy` used to set a flag, so the first of two overlapping
+operations to finish cleared it under the other: an automatic sync ending
+mid-plan re-enabled "Plan" and told auto-update nothing was running.
+`generateLabPlan` refuses to start while `labPlanStartedAt` is set, because two
+runs would share one trace, drive one progress card, and the later would
+silently replace the earlier one's draft. Never assign `busy = false` outside
+`_withBusy`.
+
 **Nothing in the context package may vary per build.** OpenAI caches the longest
 matching prefix, and the prefix covers the structured-output schema, the tool
 definitions and the whole input. `generated_at` sorted ahead of `raw_ledger`, so
