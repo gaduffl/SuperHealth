@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../analysis/lab_catalog_pricing.dart';
+
 import 'package:crypto/crypto.dart';
 
 import '../data/health_repository.dart';
@@ -180,8 +182,12 @@ class HealthContextBuilder {
   static const packageSchema = 'superhealth.health_evidence_package';
   static const packageVersion = 2;
 
-  Future<HealthContextEnvelope> build(String profileId) async {
-    final source = await _loadSnapshot(profileId);
+  Future<HealthContextEnvelope> build(
+    String profileId, {
+    LabCatalogPricing? pricing,
+  }) async {
+    final loaded = await _loadSnapshot(profileId);
+    final source = pricing?.projectSnapshot(loaded) ?? loaded;
     _validateSource(source, profileId);
 
     final rawData = _canonicalData(source['data'], profileId);

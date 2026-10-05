@@ -24,6 +24,7 @@ class AgentSnapshot {
     required this.lists,
     required this.labPlans,
     required this.labPlanItems,
+    required this.labPackageOffers,
   });
 
   factory AgentSnapshot.fromSnapshot(
@@ -101,6 +102,7 @@ class AgentSnapshot {
       ],
       labPlans: rows('lab_plans'),
       labPlanItems: rows('lab_plan_items'),
+      labPackageOffers: rows('lab_package_offers'),
     );
   }
 
@@ -124,6 +126,7 @@ class AgentSnapshot {
   final List<BiomarkerList> lists;
   final List<Map<String, Object?>> labPlans;
   final List<Map<String, Object?>> labPlanItems;
+  final List<Map<String, Object?>> labPackageOffers;
 
   late final Map<String, Biomarker> biomarkersById = {
     for (final item in biomarkers) item.id: item,

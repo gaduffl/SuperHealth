@@ -718,6 +718,106 @@ class BiomarkerPackage {
   );
 }
 
+/// Stable comparison key; spelling remains available for display.
+String labKey(String name) =>
+    name.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+/// One lab's offer for a test or a package, shared with the household catalog.
+class LabPrice {
+  const LabPrice({
+    required this.id,
+    required this.labName,
+    required this.priceEur,
+    required this.createdAt,
+    required this.updatedAt,
+    this.biomarkerId,
+    this.packageId,
+    this.checkedAt,
+    this.sourceUrl,
+    this.quote = '',
+    this.deleted = false,
+  });
+  final String id;
+  final String labName;
+  final String? biomarkerId;
+  final String? packageId;
+  final double priceEur;
+  final DateTime? checkedAt;
+  final String? sourceUrl;
+  final String quote;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool deleted;
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'lab_name': labName.trim().replaceAll(RegExp(r'\s+'), ' '),
+    'lab_key': labKey(labName),
+    'biomarker_id': biomarkerId,
+    'package_id': packageId,
+    'price_eur': priceEur,
+    'price_checked_at': checkedAt == null ? null : _iso(checkedAt!),
+    'source_url': sourceUrl,
+    'quote': quote,
+    'created_at': _iso(createdAt),
+    'updated_at': _iso(updatedAt),
+    'deleted': deleted ? 1 : 0,
+  };
+  factory LabPrice.fromMap(Map<String, Object?> map) => LabPrice(
+    id: map['id']!.toString(),
+    labName: map['lab_name']!.toString(),
+    biomarkerId: map['biomarker_id']?.toString(),
+    packageId: map['package_id']?.toString(),
+    priceEur: (map['price_eur'] as num).toDouble(),
+    checkedAt: map['price_checked_at'] == null
+        ? null
+        : _date(map['price_checked_at']),
+    sourceUrl: map['source_url']?.toString(),
+    quote: map['quote']?.toString() ?? '',
+    createdAt: _date(map['created_at']),
+    updatedAt: _date(map['updated_at']),
+    deleted: _boolFromDb(map['deleted']),
+  );
+}
+
+/// The lab and bundle offers used when a plan was drafted, not today's prices.
+class LabPricingSnapshot {
+  const LabPricingSnapshot({
+    this.labName,
+    this.packages = const [],
+    this.members = const {},
+  });
+  final String? labName;
+  final List<BiomarkerPackage> packages;
+  final Map<String, Set<String>> members;
+  Map<String, Object?> toJson() => {
+    'lab_name': labName,
+    'packages': [for (final package in packages) package.toMap()],
+    'members': {
+      for (final entry in members.entries)
+        entry.key: entry.value.toList()..sort(),
+    },
+  };
+  factory LabPricingSnapshot.fromJson(Object value) {
+    final decoded = value is String ? jsonDecode(value) : value;
+    if (decoded is! Map ||
+        decoded['packages'] is! List ||
+        decoded['members'] is! Map) {
+      throw const FormatException('Invalid lab pricing snapshot.');
+    }
+    return LabPricingSnapshot(
+      labName: decoded['lab_name'] as String?,
+      packages: [
+        for (final row in decoded['packages'] as List)
+          BiomarkerPackage.fromMap(Map<String, Object?>.from(row as Map)),
+      ],
+      members: {
+        for (final entry in (decoded['members'] as Map).entries)
+          entry.key as String: (entry.value as List).cast<String>().toSet(),
+      },
+    );
+  }
+}
+
 /// One biomarker's membership of a [BiomarkerPackage].
 class BiomarkerPackageItem {
   const BiomarkerPackageItem({
@@ -1714,6 +1814,7 @@ class LabPlan {
     this.deleted = false,
     this.tierTradeoffs = const {},
     this.coverage,
+    this.pricingSnapshot,
   });
 
   final String id;
@@ -1747,6 +1848,8 @@ class LabPlan {
   /// What the plan did about everything current in the record, one entry per
   /// item; null for a plan made before this was recorded.
   final List<PlanCoverage>? coverage;
+  final LabPricingSnapshot? pricingSnapshot;
+  String? get labName => pricingSnapshot?.labName;
 
   /// The items the planner never gave a verdict.
   List<PlanCoverage> get notConsidered => [
@@ -1824,6 +1927,9 @@ class LabPlan {
     'tier_tradeoffs_json': jsonEncode({
       for (final entry in tierTradeoffs.entries) entry.key.name: entry.value,
     }),
+    'pricing_snapshot_json': pricingSnapshot == null
+        ? null
+        : jsonEncode(pricingSnapshot!.toJson()),
     'coverage_json': coverage == null
         ? null
         : jsonEncode([for (final entry in coverage!) entry.toJson()]),
@@ -1846,6 +1952,7 @@ class LabPlan {
     List<LabPlanItem>? items,
     Map<LabTier, String>? tierTradeoffs,
     List<PlanCoverage>? coverage,
+    LabPricingSnapshot? pricingSnapshot,
   }) => LabPlan(
     id: id,
     profileId: profileId,
@@ -1866,6 +1973,7 @@ class LabPlan {
     items: items ?? this.items,
     tierTradeoffs: tierTradeoffs ?? this.tierTradeoffs,
     coverage: coverage ?? this.coverage,
+    pricingSnapshot: pricingSnapshot ?? this.pricingSnapshot,
   );
 
   factory LabPlan.fromMap(Map<String, Object?> map, List<LabPlanItem> items) =>
@@ -1893,6 +2001,9 @@ class LabPlan {
         items: items,
         tierTradeoffs: _tierTexts(map['tier_tradeoffs_json']),
         coverage: _coverage(map['coverage_json']),
+        pricingSnapshot: map['pricing_snapshot_json'] == null
+            ? null
+            : LabPricingSnapshot.fromJson(map['pricing_snapshot_json']!),
       );
 }
 

@@ -24,6 +24,7 @@ import '../analysis/correlation_service.dart';
 import '../analysis/exposure_analysis.dart';
 import '../analysis/interaction_findings.dart';
 import '../analysis/lab_plan_pricing.dart';
+import '../analysis/lab_catalog_pricing.dart';
 import 'feature_visibility.dart';
 import 'long_task_guard.dart';
 import '../analysis/supplement_insights.dart';
@@ -63,6 +64,7 @@ enum _ActiveDataSlice {
   householdSchedules,
   trendDoseLinks,
   biomarkerPackages,
+  labPrices,
 }
 
 class AppController extends ChangeNotifier {
@@ -207,6 +209,34 @@ class AppController extends ChangeNotifier {
   List<SupplementSchedule> schedules = const [];
   List<SupplementSchedule> householdSchedules = const [];
   List<BiomarkerPackage> biomarkerPackages = const [];
+  List<LabPrice> labPrices = const [];
+  List<String> get labNames => LabCatalogPricing.labNames([
+    ...labPrices,
+    for (final item in biomarkers)
+      if (!item.deleted &&
+          item.hasPrice &&
+          labKey(item.labName ?? '').isNotEmpty)
+        LabPrice(
+          id: item.id,
+          labName: item.labName!,
+          priceEur: item.priceEur!,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        ),
+    for (final item in biomarkerPackages)
+      if (!item.deleted &&
+          item.hasPrice &&
+          labKey(item.labName ?? '').isNotEmpty)
+        LabPrice(
+          id: item.id,
+          labName: item.labName!,
+          priceEur: item.priceEur!,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        ),
+  ]);
+  LabCatalogPricing pricesForLab(String? labName) =>
+      LabCatalogPricing(prices: labPrices, labName: labName);
   Map<String, Set<String>> biomarkerPackageMembers = const {};
   List<SupplementIntake> intakes = const [];
   List<InventoryMovement> inventoryMovements = const [];
@@ -728,6 +758,7 @@ class AppController extends ChangeNotifier {
     List<SupplementSchedule>? nextHouseholdSchedules;
     List<TrendDoseLink>? nextTrendDoseLinks;
     List<BiomarkerPackage>? nextBiomarkerPackages;
+    List<LabPrice>? nextLabPrices;
     Map<String, Set<String>>? nextBiomarkerPackageMembers;
     final loads = <Future<void>>[];
 
@@ -832,6 +863,11 @@ class AppController extends ChangeNotifier {
       () => repository.trendDoseLinks(profile.id),
       (value) => nextTrendDoseLinks = value,
     );
+    load(
+      _ActiveDataSlice.labPrices,
+      repository.labPrices,
+      (value) => nextLabPrices = value,
+    );
     if (slices.contains(_ActiveDataSlice.biomarkerPackages)) {
       loads.add(
         repository.biomarkerPackages().then((value) {
@@ -872,6 +908,14 @@ class AppController extends ChangeNotifier {
     householdSchedules = nextHouseholdSchedules ?? householdSchedules;
     trendDoseLinks = nextTrendDoseLinks ?? trendDoseLinks;
     biomarkerPackages = nextBiomarkerPackages ?? biomarkerPackages;
+    labPrices = nextLabPrices ?? labPrices;
+    final defaultPricing = LabCatalogPricing(prices: labPrices);
+    if (nextBiomarkers != null || nextLabPrices != null) {
+      biomarkers = defaultPricing.catalog(biomarkers);
+    }
+    if (nextBiomarkerPackages != null || nextLabPrices != null) {
+      biomarkerPackages = defaultPricing.packages(biomarkerPackages);
+    }
     biomarkerPackageMembers =
         nextBiomarkerPackageMembers ?? biomarkerPackageMembers;
     if (slices.contains(_ActiveDataSlice.dueBiomarkers)) {
@@ -900,6 +944,7 @@ class AppController extends ChangeNotifier {
     schedules = const [];
     householdSchedules = const [];
     biomarkerPackages = const [];
+    labPrices = const [];
     biomarkerPackageMembers = const {};
     intakes = const [];
     inventoryMovements = const [];
@@ -1501,6 +1546,7 @@ class AppController extends ChangeNotifier {
     );
     await _refreshActiveData({
       _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.labPrices,
       _ActiveDataSlice.measurements,
       _ActiveDataSlice.dueBiomarkers,
     });
@@ -1534,6 +1580,7 @@ class AppController extends ChangeNotifier {
     );
     await _refreshActiveData({
       _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.labPrices,
       _ActiveDataSlice.measurements,
       _ActiveDataSlice.dueBiomarkers,
     });
@@ -1551,6 +1598,7 @@ class AppController extends ChangeNotifier {
     await repository.softDelete('biomarkers', biomarker.id);
     await _refreshActiveData({
       _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.labPrices,
       _ActiveDataSlice.measurements,
       _ActiveDataSlice.dueBiomarkers,
     });
@@ -1566,6 +1614,7 @@ class AppController extends ChangeNotifier {
     );
     await _refreshActiveData({
       _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.labPrices,
       _ActiveDataSlice.biomarkerRanges,
       _ActiveDataSlice.profileTargets,
       _ActiveDataSlice.measurements,
@@ -1578,7 +1627,10 @@ class AppController extends ChangeNotifier {
 
   Future<void> makeTemporaryBiomarkerPermanent(String biomarkerId) async {
     await repository.makeTemporaryBiomarkerPermanent(biomarkerId);
-    await _refreshActiveData({_ActiveDataSlice.biomarkers});
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkers,
+      _ActiveDataSlice.labPrices,
+    });
   }
 
   /// Reads a price page so the owner can see what will be sent before it is.
@@ -1587,6 +1639,7 @@ class AppController extends ChangeNotifier {
 
   /// Asks the pricing model what the catalog should cost. Writes nothing.
   Future<LabPriceProposalSet> proposeLabPrices({
+    String? labName,
     String? sourceText,
     String? sourceUrl,
     String? instructions,
@@ -1599,15 +1652,17 @@ class AppController extends ChangeNotifier {
     }
     return _withBusy(
       () => _labPriceService.propose(
-        catalog: biomarkers
+        catalog: pricesForLab(labName)
+            .catalog(biomarkers)
             .where((item) => !item.deleted && !item.isCalculated)
             .toList(),
-        packages: biomarkerPackages,
+        packages: pricesForLab(labName).packages(biomarkerPackages),
         packageMembers: biomarkerPackageMembers,
         settings: settings,
         sourceText: sourceText,
         sourceUrl: sourceUrl,
         instructions: instructions,
+        labName: labName,
       ),
     );
   }
@@ -1626,7 +1681,35 @@ class AppController extends ChangeNotifier {
         };
         final now = DateTime.now();
         var applied = 0;
+        final named = <LabPrice>[];
         for (final proposal in approved) {
+          if (proposal.currency != 'EUR') {
+            throw ArgumentError('Only EUR prices can be saved.');
+          }
+          if (proposal.labName.trim().isNotEmpty) {
+            if (proposal.isPackage
+                ? !packagesById.containsKey(proposal.targetId)
+                : byId[proposal.targetId] == null ||
+                      byId[proposal.targetId]!.isCalculated) {
+              continue;
+            }
+            named.add(
+              LabPrice(
+                id: repository.newId(),
+                labName: proposal.labName,
+                biomarkerId: proposal.isPackage ? null : proposal.targetId,
+                packageId: proposal.isPackage ? proposal.targetId : null,
+                priceEur: proposal.newPriceEur,
+                checkedAt: now,
+                sourceUrl: proposal.sourceUrl,
+                quote: proposal.quote,
+                createdAt: now,
+                updatedAt: now,
+              ),
+            );
+            applied++;
+            continue;
+          }
           if (proposal.isPackage) {
             final package = packagesById[proposal.targetId];
             if (package == null) continue;
@@ -1676,19 +1759,46 @@ class AppController extends ChangeNotifier {
           );
           applied++;
         }
+        await repository.saveLabPrices(named);
         await _refreshActiveData({
           _ActiveDataSlice.biomarkers,
+          _ActiveDataSlice.labPrices,
           _ActiveDataSlice.biomarkerPackages,
         });
         return applied;
       });
 
+  Future<void> saveLabPrice({
+    required String labName,
+    required String targetId,
+    required double priceEur,
+    bool isPackage = false,
+    String? sourceUrl,
+  }) => _withBusy(() async {
+    final now = DateTime.now();
+    await repository.saveLabPrices([
+      LabPrice(
+        id: repository.newId(),
+        labName: labName,
+        biomarkerId: isPackage ? null : targetId,
+        packageId: isPackage ? targetId : null,
+        priceEur: priceEur,
+        checkedAt: now,
+        sourceUrl: sourceUrl,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    ]);
+    await _refreshActiveData({_ActiveDataSlice.labPrices});
+  });
+
   /// What a tier costs once packages replace the parts they cover.
   LabPlanCosting costFor(LabPlan plan, LabTier tier) =>
       const LabPlanPricing().cost(
         items: plan.itemsThrough(tier),
-        packages: biomarkerPackages,
-        membersByPackageId: biomarkerPackageMembers,
+        packages: plan.pricingSnapshot?.packages ?? biomarkerPackages,
+        membersByPackageId:
+            plan.pricingSnapshot?.members ?? biomarkerPackageMembers,
       );
 
   Future<void> saveBiomarkerPackage(
@@ -1696,7 +1806,10 @@ class AppController extends ChangeNotifier {
     Set<String> biomarkerIds,
   ) async {
     await repository.saveBiomarkerPackage(package, biomarkerIds);
-    await _refreshActiveData({_ActiveDataSlice.biomarkerPackages});
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerPackages,
+      _ActiveDataSlice.labPrices,
+    });
   }
 
   /// What the active profile can see. Screens ask this rather than testing
@@ -1728,7 +1841,10 @@ class AppController extends ChangeNotifier {
 
   Future<void> deleteBiomarkerPackage(BiomarkerPackage package) async {
     await repository.softDelete('biomarker_packages', package.id);
-    await _refreshActiveData({_ActiveDataSlice.biomarkerPackages});
+    await _refreshActiveData({
+      _ActiveDataSlice.biomarkerPackages,
+      _ActiveDataSlice.labPrices,
+    });
   }
 
   Future<void> saveBiomarkerRange(BiomarkerReferenceRange range) async {
@@ -2450,6 +2566,7 @@ class AppController extends ChangeNotifier {
     String priorities = '',
     bool includeOverdueBiomarkers = true,
     bool wholeRecord = false,
+    String? labName,
   }) async {
     // Its own setting. This used to read advisorSettings, so a planner run
     // silently used whatever the advisor was set to — on the most expensive
@@ -2488,6 +2605,7 @@ class AppController extends ChangeNotifier {
         held = true;
         final result = await _labPlannerService.generate(
           profileId: _profileId,
+          labName: labName,
           settings: settings,
           targetDate: targetDate,
           priorities: priorities,
@@ -2536,10 +2654,12 @@ class AppController extends ChangeNotifier {
     DateTime? targetDate,
     String priorities = '',
     bool includeOverdueBiomarkers = true,
+    String? labName,
   }) async {
     final package = await _withBusy(
       () => _labPlannerService.buildExternalPrompt(
         profileId: _profileId,
+        labName: labName,
         targetDate: targetDate,
         priorities: priorities,
         includeOverdueBiomarkers: includeOverdueBiomarkers,
@@ -2557,9 +2677,11 @@ class AppController extends ChangeNotifier {
   Future<LabPlanGeneration> importExternalLabPlan({
     required String responseText,
     bool includeOverdueBiomarkers = true,
+    String? labName,
   }) => _withBusy(() async {
     final result = await _labPlannerService.importExternalPlan(
       profileId: _profileId,
+      labName: labName,
       responseText: responseText,
       includeOverdueBiomarkers: includeOverdueBiomarkers,
     );
@@ -2775,6 +2897,7 @@ class AppController extends ChangeNotifier {
       pendingLabReport = null;
       await _refreshActiveData({
         _ActiveDataSlice.biomarkers,
+        _ActiveDataSlice.labPrices,
         _ActiveDataSlice.measurements,
         _ActiveDataSlice.documents,
         _ActiveDataSlice.dueBiomarkers,

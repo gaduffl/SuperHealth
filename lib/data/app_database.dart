@@ -4,8 +4,10 @@ import 'dart:convert';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart';
 
 import '../biomarkers/calculated_biomarker_service.dart';
+import '../domain/entities.dart';
 
 /// Owns the local, offline-first health ledger.
 ///
@@ -18,7 +20,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 15;
+  static const schemaVersion = 16;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -65,6 +67,7 @@ class AppDatabase {
     'trend_dose_links',
     'biomarker_packages',
     'biomarker_package_items',
+    'lab_prices',
   ];
 
   Future<Database> get database async => _database ??= await _open();
@@ -405,7 +408,8 @@ class AppDatabase {
           verified_at TEXT,
           deleted INTEGER NOT NULL DEFAULT 0,
           tier_tradeoffs_json TEXT NOT NULL DEFAULT '{}',
-          coverage_json TEXT
+          coverage_json TEXT,
+          pricing_snapshot_json TEXT
         )
       ''');
 
@@ -445,6 +449,7 @@ class AppDatabase {
       await txn.execute(_createTrendDoseLinks);
       await txn.execute(_createBiomarkerPackages);
       await txn.execute(_createBiomarkerPackageItems);
+      await txn.execute(_createLabPrices);
 
       await txn.execute('''
         CREATE TABLE sync_shadow (
@@ -552,6 +557,28 @@ class AppDatabase {
         )
       ''';
 
+  static const _createLabPrices = """
+    CREATE TABLE lab_prices (
+      id TEXT PRIMARY KEY,
+      biomarker_id TEXT REFERENCES biomarkers(id),
+      package_id TEXT REFERENCES biomarker_packages(id),
+      lab_name TEXT NOT NULL CHECK(TRIM(lab_name) != ''),
+      lab_key TEXT NOT NULL,
+      price_eur REAL NOT NULL CHECK(price_eur > 0),
+      price_checked_at TEXT,
+      source_url TEXT,
+      quote TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      CHECK ((biomarker_id IS NULL) <> (package_id IS NULL))
+    )
+  """;
+  static const _labPriceIndexes = <String>[
+    'CREATE INDEX idx_lab_prices_marker ON lab_prices(biomarker_id, lab_key, updated_at)',
+    'CREATE INDEX idx_lab_prices_package ON lab_prices(package_id, lab_key, updated_at)',
+  ];
+
   static const _biomarkerPackageIndexes = <String>[
     'CREATE UNIQUE INDEX idx_package_name ON biomarker_packages(name) WHERE deleted = 0',
     'CREATE UNIQUE INDEX idx_package_member ON biomarker_package_items(package_id, biomarker_id) WHERE deleted = 0',
@@ -560,6 +587,7 @@ class AppDatabase {
   static const _indexes = <String>[
     ..._trendDoseLinkIndexes,
     ..._biomarkerPackageIndexes,
+    ..._labPriceIndexes,
     'CREATE INDEX idx_supplements_name ON supplements(active, deleted, name)',
     'CREATE INDEX idx_schedules_profile ON supplement_schedules(profile_id, active, deleted)',
     'CREATE INDEX idx_intakes_profile_time ON supplement_intakes(profile_id, taken_at)',
@@ -723,6 +751,41 @@ class AppDatabase {
       // nothing to account for". A default of '[]' would have made every old
       // plan claim the second.
       await db.execute('ALTER TABLE lab_plans ADD COLUMN coverage_json TEXT');
+    }
+    if (oldVersion < 16) {
+      await db.execute(_createLabPrices);
+      for (final statement in _labPriceIndexes) {
+        await db.execute(statement);
+      }
+      await db.execute(
+        'ALTER TABLE lab_plans ADD COLUMN pricing_snapshot_json TEXT',
+      );
+      for (final table in ['biomarkers', 'biomarker_packages']) {
+        final rows = await db.query(
+          table,
+          where:
+              "price_eur > 0 AND TRIM(COALESCE(lab_name, '')) != '' AND deleted = 0",
+        );
+        for (final row in rows) {
+          final name = row['lab_name']!.toString().trim().replaceAll(
+            RegExp(r'\s+'),
+            ' ',
+          );
+          await db.insert('lab_prices', {
+            'id': const Uuid().v4(),
+            'biomarker_id': table == 'biomarkers' ? row['id'] : null,
+            'package_id': table == 'biomarker_packages' ? row['id'] : null,
+            'lab_name': name,
+            'lab_key': labKey(name),
+            'price_eur': row['price_eur'],
+            'price_checked_at': row['price_checked_at'],
+            'quote': '',
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at'],
+            'deleted': 0,
+          });
+        }
+      }
     }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;

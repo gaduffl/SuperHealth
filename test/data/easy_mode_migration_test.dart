@@ -25,6 +25,7 @@ void main() {
             // adds a column to it.
             await db.execute(legacyLabPlansTable);
             await db.execute(legacyBiomarkersTable);
+            await db.execute(legacyBiomarkerPackagesTable);
             await db.execute(legacyBiomarkerListsTable);
             await db.execute(legacyBiomarkerListItemsTable);
             await db.execute('''

@@ -9,6 +9,40 @@ import 'common.dart';
 String _priceText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
 
+class LabSelectionField extends StatelessWidget {
+  const LabSelectionField({
+    required this.labs,
+    required this.value,
+    required this.onChanged,
+    super.key,
+  });
+  final List<String> labs;
+  final String? value;
+  final ValueChanged<String?> onChanged;
+  @override
+  Widget build(BuildContext context) => DropdownButtonFormField<String>(
+    initialValue: value ?? '',
+    isExpanded: true,
+    decoration: InputDecoration(
+      labelText: _priceText(context, 'Laboratory prices', 'Laborpreise'),
+    ),
+    items: [
+      DropdownMenuItem(
+        value: '',
+        child: Text(
+          _priceText(
+            context,
+            'Existing catalog prices',
+            'Bisherige Katalogpreise',
+          ),
+        ),
+      ),
+      for (final lab in labs) DropdownMenuItem(value: lab, child: Text(lab)),
+    ],
+    onChanged: (value) => onChanged(value == '' ? null : value),
+  );
+}
+
 /// Collects a source, asks the pricing model, and hands the result to review.
 ///
 /// Kept separate from the lab planner: pricing needs no health records at all,
@@ -23,6 +57,7 @@ class LabPriceScreen extends StatefulWidget {
 
 class _LabPriceScreenState extends State<LabPriceScreen> {
   final _url = TextEditingController();
+  final _lab = TextEditingController();
   final _instructions = TextEditingController();
 
   String? _fetched;
@@ -32,6 +67,7 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
   @override
   void dispose() {
     _url.dispose();
+    _lab.dispose();
     _instructions.dispose();
     super.dispose();
   }
@@ -59,6 +95,7 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
     });
     try {
       final proposals = await controller.proposeLabPrices(
+        labName: _lab.text.trim(),
         sourceText: _fetched,
         sourceUrl: _url.text.trim().isEmpty ? null : _url.text.trim(),
         instructions: _instructions.text,
@@ -76,14 +113,192 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
     }
   }
 
+  Future<void> _editPrice(AppController controller, {String? target}) async {
+    final choices = <String, String>{
+      for (final marker in controller.biomarkers)
+        if (!marker.deleted && !marker.isCalculated)
+          'm:${marker.id}': marker.displayName,
+      for (final package in controller.biomarkerPackages)
+        if (!package.deleted)
+          'p:${package.id}':
+              '${package.name} · ${_priceText(context, 'Package', 'Paket')}',
+    };
+    if (choices.isEmpty) return;
+    var selected = target ?? choices.keys.first;
+    final price = TextEditingController();
+    final source = TextEditingController();
+    final lab = _lab.text.trim();
+    void seed() {
+      final stored = controller
+          .pricesForLab(lab)
+          .priceFor(
+            selected.substring(2),
+            isPackage: selected.startsWith('p:'),
+          );
+      double? value = stored?.priceEur;
+      if (value == null) {
+        if (selected.startsWith('p:')) {
+          value = controller
+              .pricesForLab(lab)
+              .packages(controller.biomarkerPackages)
+              .firstWhere((item) => item.id == selected.substring(2))
+              .priceEur;
+        } else {
+          value = controller
+              .pricesForLab(lab)
+              .catalog(controller.biomarkers)
+              .firstWhere((item) => item.id == selected.substring(2))
+              .priceEur;
+        }
+      }
+      price.text = value?.toStringAsFixed(2) ?? '';
+      source.text = stored?.sourceUrl ?? '';
+    }
+
+    seed();
+    String? error;
+    var saving = false;
+    final route = DialogRoute<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(_priceText(context, 'Price · $lab', 'Preis · $lab')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: selected,
+                  isExpanded: true,
+                  items: [
+                    for (final entry in choices.entries)
+                      DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(
+                          entry.value,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: saving
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() {
+                              selected = value;
+                              seed();
+                            });
+                          }
+                        },
+                  decoration: InputDecoration(
+                    labelText: _priceText(
+                      context,
+                      'Test or package',
+                      'Test oder Paket',
+                    ),
+                  ),
+                ),
+                TextField(
+                  controller: price,
+                  enabled: !saving,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: _priceText(
+                      context,
+                      'Price in EUR',
+                      'Preis in EUR',
+                    ),
+                    errorText: error,
+                  ),
+                ),
+                TextField(
+                  controller: source,
+                  enabled: !saving,
+                  decoration: InputDecoration(
+                    labelText: _priceText(
+                      context,
+                      'Source URL (optional)',
+                      'Quellen-URL (optional)',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(dialogContext),
+              child: Text(_priceText(context, 'Cancel', 'Abbrechen')),
+            ),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final value = double.tryParse(
+                        price.text.trim().replaceAll(',', '.'),
+                      );
+                      if (value == null || !value.isFinite || value <= 0) {
+                        setState(
+                          () => error = _priceText(
+                            context,
+                            'Enter a positive EUR price.',
+                            'Gib einen positiven Euro-Preis ein.',
+                          ),
+                        );
+                        return;
+                      }
+                      setState(() {
+                        saving = true;
+                        error = null;
+                      });
+                      try {
+                        await controller.saveLabPrice(
+                          labName: lab,
+                          targetId: selected.substring(2),
+                          isPackage: selected.startsWith('p:'),
+                          priceEur: value,
+                          sourceUrl: source.text.trim().isEmpty
+                              ? null
+                              : source.text.trim(),
+                        );
+                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      } on Object catch (failure) {
+                        if (dialogContext.mounted) {
+                          setState(() {
+                            saving = false;
+                            error = '$failure';
+                          });
+                        }
+                      }
+                    },
+              child: Text(_priceText(context, 'Save price', 'Preis speichern')),
+            ),
+          ],
+        ),
+      ),
+    );
+    await Navigator.of(context, rootNavigator: true).push(route);
+    // The fields remain mounted during the dialog's closing animation.
+    await route.completed;
+    price.dispose();
+    source.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
     final scheme = Theme.of(context).colorScheme;
-    final priced = controller.biomarkers
-        .where((item) => !item.deleted && item.hasPrice)
+    final catalog = controller
+        .pricesForLab(_lab.text.trim().isEmpty ? null : _lab.text.trim())
+        .catalog(controller.biomarkers);
+    final priced = catalog
+        .where((item) => !item.deleted && !item.isCalculated && item.hasPrice)
         .length;
-    final total = controller.biomarkers.where((item) => !item.deleted).length;
+    final total = catalog
+        .where((item) => !item.deleted && !item.isCalculated)
+        .length;
 
     return Scaffold(
       appBar: AppBar(
@@ -115,12 +330,93 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
           ),
           const SizedBox(height: 20),
           TextField(
+            controller: _lab,
+            enabled: !_working && !controller.busy,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: _priceText(context, 'Laboratory', 'Labor'),
+              helperText: _priceText(
+                context,
+                'Choose an existing lab or enter a new name.',
+                'Wähle ein vorhandenes Labor oder gib einen neuen Namen ein.',
+              ),
+            ),
+          ),
+          if (controller.labNames.isNotEmpty)
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final lab in controller.labNames)
+                  ActionChip(
+                    label: Text(lab),
+                    onPressed: _working || controller.busy
+                        ? null
+                        : () => setState(() => _lab.text = lab),
+                  ),
+              ],
+            ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _working || controller.busy || _lab.text.trim().isEmpty
+                ? null
+                : () => _editPrice(controller),
+            icon: const Icon(Icons.edit_outlined),
+            label: Text(
+              _priceText(
+                context,
+                'Add or edit price',
+                'Preis hinzufügen oder bearbeiten',
+              ),
+            ),
+          ),
+          if (_lab.text.trim().isNotEmpty)
+            ExpansionTile(
+              title: Text(
+                _priceText(
+                  context,
+                  'Stored prices · ${_lab.text.trim()}',
+                  'Gespeicherte Preise · ${_lab.text.trim()}',
+                ),
+              ),
+              children: [
+                for (final marker in catalog.where(
+                  (item) =>
+                      !item.deleted && !item.isCalculated && item.hasPrice,
+                ))
+                  ListTile(
+                    title: Text(marker.displayName),
+                    subtitle: Text('${marker.priceEur!.toStringAsFixed(2)} €'),
+                    trailing: const Icon(Icons.edit_outlined),
+                    onTap: controller.busy
+                        ? null
+                        : () =>
+                              _editPrice(controller, target: 'm:${marker.id}'),
+                  ),
+                for (final package
+                    in controller
+                        .pricesForLab(_lab.text.trim())
+                        .packages(controller.biomarkerPackages)
+                        .where((item) => !item.deleted && item.hasPrice))
+                  ListTile(
+                    leading: const Icon(Icons.inventory_2_outlined),
+                    title: Text(package.name),
+                    subtitle: Text('${package.priceEur!.toStringAsFixed(2)} €'),
+                    trailing: const Icon(Icons.edit_outlined),
+                    onTap: controller.busy
+                        ? null
+                        : () =>
+                              _editPrice(controller, target: 'p:${package.id}'),
+                  ),
+              ],
+            ),
+          const SizedBox(height: 20),
+          TextField(
             controller: _url,
             keyboardType: TextInputType.url,
             // Without this the Fetch button reads a stale `_url.text`: nothing
             // rebuilds on typing, so it stayed disabled after a paste and only
             // came to life when some unrelated setState happened to run.
-            onChanged: (_) => setState(() {}),
+            onChanged: (_) => setState(() => _fetched = null),
             decoration: InputDecoration(
               labelText: _priceText(
                 context,
@@ -193,7 +489,7 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
           ],
           const SizedBox(height: 20),
           FilledButton.icon(
-            onPressed: _working || controller.busy
+            onPressed: _working || controller.busy || _lab.text.trim().isEmpty
                 ? null
                 : () => _propose(controller),
             icon: const Icon(Icons.auto_awesome),
@@ -403,7 +699,9 @@ class _Section extends StatelessWidget {
         for (final proposal in proposals)
           CheckboxListTile(
             value: approved.contains(proposal),
-            onChanged: (value) => onChanged(proposal, value ?? false),
+            onChanged: proposal.currency != 'EUR'
+                ? null
+                : (value) => onChanged(proposal, value ?? false),
             title: Row(
               children: [
                 if (proposal.isPackage) ...[
