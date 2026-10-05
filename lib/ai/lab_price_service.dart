@@ -61,6 +61,7 @@ class LabPriceProposal {
     required this.currency,
     required this.quote,
     required this.reviewReasons,
+    this.sourceUrl,
   });
 
   final String targetId;
@@ -81,6 +82,7 @@ class LabPriceProposal {
   /// The verbatim line the price was read from. Empty when the model asserted
   /// a figure instead of reading one — which is exactly what review is for.
   final String quote;
+  final String? sourceUrl;
 
   final Set<LabPriceReviewReason> reviewReasons;
 
@@ -167,6 +169,7 @@ Rules:
 - A price is for a single named test. Do not divide a panel price across its
   parts, and do not return a panel price for one of its members.
 - Omit any biomarker you have no price for. An omission is a correct answer.
+- Only price a package if the source bundle has the same test membership as the supplied package. A similar name is insufficient.
 - A "packages" entry is a bundle sold as one item. Price it as the bundle costs
   in total, in "package_prices". Never divide it across its members, and never
   copy a member's price into it.
@@ -311,6 +314,7 @@ Rules:
     required AiTaskSettings settings,
     List<BiomarkerPackage> packages = const [],
     Map<String, Set<String>> packageMembers = const {},
+    String? labName,
     String? sourceText,
     String? sourceUrl,
     String? instructions,
@@ -353,6 +357,7 @@ Rules:
           sourceText: sourceText,
           sourceUrl: sourceUrl,
           instructions: instructions,
+          labName: labName,
         );
         merged.addAll(set.proposals);
         unknown.addAll(set.unknownTargetIds);
@@ -389,6 +394,7 @@ Rules:
     required List<BiomarkerPackage> packages,
     required Map<String, Set<String>> packageMembers,
     required AiTaskSettings settings,
+    String? labName,
     String? sourceText,
     String? sourceUrl,
     String? instructions,
@@ -397,6 +403,11 @@ Rules:
     final prompt = StringBuffer(
       'Return a price for every biomarker in the catalog you can price.',
     );
+    if (labName != null) {
+      prompt.writeln(
+        '\nLaboratory: $labName. Only extract prices from this laboratory.',
+      );
+    }
     if (instructions != null && instructions.trim().isNotEmpty) {
       prompt.writeln('\n\nOwner instructions:\n${instructions.trim()}');
     }
@@ -435,6 +446,7 @@ Rules:
       catalog: catalog,
       packages: packages,
       sourceUrl: sourceUrl,
+      expectedLab: labName,
       usage: response.usage,
     );
   }
@@ -448,6 +460,7 @@ Rules:
     required List<Biomarker> catalog,
     List<BiomarkerPackage> packages = const [],
     String? sourceUrl,
+    String? expectedLab,
     TokenUsage? usage,
   }) {
     final Object? decoded;
@@ -480,11 +493,16 @@ Rules:
       if (price == null || price <= 0 || !price.isFinite) continue;
       final currency = '${row['currency'] ?? 'EUR'}'.trim().toUpperCase();
       final quote = '${row['quote'] ?? ''}'.trim();
-      final lab = '${row['lab_name'] ?? ''}'.trim();
+      final reportedLab = '${row['lab_name'] ?? ''}'.trim();
+      final lab = expectedLab?.trim() ?? reportedLab;
       final old = biomarker.priceEur;
 
       final reasons = <LabPriceReviewReason>{
         if (quote.isEmpty) LabPriceReviewReason.unsourced,
+        if (expectedLab != null &&
+            reportedLab.isNotEmpty &&
+            labKey(expectedLab) != labKey(reportedLab))
+          LabPriceReviewReason.conflictingLab,
         if (currency.isNotEmpty && currency != 'EUR')
           LabPriceReviewReason.foreignCurrency,
         if (!hasLabPrice(old)) LabPriceReviewReason.firstPrice,
@@ -492,7 +510,7 @@ Rules:
           LabPriceReviewReason.largeChange,
         if (lab.isNotEmpty &&
             (biomarker.labName ?? '').isNotEmpty &&
-            lab.toLowerCase() != biomarker.labName!.toLowerCase())
+            labKey(lab) != labKey(biomarker.labName!))
           LabPriceReviewReason.conflictingLab,
       };
 
@@ -506,6 +524,7 @@ Rules:
           labName: lab.isEmpty ? (biomarker.labName ?? '') : lab,
           currency: currency.isEmpty ? 'EUR' : currency,
           quote: quote,
+          sourceUrl: sourceUrl,
           reviewReasons: reasons,
         ),
       );
@@ -524,7 +543,8 @@ Rules:
       if (price == null || price <= 0 || !price.isFinite) continue;
       final currency = '${row['currency'] ?? 'EUR'}'.trim().toUpperCase();
       final quote = '${row['quote'] ?? ''}'.trim();
-      final lab = '${row['lab_name'] ?? ''}'.trim();
+      final reportedLab = '${row['lab_name'] ?? ''}'.trim();
+      final lab = expectedLab?.trim() ?? reportedLab;
       final old = package.priceEur;
       proposals.add(
         LabPriceProposal(
@@ -536,8 +556,13 @@ Rules:
           labName: lab.isEmpty ? (package.labName ?? '') : lab,
           currency: currency.isEmpty ? 'EUR' : currency,
           quote: quote,
+          sourceUrl: sourceUrl,
           reviewReasons: <LabPriceReviewReason>{
             if (quote.isEmpty) LabPriceReviewReason.unsourced,
+            if (expectedLab != null &&
+                reportedLab.isNotEmpty &&
+                labKey(expectedLab) != labKey(reportedLab))
+              LabPriceReviewReason.conflictingLab,
             if (currency.isNotEmpty && currency != 'EUR')
               LabPriceReviewReason.foreignCurrency,
             if (!hasLabPrice(old)) LabPriceReviewReason.firstPrice,
@@ -545,7 +570,7 @@ Rules:
               LabPriceReviewReason.largeChange,
             if (lab.isNotEmpty &&
                 (package.labName ?? '').isNotEmpty &&
-                lab.toLowerCase() != package.labName!.toLowerCase())
+                labKey(lab) != labKey(package.labName!))
               LabPriceReviewReason.conflictingLab,
           },
         ),

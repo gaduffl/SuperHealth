@@ -73,6 +73,8 @@ final _isoInstantPattern = RegExp(
 final _dateOnlyPattern = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$');
 
 const _synchronizedReferences = <_SynchronizedReference>[
+  _SynchronizedReference('lab_prices', 'biomarker_id', 'biomarkers'),
+  _SynchronizedReference('lab_prices', 'package_id', 'biomarker_packages'),
   _SynchronizedReference(
     'biomarker_package_items',
     'package_id',
@@ -698,6 +700,134 @@ class HealthRepository {
     return rows.map(Biomarker.fromMap).toList();
   }
 
+  Future<List<LabPrice>> labPrices() async {
+    final db = await _database.database;
+    // Tombstones suppress legacy fallbacks and resolve concurrent lab offers.
+    return (await db.query(
+      'lab_prices',
+      orderBy: 'updated_at DESC, id DESC',
+    )).map(LabPrice.fromMap).toList();
+  }
+
+  Future<void> saveLabPrices(List<LabPrice> prices) async {
+    for (final price in prices) {
+      _validateLabPrice(price);
+    }
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      for (final price in prices) {
+        final target = await txn.query(
+          price.packageId == null ? 'biomarkers' : 'biomarker_packages',
+          where: 'id = ? AND deleted = 0',
+          whereArgs: [price.biomarkerId ?? price.packageId],
+          limit: 1,
+        );
+        if (target.isEmpty || target.single['is_calculated'] == 1) {
+          throw ArgumentError(
+            'Lab prices require an active, orderable catalog item.',
+          );
+        }
+        await _writeLabPrice(txn, price);
+      }
+    });
+  }
+
+  Future<void> _writeLabPrice(DatabaseExecutor db, LabPrice price) async {
+    final column = price.packageId == null ? 'biomarker_id' : 'package_id';
+    final previous = await db.query(
+      'lab_prices',
+      where: '$column = ? AND lab_key = ?',
+      whereArgs: [price.biomarkerId ?? price.packageId, labKey(price.labName)],
+      orderBy: 'updated_at DESC, id DESC',
+      limit: 1,
+    );
+    final row = price.toMap();
+    if (previous.isNotEmpty) {
+      row['id'] = previous.single['id'];
+      row['created_at'] = previous.single['created_at'];
+    }
+    await db.insert(
+      'lab_prices',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> _captureCatalogPrice(
+    DatabaseExecutor db,
+    String table,
+    Map<String, Object?> row, {
+    List<Map<String, Object?>>? previous,
+  }) async {
+    final lab = row['lab_name']?.toString().trim() ?? '';
+    final price = (row['price_eur'] as num?)?.toDouble();
+    if (lab.isEmpty || row['deleted'] == 1 || row['is_calculated'] == 1) return;
+    previous ??= await db.query(
+      table,
+      where: 'id = ?',
+      whereArgs: [row['id']],
+      limit: 1,
+    );
+    if (previous.isNotEmpty &&
+        previous.single['price_eur'] == row['price_eur'] &&
+        previous.single['lab_name'] == row['lab_name'] &&
+        previous.single['price_checked_at'] == row['price_checked_at']) {
+      return;
+    }
+    if (!hasLabPrice(price)) {
+      final column = table == 'biomarkers' ? 'biomarker_id' : 'package_id';
+      await db.update(
+        'lab_prices',
+        {'deleted': 1, 'updated_at': row['updated_at']},
+        where: '$column = ? AND lab_key = ?',
+        whereArgs: [row['id'], labKey(lab)],
+      );
+      return;
+    }
+    if (!price!.isFinite) throw ArgumentError('Lab prices must be finite.');
+    final targetColumn = table == 'biomarkers' ? 'biomarker_id' : 'package_id';
+    final current = await db.query(
+      'lab_prices',
+      where: '$targetColumn = ? AND lab_key = ?',
+      whereArgs: [row['id'], labKey(lab)],
+      orderBy: 'updated_at DESC, id DESC',
+      limit: 1,
+    );
+    if (current.isNotEmpty &&
+        current.single['deleted'] == 0 &&
+        current.single['price_eur'] == row['price_eur'] &&
+        current.single['price_checked_at'] == row['price_checked_at']) {
+      return;
+    }
+
+    await _writeLabPrice(
+      db,
+      LabPrice(
+        id: newId(),
+        labName: lab,
+        priceEur: price,
+        biomarkerId: table == 'biomarkers' ? row['id']!.toString() : null,
+        packageId: table == 'biomarker_packages' ? row['id']!.toString() : null,
+        checkedAt: row['price_checked_at'] == null
+            ? null
+            : DateTime.parse(row['price_checked_at']!.toString()),
+        createdAt: DateTime.parse(row['created_at']!.toString()),
+        updatedAt: DateTime.parse(row['updated_at']!.toString()),
+      ),
+    );
+  }
+
+  void _validateLabPrice(LabPrice price) {
+    if (labKey(price.labName).isEmpty ||
+        (price.biomarkerId == null) == (price.packageId == null) ||
+        !price.priceEur.isFinite ||
+        price.priceEur <= 0) {
+      throw ArgumentError(
+        'A lab price needs a named lab, one catalog target and a positive finite EUR price.',
+      );
+    }
+  }
+
   Future<List<BiomarkerPackage>> biomarkerPackages() async {
     final db = await _database.database;
     final rows = await db.query(
@@ -756,10 +886,22 @@ class HealthRepository {
     }
     final now = DateTime.now();
     await db.transaction((txn) async {
+      final previousPrice = await txn.query(
+        'biomarker_packages',
+        where: 'id = ?',
+        whereArgs: [package.id],
+        limit: 1,
+      );
       await txn.insert(
         'biomarker_packages',
         package.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _captureCatalogPrice(
+        txn,
+        'biomarker_packages',
+        package.toMap(),
+        previous: previousPrice,
       );
       final existing = await txn.query(
         'biomarker_package_items',
@@ -802,11 +944,25 @@ class HealthRepository {
   Future<void> saveBiomarker(Biomarker biomarker) async {
     _validateBiomarker(biomarker);
     final db = await _database.database;
-    await db.insert(
-      'biomarkers',
-      _canonicalUnits('biomarkers', biomarker.toMap()),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.transaction((txn) async {
+      final previous = await txn.query(
+        'biomarkers',
+        where: 'id = ?',
+        whereArgs: [biomarker.id],
+        limit: 1,
+      );
+      await txn.insert(
+        'biomarkers',
+        _canonicalUnits('biomarkers', biomarker.toMap()),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _captureCatalogPrice(
+        txn,
+        'biomarkers',
+        biomarker.toMap(),
+        previous: previous,
+      );
+    });
   }
 
   Future<List<BiomarkerReferenceRange>> biomarkerRanges({
@@ -936,6 +1092,12 @@ class HealthRepository {
         where: 'biomarker_id = ?',
         whereArgs: [temporaryBiomarkerId],
       );
+      await txn.update(
+        'lab_prices',
+        {'biomarker_id': canonicalBiomarkerId, 'updated_at': now},
+        where: 'biomarker_id = ?',
+        whereArgs: [temporaryBiomarkerId],
+      );
       counts['lab_plan_items'] = await txn.update(
         'lab_plan_items',
         {
@@ -946,6 +1108,39 @@ class HealthRepository {
         where: 'biomarker_id = ?',
         whereArgs: [temporaryBiomarkerId],
       );
+      for (final row in await txn.query(
+        'lab_plans',
+        where: 'pricing_snapshot_json IS NOT NULL',
+      )) {
+        final pricing = LabPricingSnapshot.fromJson(
+          row['pricing_snapshot_json']!,
+        );
+        if (!pricing.members.values.any(
+          (members) => members.contains(temporaryBiomarkerId),
+        )) {
+          continue;
+        }
+        final mapped = LabPricingSnapshot(
+          labName: pricing.labName,
+          packages: pricing.packages,
+          members: {
+            for (final entry in pricing.members.entries)
+              entry.key: {
+                for (final id in entry.value)
+                  id == temporaryBiomarkerId ? canonicalBiomarkerId : id,
+              },
+          },
+        );
+        await txn.update(
+          'lab_plans',
+          {
+            'pricing_snapshot_json': jsonEncode(mapped.toJson()),
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+      }
       counts['targets'] = await _moveConstrainedRelations(
         txn,
         table: 'profile_biomarker_targets',
@@ -2040,6 +2235,14 @@ class HealthRepository {
         case 'health_events':
           _validateEnum(table, 'kind', row['kind'], const {'symptom', 'tag'});
           _validateEvent(HealthEvent.fromMap(row));
+        case 'lab_prices':
+          final price = LabPrice.fromMap(row);
+          _validateLabPrice(price);
+          if (row['lab_key'] != labKey(price.labName)) {
+            throw const FormatException(
+              'Lab price key does not match its name.',
+            );
+          }
         case 'biomarkers':
           _validateBiomarker(Biomarker.fromMap(row));
         case 'biomarker_ranges':
@@ -2099,6 +2302,7 @@ class HealthRepository {
           _validateEnum(table, 'status', row['status'], const {
             'draft',
             'verified',
+            'external',
           });
           _validateLabPlan(LabPlan.fromMap(row, const []));
         case 'advisor_messages':
@@ -2142,6 +2346,15 @@ class HealthRepository {
             '${reference.table}.${reference.column} references a missing ${reference.parent} row.',
           );
         }
+      }
+    }
+    final catalog = _rowsById(tables['biomarkers']!);
+    for (final price in tables['lab_prices']!) {
+      if (price['biomarker_id'] != null &&
+          catalog[price['biomarker_id']]?['is_calculated'] == 1) {
+        throw const FormatException(
+          'Calculated biomarkers cannot have laboratory prices.',
+        );
       }
     }
     final schedules = _rowsById(tables['supplement_schedules']!);
@@ -2407,6 +2620,32 @@ class HealthRepository {
   }
 
   void _validateLabPlan(LabPlan plan) {
+    final pricing = plan.pricingSnapshot;
+    if (pricing != null) {
+      if (pricing.labName != null && labKey(pricing.labName!).isEmpty) {
+        throw ArgumentError('A pricing snapshot requires a named lab.');
+      }
+      final ids = <String>{};
+      for (final package in pricing.packages) {
+        if (!ids.add(package.id) ||
+            package.id.isEmpty ||
+            package.name.trim().isEmpty ||
+            package.priceEur != null &&
+                (!package.priceEur!.isFinite || package.priceEur! < 0) ||
+            pricing.labName != null &&
+                labKey(package.labName ?? '') != labKey(pricing.labName!)) {
+          throw ArgumentError('Invalid package offer in pricing snapshot.');
+        }
+      }
+      for (final entry in pricing.members.entries) {
+        if (!ids.contains(entry.key) ||
+            entry.value.any((id) => id.trim().isEmpty)) {
+          throw ArgumentError(
+            'Invalid package membership in pricing snapshot.',
+          );
+        }
+      }
+    }
     if (plan.status != 'draft' &&
         plan.status != 'verified' &&
         plan.status != 'external') {

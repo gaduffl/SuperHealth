@@ -7,6 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../domain/entities.dart';
+import '../analysis/lab_plan_pricing.dart';
 
 enum LabPlanExportFormat { pdf, csv, json }
 
@@ -38,6 +39,19 @@ class ExportedFile {
 }
 
 class LabPlanExportService {
+  LabPlanCosting _cost(LabPlan plan, LabTier tier) =>
+      const LabPlanPricing().cost(
+        items: plan.itemsThrough(tier),
+        packages: plan.pricingSnapshot?.packages ?? const [],
+        membersByPackageId: plan.pricingSnapshot?.members ?? const {},
+      );
+  double _addedCostOfNext(LabPlan plan, LabTier tier) {
+    final next = LabPlan.nextTierAfter(tier);
+    return next == null
+        ? 0
+        : _cost(plan, next).totalEur - _cost(plan, tier).totalEur;
+  }
+
   Future<ExportedFile> build(LabPlan plan, LabPlanExportFormat format) async =>
       switch (format) {
         LabPlanExportFormat.pdf => _pdf(plan),
@@ -108,6 +122,7 @@ class LabPlanExportService {
               labPlanPdfSafeText(plan.title),
               _tierName(tier),
               if (planned != null) 'Planned visit: $planned',
+              if (plan.labName != null) 'Laboratory: ${plan.labName}',
             ].join(' · '),
             style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey800),
           ),
@@ -271,8 +286,17 @@ class LabPlanExportService {
     for (final tier in LabTier.values) {
       final omitted = plan.itemsOmittedVersusNext(tier);
       tiers[tier.name] = {
-        'known_total_eur': plan.knownTotal(tier),
-        'missing_prices': plan.missingPriceCount(tier),
+        'known_total_eur': _cost(plan, tier).totalEur,
+        'missing_prices': _cost(plan, tier).unpricedCount,
+        'packages': [
+          for (final applied in _cost(plan, tier).appliedPackages)
+            {
+              'name': applied.package.name,
+              'price_eur': applied.package.priceEur,
+              'covered_biomarker_ids': applied.coveredBiomarkerIds,
+              'saving_eur': applied.savingEur,
+            },
+        ],
         'items': plan.itemsThrough(tier).map((item) => item.toMap()).toList(),
         // What this tier gives up, so an exported cheaper plan carries the same
         // disclosure the screen shows rather than reading as a complete list.
@@ -283,7 +307,7 @@ class LabPlanExportService {
               'biomarker_name': item.biomarkerName,
             },
         ],
-        'added_cost_of_next_eur': plan.addedCostOfNext(tier),
+        'added_cost_of_next_eur': _addedCostOfNext(plan, tier),
         'tradeoff_versus_next': plan.tradeoffFor(tier),
       };
     }
@@ -345,9 +369,24 @@ class LabPlanExportService {
           item.preparation,
         ],
       [],
+      ['Laboratory', plan.labName ?? 'Existing catalog prices'],
       ['Cumulative tier', 'Known total EUR', 'Missing prices'],
       for (final tier in LabTier.values)
-        [tier.name, plan.knownTotal(tier), plan.missingPriceCount(tier)],
+        [
+          tier.name,
+          _cost(plan, tier).totalEur,
+          _cost(plan, tier).unpricedCount,
+        ],
+      [],
+      ['Tier', 'Package', 'Package price EUR', 'Covered tests'],
+      for (final tier in LabTier.values)
+        for (final applied in _cost(plan, tier).appliedPackages)
+          [
+            tier.name,
+            applied.package.name,
+            applied.package.priceEur,
+            applied.coveredBiomarkerIds.join('; '),
+          ],
       [],
       [
         'Cheaper tier',
@@ -361,7 +400,7 @@ class LabPlanExportService {
           [
             tier.name,
             plan.itemsOmittedVersusNext(tier).length,
-            plan.addedCostOfNext(tier),
+            _addedCostOfNext(plan, tier),
             plan.tradeoffFor(tier),
             plan
                 .itemsOmittedVersusNext(tier)
@@ -424,6 +463,8 @@ class LabPlanExportService {
           ),
           pw.SizedBox(height: 4),
           pw.Text('Planned visit: $planned · Currency: ${plan.currency}'),
+          if (plan.labName != null)
+            pw.Text(labPlanPdfSafeText('Laboratory: ${plan.labName}')),
           pw.SizedBox(height: 14),
           pw.Container(
             padding: const pw.EdgeInsets.all(8),
@@ -486,6 +527,16 @@ class LabPlanExportService {
           pw.SizedBox(height: 18),
           for (final tier in LabTier.values) ...[
             _tierHeader(plan, tier),
+            for (final applied in _cost(plan, tier).appliedPackages)
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 4),
+                child: pw.Text(
+                  labPlanPdfSafeText(
+                    'Package: ${applied.package.name} - ${applied.package.priceEur!.toStringAsFixed(2)} EUR; covers ${applied.coveredBiomarkerIds.map((id) => _nameOf(plan, id)).join(', ')}',
+                  ),
+                  style: const pw.TextStyle(fontSize: 9),
+                ),
+              ),
             pw.SizedBox(height: 6),
             ...plan.itemsThrough(tier).map(_pdfItem),
             _tierTradeoff(plan, tier),
@@ -568,7 +619,7 @@ class LabPlanExportService {
   };
 
   pw.Widget _tierHeader(LabPlan plan, LabTier tier) {
-    final missing = plan.missingPriceCount(tier);
+    final missing = _cost(plan, tier).unpricedCount;
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
@@ -577,7 +628,7 @@ class LabPlanExportService {
           style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
         ),
         pw.Text(
-          'Known total: ${plan.knownTotal(tier).toStringAsFixed(2)} EUR'
+          'Known total: ${_cost(plan, tier).totalEur.toStringAsFixed(2)} EUR'
           '${missing == 0 ? '' : ' + $missing without price'}',
           style: const pw.TextStyle(fontSize: 9),
         ),
@@ -590,7 +641,7 @@ class LabPlanExportService {
   pw.Widget _tierTradeoff(LabPlan plan, LabTier tier) {
     final omitted = plan.itemsOmittedVersusNext(tier);
     if (omitted.isEmpty) return pw.SizedBox();
-    final added = plan.addedCostOfNext(tier);
+    final added = _addedCostOfNext(plan, tier);
     final reasoning = plan.tradeoffFor(tier);
     return pw.Container(
       width: double.infinity,

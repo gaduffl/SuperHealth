@@ -22,6 +22,7 @@ void main() {
           version: 12,
           onCreate: (db, _) async {
             await db.execute(legacyBiomarkersTable);
+            await db.execute(legacyBiomarkerPackagesTable);
             await db.execute(legacyBiomarkerListsTable);
             await db.execute(legacyBiomarkerListItemsTable);
             await db.execute(legacyLabPlansV12Table);

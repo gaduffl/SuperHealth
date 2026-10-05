@@ -35,6 +35,7 @@ void main() {
           version: 13,
           onCreate: (db, _) async {
             await db.execute(legacyBiomarkersTable);
+            await db.execute(legacyBiomarkerPackagesTable);
             await db.execute(
               'ALTER TABLE biomarkers '
               'ADD COLUMN is_calculated INTEGER NOT NULL DEFAULT 0',

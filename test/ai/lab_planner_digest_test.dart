@@ -65,6 +65,115 @@ void main() {
   });
 
   test(
+    'selected lab offers reach both model passes, tools, saved items and external receipts',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      final now = DateTime.now();
+      await fixture.repository.saveBiomarkerPackage(
+        BiomarkerPackage(
+          id: 'retired-bundle',
+          name: 'Retired bundle',
+          labName: 'Lab B',
+          priceEur: 15,
+          createdAt: now,
+          updatedAt: now,
+        ),
+        {'tsh', 'ldl'},
+      );
+      await fixture.repository.softDelete(
+        'biomarker_packages',
+        'retired-bundle',
+      );
+      for (final (lab, amount) in [('Lab A', 10.0), ('Lab B', 25.0)]) {
+        await fixture.repository.saveLabPrices([
+          LabPrice(
+            id: fixture.repository.newId(),
+            labName: lab,
+            biomarkerId: 'tsh',
+            priceEur: amount,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ]);
+      }
+      final client = _Client(_compliant);
+      final service = _planner(fixture, client);
+      final result = await service.generate(
+        profileId: fixture.profile.id,
+        settings: openAi,
+        labName: 'Lab B',
+      );
+      expect(result.plan.labName, 'Lab B');
+      expect(result.plan.pricingSnapshot!.members, isEmpty);
+      await fixture.repository.saveLabPlan(result.plan);
+      expect(
+        result.plan.items
+            .singleWhere((item) => item.biomarkerId == 'tsh')
+            .priceEur,
+        25,
+      );
+      expect(
+        result.plan.items
+            .singleWhere((item) => item.biomarkerId == 'ldl')
+            .priceEur,
+        isNull,
+      );
+      for (final request in client.requests) {
+        final digest = jsonDecode(request.digestText!) as Map;
+        final catalog = digest['test_catalog'] as List;
+        expect(
+          catalog.singleWhere((row) => row['id'] == 'tsh')['price_eur'],
+          25,
+        );
+        expect(
+          catalog.singleWhere((row) => row['id'] == 'ldl')['price_eur'],
+          isNull,
+        );
+      }
+      final exported = await service.buildExternalPrompt(
+        profileId: fixture.profile.id,
+        labName: 'Lab B',
+      );
+      final external = jsonEncode({
+        'title': 'External plan',
+        'planned_for': null,
+        'warnings': const <String>[],
+        'context_receipt': {
+          'sha256': exported.context.sha256,
+          'file_sha256': exported.context.fileSha256,
+          'record_count': exported.context.recordCount,
+          'reviewed_sections': exported.context.sectionNames,
+        },
+        'tiers': [
+          for (final tier in ['core', 'advanced', 'comprehensive'])
+            _tier(tier, _testFor(tier)),
+        ],
+      });
+      final imported = await service.importExternalPlan(
+        profileId: fixture.profile.id,
+        responseText: external,
+        labName: 'Lab B',
+      );
+      expect(imported.plan.labName, 'Lab B');
+      expect(
+        imported.plan.items
+            .singleWhere((item) => item.biomarkerId == 'tsh')
+            .priceEur,
+        25,
+      );
+      await expectLater(
+        service.importExternalPlan(
+          profileId: fixture.profile.id,
+          responseText: external,
+          labName: 'Lab A',
+        ),
+        throwsA(isA<LabPlanFormatException>()),
+      );
+    },
+  );
+
+  test(
     'the checklist holds every current substance, medicine, condition, '
     'goal, family history entry and finding — and nothing resolved',
     () async {

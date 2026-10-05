@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../analysis/exposure_analysis.dart';
+import '../analysis/lab_catalog_pricing.dart';
 import '../analysis/interaction_findings.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
@@ -536,16 +537,23 @@ should be tested, and in warnings otherwise.
     DateTime? targetDate,
     String priorities = '',
     bool includeOverdueBiomarkers = true,
+    String? labName,
   }) async {
-    final record = await _record(profileId);
-    final context = await _contextBuilder.build(profileId);
+    final pricing = await _pricing(labName);
+    final record = await _record(profileId, pricing: pricing.catalogPricing);
+    final context = await _contextBuilder.build(
+      profileId,
+      pricing: pricing.catalogPricing,
+    );
     final dueBiomarkers = await _repository.dueBiomarkers(profileId);
     final digest = _digestFor(record, dueBiomarkers, includeOverdueBiomarkers);
     final userPrompt = _userPrompt(
       context: context,
       checklist: digest.checklist,
       targetDate: targetDate,
-      priorities: priorities,
+      priorities: labName == null
+          ? priorities
+          : '$priorities\nPrice this visit at laboratory: $labName. Missing lab prices remain unknown; never use another laboratory.',
       dueBiomarkers: dueBiomarkers,
       includeOverdueBiomarkers: includeOverdueBiomarkers,
     );
@@ -595,9 +603,14 @@ $schema
     required String profileId,
     required String responseText,
     bool includeOverdueBiomarkers = true,
+    String? labName,
   }) async {
-    final record = await _record(profileId);
-    final context = await _contextBuilder.build(profileId);
+    final pricing = await _pricing(labName);
+    final record = await _record(profileId, pricing: pricing.catalogPricing);
+    final context = await _contextBuilder.build(
+      profileId,
+      pricing: pricing.catalogPricing,
+    );
     final dueBiomarkers = await _repository.dueBiomarkers(profileId);
     final digest = _digestFor(record, dueBiomarkers, includeOverdueBiomarkers);
     final requiredBiomarkerIds = includeOverdueBiomarkers
@@ -612,6 +625,8 @@ $schema
       context: context,
       targetDate: null,
       requiredBiomarkerIds: requiredBiomarkerIds,
+      catalog: pricing.catalog,
+      pricingSnapshot: pricing.snapshot,
     );
     const summary =
         'Imported external response passed SuperHealth structure, catalog, '
@@ -754,6 +769,7 @@ ${_schemaInstructions(withReceipt: context != null)}
     bool includeOverdueBiomarkers = true,
     bool wholeRecord = false,
     LabPlanProgress? onProgress,
+    String? labName,
   }) async {
     var stage = LabPlanStage.preparingContext;
     void emit(LabPlanUpdate update) {
@@ -793,6 +809,7 @@ ${_schemaInstructions(withReceipt: context != null)}
         priorities: priorities,
         includeOverdueBiomarkers: includeOverdueBiomarkers,
         wholeRecord: wholeRecord,
+        labName: labName,
         emit: emit,
         report: report,
         currentStage: () => stage,
@@ -816,6 +833,7 @@ ${_schemaInstructions(withReceipt: context != null)}
     required String priorities,
     required bool includeOverdueBiomarkers,
     required bool wholeRecord,
+    required String? labName,
     required void Function(LabPlanUpdate) emit,
     required Future<void> Function(LabPlanStage) report,
     required LabPlanStage Function() currentStage,
@@ -830,7 +848,8 @@ ${_schemaInstructions(withReceipt: context != null)}
     if (key == null || key.trim().isEmpty) {
       throw StateError(ApiKeyStore.missingCredentialMessage(settings.provider));
     }
-    final record = await _record(profileId);
+    final pricing = await _pricing(labName);
+    final record = await _record(profileId, pricing: pricing.catalogPricing);
     final findings = record.findings;
     await _trace.event('findings_evaluated', {
       'findings': findings.length,
@@ -861,7 +880,10 @@ ${_schemaInstructions(withReceipt: context != null)}
 
     HealthContextEnvelope? context;
     if (includePackage) {
-      context = await _contextBuilder.build(profileId);
+      context = await _contextBuilder.build(
+        profileId,
+        pricing: pricing.catalogPricing,
+      );
       await _trace.event('context_built', {
         'bytes': context.byteLength,
         'estimated_tokens': context.estimatedTokens,
@@ -877,7 +899,9 @@ ${_schemaInstructions(withReceipt: context != null)}
       context: context,
       checklist: digest.checklist,
       targetDate: targetDate,
-      priorities: priorities,
+      priorities: labName == null
+          ? priorities
+          : '$priorities\nPrice this visit at laboratory: $labName. Missing lab prices remain unknown; never use another laboratory.',
       dueBiomarkers: dueBiomarkers,
       includeOverdueBiomarkers: includeOverdueBiomarkers,
     );
@@ -919,6 +943,8 @@ ${_schemaInstructions(withReceipt: context != null)}
       'user_prompt_chars': userPrompt.length,
     });
     final run = _PlanRun(
+      catalog: pricing.catalog,
+      pricingSnapshot: pricing.snapshot,
       profileId: profileId,
       settings: settings,
       key: key,
@@ -939,7 +965,9 @@ ${_schemaInstructions(withReceipt: context != null)}
       findings: findings,
       requiredBiomarkerIds: requiredBiomarkerIds,
       targetDate: targetDate,
-      priorities: priorities,
+      priorities: labName == null
+          ? priorities
+          : '$priorities\nPrice this visit at laboratory: $labName. Missing lab prices remain unknown; never use another laboratory.',
       dueBiomarkers: dueBiomarkers,
       includeOverdueBiomarkers: includeOverdueBiomarkers,
     );
@@ -1083,11 +1111,53 @@ ${_schemaInstructions(withReceipt: context != null)}
     return generation;
   }
 
+  Future<
+    ({
+      LabCatalogPricing catalogPricing,
+      List<Biomarker> catalog,
+      LabPricingSnapshot snapshot,
+    })
+  >
+  _pricing(String? labName) async {
+    final selected = labName?.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (selected != null && selected.isEmpty) {
+      throw ArgumentError('Choose a named laboratory.');
+    }
+    final pricing = LabCatalogPricing(
+      prices: await _repository.labPrices(),
+      labName: selected,
+    );
+    final packages = pricing.packages(await _repository.biomarkerPackages());
+    final catalogMembers = await _repository.biomarkerPackageMembers();
+    final members = <String, Set<String>>{
+      for (final package in packages)
+        package.id: catalogMembers[package.id] ?? const <String>{},
+    };
+    return (
+      catalogPricing: LabCatalogPricing(
+        prices: pricing.prices,
+        labName: selected,
+        packageOffers: packages,
+        packageMembers: members,
+      ),
+      catalog: pricing.catalog(await _repository.biomarkers()),
+      snapshot: LabPricingSnapshot(
+        labName: selected,
+        packages: packages,
+        members: members,
+      ),
+    );
+  }
+
   /// The record the digest, the findings and the tools all read: parsed once
   /// per run, so the three can never describe different moments.
-  Future<_PlanRecord> _record(String profileId) async {
+  Future<_PlanRecord> _record(
+    String profileId, {
+    LabCatalogPricing? pricing,
+  }) async {
     final snapshot = AgentSnapshot.fromSnapshot(
-      await _loadAgentSnapshot(profileId),
+      pricing?.projectSnapshot(await _loadAgentSnapshot(profileId)) ??
+          await _loadAgentSnapshot(profileId),
       profileId: profileId,
     );
     final exposure = ExposureAnalysis.build(
@@ -1143,6 +1213,8 @@ ${_schemaInstructions(withReceipt: context != null)}
     context: run.context,
     targetDate: run.targetDate,
     requiredBiomarkerIds: run.requiredBiomarkerIds,
+    catalog: run.catalog,
+    pricingSnapshot: run.pricingSnapshot,
   );
 
   String _repairPrompt(
@@ -1512,6 +1584,8 @@ ${_verificationSchemaInstructions(withReceipt: context != null)}
     required HealthContextEnvelope? context,
     required DateTime? targetDate,
     required Set<String> requiredBiomarkerIds,
+    required List<Biomarker> catalog,
+    required LabPricingSnapshot pricingSnapshot,
   }) async {
     final decoded = _decodeObject(response.text);
     if (context != null) {
@@ -1521,7 +1595,7 @@ ${_verificationSchemaInstructions(withReceipt: context != null)}
     if (tiers is! List) {
       throw const LabPlanFormatException('The tiers array is missing.');
     }
-    final biomarkerCatalog = await _repository.biomarkers();
+    final biomarkerCatalog = catalog;
     final byId = {for (final item in biomarkerCatalog) item.id: item};
     final planId = _repository.newId();
     final items = <LabPlanItem>[];
@@ -1685,6 +1759,7 @@ ${_verificationSchemaInstructions(withReceipt: context != null)}
       items: items,
       tierTradeoffs: tradeoffs,
       coverage: coverage.entries,
+      pricingSnapshot: pricingSnapshot,
     );
     final rawWarnings = decoded['warnings'];
     final warnings = rawWarnings is List
@@ -1825,6 +1900,8 @@ typedef _PlanRecord = ({
 /// cache key on every call, differing only in the trailing prompt.
 class _PlanRun {
   _PlanRun({
+    required this.catalog,
+    required this.pricingSnapshot,
     required this.profileId,
     required this.settings,
     required this.key,
@@ -1846,6 +1923,8 @@ class _PlanRun {
   final AiTaskSettings settings;
   final String key;
   final AiProviderClient client;
+  final List<Biomarker> catalog;
+  final LabPricingSnapshot pricingSnapshot;
   final ClinicalDigest digest;
   final HealthContextEnvelope? context;
   final HealthContextDelivery delivery;

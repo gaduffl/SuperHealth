@@ -953,6 +953,23 @@ test has no individual price the saving is *unknown*, not zero: the bundle is
 still applied because it turns an unknown into a number, but it reports
 `savingEur == null` rather than inventing one.
 
+**Lab prices belong to a lab and a catalog target.** `lab_prices` is shared
+catalog data, included in sync and backups. `lab_key` folds case and whitespace;
+`LabCatalogPricing` resolves concurrent offers by timestamp and id, including
+tombstones, and never fills a selected lab's missing price from another lab.
+Legacy named prices are migrated, and subsequent catalog price edits capture
+only changed price fields, so editing a test's description cannot restore an
+older catalog price over a newer lab offer. AI updates are proposals for the
+explicitly chosen lab, and non-EUR offers cannot enter EUR columns.
+
+**A lab plan retains the offers used to draft it.** The digest, read-only tools,
+complete package and item prices all use the same `LabCatalogPricing` selection.
+The package receipt includes the lab, including when the numeric prices match.
+`LabPlan.pricingSnapshot` captures the lab, package offers and membership;
+screen and exports cost from it rather than today's packages. A null snapshot
+is an older plan, not an empty offer catalog. Keep the snapshot in `copyWith`
+and validate its nested data on sync just as on local writes.
+
 **A zero price is an absent price.** The legacy import writes 0 where its source
 had no figure, so `priceEur == null` is not the test for "unpriced" — use
 `hasLabPrice()` / `Biomarker.hasPrice`. Getting this wrong made a 169-marker

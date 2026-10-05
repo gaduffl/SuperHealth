@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/ai/advisor_service.dart';
 import 'package:super_health/ai/ai_settings.dart';
+import 'package:super_health/ai/ai_models.dart';
 import 'package:super_health/ai/api_key_store.dart';
 import 'package:super_health/ai/clinical_digest.dart';
 import 'package:super_health/ai/document_parsing_service.dart';
@@ -26,6 +27,7 @@ import 'package:super_health/import/legacy_import_service.dart';
 import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
 import 'package:super_health/ui/health_screen.dart';
+import 'package:super_health/ui/lab_price_screen.dart';
 import 'package:super_health/workspace/safe_workspace_service.dart';
 
 void main() {
@@ -35,6 +37,102 @@ void main() {
   });
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets(
+    'the planner offers named labs without changing an existing draft',
+    (tester) async {
+      final controller = _seededController(draft: _generation(approved: true));
+      controller.labPlannerSettings = const AiTaskSettings(
+        provider: AiProvider.openai,
+        model: 'gpt-5.6',
+      );
+      controller.labPrices = [
+        for (final lab in ['Lab A', 'Lab B'])
+          LabPrice(
+            id: lab,
+            labName: lab,
+            biomarkerId: 'glucose',
+            priceEur: 15,
+            createdAt: _now,
+            updatedAt: _now,
+          ),
+      ];
+      final navigation = ShellNavigation();
+      addTearDown(() {
+        controller.dispose();
+        navigation.dispose();
+      });
+      await _openPlanner(tester, controller, navigation);
+      await tester.tap(find.text('Plan'));
+      await tester.pumpAndSettle();
+      expect(find.byType(LabSelectionField), findsOneWidget);
+      await tester.tap(find.text('Existing catalog prices').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lab B').last);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(controller.draftLabPlan!.plan.labName, isNull);
+    },
+  );
+
+  testWidgets(
+    'manual lab prices accept decimal commas and keep the catalog price intact',
+    (tester) async {
+      final controller = _seededController(draft: _generation(approved: true));
+      addTearDown(controller.dispose);
+      await tester.runAsync(() async {
+        await controller.repository.saveProfile(controller.activeProfile!);
+        await controller.repository.saveBiomarker(controller.biomarkers.single);
+      });
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: controller,
+          child: const MaterialApp(
+            locale: Locale('en'),
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            home: LabPriceScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Laboratory'),
+        'Lab B',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add or edit price'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Price in EUR'),
+        '12,50',
+      );
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Save price'));
+        for (var i = 0; i < 200 && controller.labPrices.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pumpAndSettle();
+      expect(controller.labPrices.single.priceEur, 12.5);
+      expect(controller.labPrices.single.labName, 'Lab B');
+      final savedBiomarkers = await tester.runAsync(
+        controller.repository.biomarkers,
+      );
+      expect(
+        savedBiomarkers!.singleWhere((item) => item.id == 'glucose').priceEur,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'a rejected draft says beside its disabled Save button why it cannot be saved',

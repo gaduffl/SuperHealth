@@ -101,3 +101,17 @@ const legacyBiomarkerListItemsTable = '''
     deleted INTEGER NOT NULL DEFAULT 0
   )
 ''';
+
+const legacyBiomarkerPackagesTable = '''
+  CREATE TABLE biomarker_packages (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    price_eur REAL,
+    lab_name TEXT,
+    price_checked_at TEXT,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+  )
+''';

@@ -44,12 +44,14 @@ String _labsText(BuildContext context, String english, String german) =>
 
 class _LabPlannerOptions {
   const _LabPlannerOptions({
+    this.labName,
     required this.targetDate,
     required this.priorities,
     required this.includeOverdueBiomarkers,
     required this.wholeRecord,
   });
 
+  final String? labName;
   final DateTime? targetDate;
   final String priorities;
   final bool includeOverdueBiomarkers;
@@ -1171,6 +1173,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     try {
       await controller.generateLabPlan(
         targetDate: options.targetDate,
+        labName: options.labName,
         priorities: options.priorities,
         includeOverdueBiomarkers: options.includeOverdueBiomarkers,
         wholeRecord: options.wholeRecord,
@@ -1209,6 +1212,8 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     LabPlanGeneration? replacing,
   }) async {
     final priorities = TextEditingController();
+    final controller = context.read<AppController>();
+    String? labName;
     DateTime? targetDate;
     var includeOverdueBiomarkers = true;
     var wholeRecord = false;
@@ -1218,148 +1223,160 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Text(title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: priorities,
-                autofocus: true,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: _labsText(
-                    context,
-                    'Priorities (optional)',
-                    'Prioritäten (optional)',
-                  ),
-                  hintText: _labsText(
-                    context,
-                    'e.g. cardiometabolic risk, fatigue, 250 € upper budget',
-                    'z. B. kardiometabolisches Risiko, Erschöpfung, höchstens 250 €',
-                  ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LabSelectionField(
+                  labs: controller.labNames,
+                  value: labName,
+                  onChanged: (value) => setState(() => labName = value),
                 ),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  _labsText(
-                    context,
-                    'Target visit date',
-                    'Geplanter Besuchstermin',
-                  ),
-                ),
-                subtitle: Text(
-                  targetDate == null
-                      ? _labsText(context, 'Not set', 'Nicht festgelegt')
-                      : DateFormat('dd.MM.yyyy').format(targetDate!),
-                ),
-                trailing: const Icon(Icons.calendar_today_outlined),
-                onTap: () async {
-                  final selected = await showDatePicker(
-                    context: context,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime.now().add(const Duration(days: 730)),
-                  );
-                  if (selected != null) setState(() => targetDate = selected);
-                },
-              ),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                value: includeOverdueBiomarkers,
-                title: Text(
-                  _labsText(
-                    context,
-                    'Always include overdue list biomarkers',
-                    'Überfällige Listen-Biomarker immer aufnehmen',
-                  ),
-                ),
-                subtitle: Text(
-                  _labsText(
-                    context,
-                    'When enabled, the response is rejected if even one currently overdue list item is missing.',
-                    'Wenn aktiv, wird die Antwort abgelehnt, sobald auch nur ein aktuell überfälliger Listeneintrag fehlt.',
-                  ),
-                ),
-                onChanged: (value) =>
-                    setState(() => includeOverdueBiomarkers = value),
-              ),
-              if (digestOnly)
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  value: wholeRecord,
-                  title: Text(
-                    _labsText(context, 'Whole-record review', 'Gesamtprüfung'),
-                  ),
-                  subtitle: Text(
-                    _labsText(
+                const SizedBox(height: 12),
+                TextField(
+                  controller: priorities,
+                  autofocus: true,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: _labsText(
                       context,
-                      'Also send every row of your record. Several times the cost and time.',
-                      'Sendet zusätzlich jede Zeile deiner Daten. Ein Vielfaches an Kosten und Zeit.',
+                      'Priorities (optional)',
+                      'Prioritäten (optional)',
+                    ),
+                    hintText: _labsText(
+                      context,
+                      'e.g. cardiometabolic risk, fatigue, 250 € upper budget',
+                      'z. B. kardiometabolisches Risiko, Erschöpfung, höchstens 250 €',
                     ),
                   ),
-                  onChanged: (value) => setState(() => wholeRecord = value),
                 ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.lock_outline),
-                title: Text(
-                  digestOnly && !wholeRecord
-                      ? _labsText(
-                          context,
-                          'Every entry in your record',
-                          'Jeder Eintrag deiner Daten',
-                        )
-                      : _labsText(
-                          context,
-                          'Complete active-profile context',
-                          'Vollständiger Kontext des aktiven Profils',
-                        ),
-                ),
-                subtitle: Text(
-                  exporting
-                      ? _labsText(
-                          context,
-                          'The text file contains sensitive health data. You choose where to send it.',
-                          'Die Textdatei enthält sensible Gesundheitsdaten. Du entscheidest, wohin du sie sendest.',
-                        )
-                      : digestOnly && !wholeRecord
-                      ? _labsText(
-                          context,
-                          'The planner gets a summary that names every entry and looks details up on this device. Only the configured provider receives it.',
-                          'Der Planer erhält eine Zusammenfassung, die jeden Eintrag nennt, und schlägt Details auf diesem Gerät nach. Nur der konfigurierte Anbieter erhält sie.',
-                        )
-                      : _labsText(
-                          context,
-                          'No silent truncation; only the configured provider receives it.',
-                          'Keine stille Kürzung; nur der konfigurierte Anbieter erhält den Kontext.',
-                        ),
-                ),
-              ),
-              if (replacing != null)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.edit_note_outlined),
                   title: Text(
                     _labsText(
                       context,
-                      'Replaces your unsaved draft',
-                      'Ersetzt deinen ungespeicherten Entwurf',
+                      'Target visit date',
+                      'Geplanter Besuchstermin',
                     ),
                   ),
                   subtitle: Text(
-                    replacing.canSave
+                    targetDate == null
+                        ? _labsText(context, 'Not set', 'Nicht festgelegt')
+                        : DateFormat('dd.MM.yyyy').format(targetDate!),
+                  ),
+                  trailing: const Icon(Icons.calendar_today_outlined),
+                  onTap: () async {
+                    final selected = await showDatePicker(
+                      context: context,
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime.now().add(const Duration(days: 730)),
+                    );
+                    if (selected != null) setState(() => targetDate = selected);
+                  },
+                ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: includeOverdueBiomarkers,
+                  title: Text(
+                    _labsText(
+                      context,
+                      'Always include overdue list biomarkers',
+                      'Überfällige Listen-Biomarker immer aufnehmen',
+                    ),
+                  ),
+                  subtitle: Text(
+                    _labsText(
+                      context,
+                      'When enabled, the response is rejected if even one currently overdue list item is missing.',
+                      'Wenn aktiv, wird die Antwort abgelehnt, sobald auch nur ein aktuell überfälliger Listeneintrag fehlt.',
+                    ),
+                  ),
+                  onChanged: (value) =>
+                      setState(() => includeOverdueBiomarkers = value),
+                ),
+                if (digestOnly)
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: wholeRecord,
+                    title: Text(
+                      _labsText(
+                        context,
+                        'Whole-record review',
+                        'Gesamtprüfung',
+                      ),
+                    ),
+                    subtitle: Text(
+                      _labsText(
+                        context,
+                        'Also send every row of your record. Several times the cost and time.',
+                        'Sendet zusätzlich jede Zeile deiner Daten. Ein Vielfaches an Kosten und Zeit.',
+                      ),
+                    ),
+                    onChanged: (value) => setState(() => wholeRecord = value),
+                  ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.lock_outline),
+                  title: Text(
+                    digestOnly && !wholeRecord
                         ? _labsText(
                             context,
-                            'It stays readable until the new plan arrives, then it is discarded. Save it first to keep it.',
-                            'Er bleibt lesbar, bis der neue Plan da ist, und wird dann verworfen. Speichere ihn vorher, um ihn zu behalten.',
+                            'Every entry in your record',
+                            'Jeder Eintrag deiner Daten',
                           )
                         : _labsText(
                             context,
-                            'It stays readable until the new plan arrives, then it is discarded.',
-                            'Er bleibt lesbar, bis der neue Plan da ist, und wird dann verworfen.',
+                            'Complete active-profile context',
+                            'Vollständiger Kontext des aktiven Profils',
+                          ),
+                  ),
+                  subtitle: Text(
+                    exporting
+                        ? _labsText(
+                            context,
+                            'The text file contains sensitive health data. You choose where to send it.',
+                            'Die Textdatei enthält sensible Gesundheitsdaten. Du entscheidest, wohin du sie sendest.',
+                          )
+                        : digestOnly && !wholeRecord
+                        ? _labsText(
+                            context,
+                            'The planner gets a summary that names every entry and looks details up on this device. Only the configured provider receives it.',
+                            'Der Planer erhält eine Zusammenfassung, die jeden Eintrag nennt, und schlägt Details auf diesem Gerät nach. Nur der konfigurierte Anbieter erhält sie.',
+                          )
+                        : _labsText(
+                            context,
+                            'No silent truncation; only the configured provider receives it.',
+                            'Keine stille Kürzung; nur der konfigurierte Anbieter erhält den Kontext.',
                           ),
                   ),
                 ),
-            ],
+                if (replacing != null)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.edit_note_outlined),
+                    title: Text(
+                      _labsText(
+                        context,
+                        'Replaces your unsaved draft',
+                        'Ersetzt deinen ungespeicherten Entwurf',
+                      ),
+                    ),
+                    subtitle: Text(
+                      replacing.canSave
+                          ? _labsText(
+                              context,
+                              'It stays readable until the new plan arrives, then it is discarded. Save it first to keep it.',
+                              'Er bleibt lesbar, bis der neue Plan da ist, und wird dann verworfen. Speichere ihn vorher, um ihn zu behalten.',
+                            )
+                          : _labsText(
+                              context,
+                              'It stays readable until the new plan arrives, then it is discarded.',
+                              'Er bleibt lesbar, bis der neue Plan da ist, und wird dann verworfen.',
+                            ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -1377,6 +1394,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     );
     final result = approved == true
         ? _LabPlannerOptions(
+            labName: labName,
             targetDate: targetDate,
             priorities: priorities.text,
             includeOverdueBiomarkers: includeOverdueBiomarkers,
@@ -1406,6 +1424,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     try {
       final file = await controller.exportLabPlannerPrompt(
         targetDate: options.targetDate,
+        labName: options.labName,
         priorities: options.priorities,
         includeOverdueBiomarkers: options.includeOverdueBiomarkers,
       );
@@ -1444,6 +1463,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
     AppController controller,
   ) async {
     var includeOverdueBiomarkers = true;
+    String? labName;
     final approved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -1455,25 +1475,35 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
               'Externen Laborplan importieren',
             ),
           ),
-          content: SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            value: includeOverdueBiomarkers,
-            title: Text(
-              _labsText(
-                context,
-                'Require every overdue list biomarker',
-                'Alle überfälligen Listen-Biomarker verlangen',
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LabSelectionField(
+                labs: controller.labNames,
+                value: labName,
+                onChanged: (value) => setState(() => labName = value),
               ),
-            ),
-            subtitle: Text(
-              _labsText(
-                context,
-                'Use the same setting that was selected when the prompt was exported.',
-                'Verwende dieselbe Einstellung wie beim Export des Prompts.',
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: includeOverdueBiomarkers,
+                title: Text(
+                  _labsText(
+                    context,
+                    'Require every overdue list biomarker',
+                    'Alle überfälligen Listen-Biomarker verlangen',
+                  ),
+                ),
+                subtitle: Text(
+                  _labsText(
+                    context,
+                    'Use the same setting that was selected when the prompt was exported.',
+                    'Verwende dieselbe Einstellung wie beim Export des Prompts.',
+                  ),
+                ),
+                onChanged: (value) =>
+                    setState(() => includeOverdueBiomarkers = value),
               ),
-            ),
-            onChanged: (value) =>
-                setState(() => includeOverdueBiomarkers = value),
+            ],
           ),
           actions: [
             TextButton(
@@ -1503,6 +1533,7 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
       if (bytes == null) return;
       await controller.importExternalLabPlan(
         responseText: utf8.decode(bytes),
+        labName: labName,
         includeOverdueBiomarkers: includeOverdueBiomarkers,
       );
       if (context.mounted) {
@@ -3330,6 +3361,18 @@ class _PlanTiers extends StatelessWidget {
     ];
     return Column(
       children: [
+        if (plan.labName != null)
+          ListTile(
+            leading: const Icon(Icons.science_outlined),
+            title: Text(plan.labName!),
+            subtitle: Text(
+              _labsText(
+                context,
+                'Prices saved with this plan',
+                'Mit diesem Plan gespeicherte Preise',
+              ),
+            ),
+          ),
         if (missingDue.isNotEmpty) _MissingDueNotice(missing: missingDue),
         for (final tier in LabTier.values)
           Builder(

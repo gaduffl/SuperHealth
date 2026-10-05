@@ -159,7 +159,10 @@ class ClinicalDigestBuilder {
         if (planning)
           'test_catalog lists every orderable and calculated test in the '
               'catalog, measured or not, with its exact id, name and price. '
-              'A plan can only use these ids.',
+              'A plan can only use these ids. test_packages lists bundle prices '
+              'and their exact test membership at the selected laboratory. '
+              'A package replaces the cost of its included tests; it is not '
+              'an additional test. Missing prices remain unknown.',
       ],
       'profile': _profile(snapshot.profile, now),
       'health_records': _records(snapshot.records, exposure),
@@ -175,6 +178,17 @@ class ClinicalDigestBuilder {
       'retest_lists': _lists(snapshot),
       'lab_plans': _plans(snapshot),
       if (planning) 'test_catalog': _testCatalog(snapshot),
+      if (planning && snapshot.labPackageOffers.isNotEmpty)
+        'test_packages': [
+          for (final row in snapshot.labPackageOffers)
+            {
+              'id': row['id'],
+              'name': row['name'],
+              'lab_name': row['lab_name'],
+              'price_eur': row['price_eur'],
+              'biomarker_ids': row['biomarker_ids'],
+            },
+        ],
       'review_checklist': [
         for (final item in checklist)
           {'id': item.id, 'kind': item.kind, 'what': item.label},
@@ -664,6 +678,7 @@ class ClinicalDigestBuilder {
           'category': biomarker.category,
           'unit': biomarker.defaultUnit,
           'price_eur': biomarker.hasPrice ? biomarker.priceEur : null,
+          'lab_name': biomarker.labName,
           'calculated': biomarker.isCalculated ? true : null,
           'measured': measured.contains(biomarker.id) ? true : null,
           'synonyms': biomarker.synonyms,
