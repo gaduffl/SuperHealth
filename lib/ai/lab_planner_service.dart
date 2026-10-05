@@ -1128,7 +1128,11 @@ ${_schemaInstructions(withReceipt: context != null)}
       labName: selected,
     );
     final packages = pricing.packages(await _repository.biomarkerPackages());
-    final members = await _repository.biomarkerPackageMembers();
+    final catalogMembers = await _repository.biomarkerPackageMembers();
+    final members = <String, Set<String>>{
+      for (final package in packages)
+        package.id: catalogMembers[package.id] ?? const <String>{},
+    };
     return (
       catalogPricing: LabCatalogPricing(
         prices: pricing.prices,

@@ -70,6 +70,21 @@ void main() {
       final fixture = await _Fixture.create();
       addTearDown(fixture.dispose);
       final now = DateTime.now();
+      await fixture.repository.saveBiomarkerPackage(
+        BiomarkerPackage(
+          id: 'retired-bundle',
+          name: 'Retired bundle',
+          labName: 'Lab B',
+          priceEur: 15,
+          createdAt: now,
+          updatedAt: now,
+        ),
+        {'tsh', 'ldl'},
+      );
+      await fixture.repository.softDelete(
+        'biomarker_packages',
+        'retired-bundle',
+      );
       for (final (lab, amount) in [('Lab A', 10.0), ('Lab B', 25.0)]) {
         await fixture.repository.saveLabPrices([
           LabPrice(
@@ -90,6 +105,8 @@ void main() {
         labName: 'Lab B',
       );
       expect(result.plan.labName, 'Lab B');
+      expect(result.plan.pricingSnapshot!.members, isEmpty);
+      await fixture.repository.saveLabPlan(result.plan);
       expect(
         result.plan.items
             .singleWhere((item) => item.biomarkerId == 'tsh')
