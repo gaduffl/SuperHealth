@@ -1792,6 +1792,37 @@ class AppController extends ChangeNotifier {
     await _refreshActiveData({_ActiveDataSlice.labPrices});
   });
 
+  Future<void> saveLabPriceValues({
+    required String labName,
+    required Map<String, double> biomarkerPrices,
+    required Map<String, double> packagePrices,
+  }) => _withBusy(() async {
+    final now = DateTime.now();
+    final pricing = pricesForLab(labName);
+    final offers = <LabPrice>[];
+    for (final isPackage in [false, true]) {
+      final values = isPackage ? packagePrices : biomarkerPrices;
+      for (final entry in values.entries) {
+        final previous = pricing.priceFor(entry.key, isPackage: isPackage);
+        offers.add(
+          LabPrice(
+            id: repository.newId(),
+            labName: labName,
+            biomarkerId: isPackage ? null : entry.key,
+            packageId: isPackage ? entry.key : null,
+            priceEur: entry.value,
+            sourceUrl: previous?.sourceUrl,
+            checkedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+      }
+    }
+    await repository.saveLabPrices(offers);
+    await _refreshActiveData({_ActiveDataSlice.labPrices});
+  });
+
   /// What a tier costs once packages replace the parts they cover.
   LabPlanCosting costFor(LabPlan plan, LabTier tier) =>
       const LabPlanPricing().cost(

@@ -962,6 +962,14 @@ only changed price fields, so editing a test's description cannot restore an
 older catalog price over a newer lab offer. AI updates are proposals for the
 explicitly chosen lab, and non-EUR offers cannot enter EUR columns.
 
+**Price entry is a staged batch scoped to one laboratory.** `LabPriceScreen`
+keeps edits through search and missing-price filters; switching labs or leaving
+requires discarding pending edits. `saveLabPriceValues` validates and writes the
+whole batch through the repository transaction and refreshes prices once. Only
+changed rows get a new checked date; source URLs survive a manual price change,
+but a quote for the previous amount does not. Keep the AI import separate from
+pending manual edits, so applying a proposal cannot overwrite an unseen draft.
+
 **A lab plan retains the offers used to draft it.** The digest, read-only tools,
 complete package and item prices all use the same `LabCatalogPricing` selection.
 The package receipt includes the lab, including when the numeric prices match.

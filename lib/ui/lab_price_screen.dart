@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../ai/lab_price_service.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../domain/entities.dart';
 import 'common.dart';
 
 String _priceText(BuildContext context, String english, String german) =>
@@ -59,17 +60,134 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
   final _url = TextEditingController();
   final _lab = TextEditingController();
   final _instructions = TextEditingController();
-
+  final _search = TextEditingController();
+  final _fields = <String, TextEditingController>{};
+  final _fieldFocus = <String, FocusNode>{};
+  final _edits = <String, String>{};
+  final _invalid = <String>{};
+  final _newLabs = <String>[];
+  bool _initialized = false;
+  int _labSelectorRevision = 0;
+  bool _missingOnly = false;
+  bool _packagesOnly = false;
   String? _fetched;
   String? _error;
   bool _working = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_initialized) {
+      _lab.text = context.read<AppController>().labNames.firstOrNull ?? '';
+      _initialized = true;
+    }
+  }
 
   @override
   void dispose() {
     _url.dispose();
     _lab.dispose();
     _instructions.dispose();
+    _search.dispose();
+    for (final field in _fields.values) {
+      field.dispose();
+    }
+    for (final focus in _fieldFocus.values) {
+      focus.dispose();
+    }
     super.dispose();
+  }
+
+  Future<bool> _discardChanges() async {
+    if (_edits.isEmpty) return true;
+    return showConfirmAction(
+      context,
+      title: _priceText(
+        context,
+        'Discard price changes?',
+        'Preisänderungen verwerfen?',
+      ),
+      message: _priceText(
+        context,
+        '${_edits.length} price change(s) have not been saved.',
+        '${_edits.length} Preisänderung(en) sind noch nicht gespeichert.',
+      ),
+      confirmLabel: _priceText(context, 'Discard', 'Verwerfen'),
+      destructive: true,
+    );
+  }
+
+  void _clearEdits() {
+    FocusScope.of(context).unfocus();
+    _edits.clear();
+    _invalid.clear();
+    _error = null;
+  }
+
+  Future<void> _selectLab(String name) async {
+    if (labKey(name) == labKey(_lab.text)) return;
+    if (!await _discardChanges()) {
+      if (mounted) setState(() => _labSelectorRevision++);
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _clearEdits();
+      _lab.text = name;
+      _url.clear();
+      _instructions.clear();
+      _fetched = null;
+    });
+  }
+
+  Future<void> _addLab(AppController controller) async {
+    final name = TextEditingController();
+    final route = DialogRoute<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_priceText(context, 'Add laboratory', 'Labor hinzufügen')),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: InputDecoration(
+            labelText: _priceText(context, 'Laboratory name', 'Laborname'),
+            hintText: 'Bioscientia Mainz',
+          ),
+          onSubmitted: (value) {
+            if (value.trim().isNotEmpty) {
+              Navigator.pop(dialogContext, value.trim());
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(_priceText(context, 'Cancel', 'Abbrechen')),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (name.text.trim().isNotEmpty) {
+                Navigator.pop(dialogContext, name.text.trim());
+              }
+            },
+            child: Text(
+              _priceText(context, 'Add laboratory', 'Labor hinzufügen'),
+            ),
+          ),
+        ],
+      ),
+    );
+    final added = await Navigator.of(context, rootNavigator: true).push(route);
+    await route.completed;
+    name.dispose();
+    if (added == null || !mounted) return;
+    final existing = [
+      ...controller.labNames,
+      ..._newLabs,
+    ].where((lab) => labKey(lab) == labKey(added)).firstOrNull;
+    if (existing == null) setState(() => _newLabs.add(added));
+    await _selectLab(existing ?? added);
   }
 
   Future<void> _fetch(AppController controller) async {
@@ -82,7 +200,7 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
       final text = await controller.fetchLabPriceSource(_url.text);
       if (mounted) setState(() => _fetched = text);
     } on Object catch (error) {
-      if (mounted) setState(() => _error = '$error');
+      if (mounted) setState(() => _error = sanitizeAppErrorMessage('$error'));
     } finally {
       if (mounted) setState(() => _working = false);
     }
@@ -107,55 +225,79 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
         ),
       );
     } on Object catch (error) {
-      if (mounted) setState(() => _error = '$error');
+      if (mounted) setState(() => _error = sanitizeAppErrorMessage('$error'));
     } finally {
       if (mounted) setState(() => _working = false);
     }
   }
 
-  Future<void> _editPrice(AppController controller, {String? target}) async {
-    final choices = <String, String>{
-      for (final marker in controller.biomarkers)
-        if (!marker.deleted && !marker.isCalculated)
-          'm:${marker.id}': marker.displayName,
-      for (final package in controller.biomarkerPackages)
-        if (!package.deleted)
-          'p:${package.id}':
-              '${package.name} · ${_priceText(context, 'Package', 'Paket')}',
-    };
-    if (choices.isEmpty) return;
-    var selected = target ?? choices.keys.first;
-    final price = TextEditingController();
-    final source = TextEditingController();
-    final lab = _lab.text.trim();
-    void seed() {
-      final stored = controller
-          .pricesForLab(lab)
-          .priceFor(
-            selected.substring(2),
-            isPackage: selected.startsWith('p:'),
-          );
-      double? value = stored?.priceEur;
-      if (value == null) {
-        if (selected.startsWith('p:')) {
-          value = controller
-              .pricesForLab(lab)
-              .packages(controller.biomarkerPackages)
-              .firstWhere((item) => item.id == selected.substring(2))
-              .priceEur;
-        } else {
-          value = controller
-              .pricesForLab(lab)
-              .catalog(controller.biomarkers)
-              .firstWhere((item) => item.id == selected.substring(2))
-              .priceEur;
-        }
+  Future<void> _save(AppController controller) async {
+    final markers = <String, double>{};
+    final packages = <String, double>{};
+    _invalid.clear();
+    for (final entry in _edits.entries) {
+      final value = double.tryParse(entry.value.trim().replaceAll(',', '.'));
+      if (value == null || !value.isFinite || value <= 0) {
+        _invalid.add(entry.key);
+      } else {
+        (entry.key.startsWith('p:') ? packages : markers)[entry.key.substring(
+              2,
+            )] =
+            value;
       }
-      price.text = value?.toStringAsFixed(2) ?? '';
-      source.text = stored?.sourceUrl ?? '';
     }
+    if (_invalid.isNotEmpty) {
+      setState(
+        () => _error = _priceText(
+          context,
+          'Enter a positive EUR price for each changed row. Nothing has been saved.',
+          'Gib für jede geänderte Zeile einen positiven Euro-Preis ein. Es wurde nichts gespeichert.',
+        ),
+      );
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _working = true;
+      _error = null;
+    });
+    final count = _edits.length;
+    try {
+      await controller.saveLabPriceValues(
+        labName: _lab.text,
+        biomarkerPrices: markers,
+        packagePrices: packages,
+      );
+      if (!mounted) return;
+      setState(_clearEdits);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _priceText(
+              context,
+              '$count price(s) saved.',
+              '$count Preis(e) gespeichert.',
+            ),
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = sanitizeAppErrorMessage('$error'));
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
 
-    seed();
+  Future<void> _editPrice(AppController controller, _PriceEntry entry) async {
+    final selected = entry.key;
+    final lab = _lab.text;
+    final stored = controller
+        .pricesForLab(lab)
+        .priceFor(selected.substring(2), isPackage: entry.isPackage);
+    final price = TextEditingController(
+      text: entry.price?.toStringAsFixed(2) ?? '',
+    );
+    final source = TextEditingController(text: stored?.sourceUrl ?? '');
     String? error;
     var saving = false;
     final route = DialogRoute<void>(
@@ -167,39 +309,14 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                DropdownButtonFormField<String>(
-                  initialValue: selected,
-                  isExpanded: true,
-                  items: [
-                    for (final entry in choices.entries)
-                      DropdownMenuItem(
-                        value: entry.key,
-                        child: Text(
-                          entry.value,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
-                  onChanged: saving
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            setState(() {
-                              selected = value;
-                              seed();
-                            });
-                          }
-                        },
-                  decoration: InputDecoration(
-                    labelText: _priceText(
-                      context,
-                      'Test or package',
-                      'Test oder Paket',
-                    ),
-                  ),
+                Text(
+                  entry.name,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
+                const SizedBox(height: 16),
                 TextField(
                   controller: price,
+                  autofocus: true,
                   enabled: !saving,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
@@ -286,225 +403,593 @@ class _LabPriceScreenState extends State<LabPriceScreen> {
     source.dispose();
   }
 
+  Widget _priceRow(AppController controller, _PriceEntry entry, bool enabled) {
+    // Include the lab in the field identity so changing laboratories cannot
+    // reuse another laboratory's unsaved input or cursor.
+    final fieldKey = '${labKey(_lab.text)}:${entry.key}';
+    final initial = entry.price?.toStringAsFixed(2) ?? '';
+    final field = _fields.putIfAbsent(
+      fieldKey,
+      () => TextEditingController(text: initial),
+    );
+    final focus = _fieldFocus.putIfAbsent(fieldKey, () => FocusNode());
+    if (!_edits.containsKey(entry.key) &&
+        !focus.hasFocus &&
+        field.text != initial) {
+      field.text = initial;
+    }
+    final strings = AppLocalizations.of(context);
+    final checked = entry.checkedAt == null
+        ? null
+        : strings.formatHistoryDate(entry.checkedAt!.toLocal());
+    return Card(
+      key: ValueKey('row-${entry.key}'),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (entry.isPackage)
+                        Text(
+                          _priceText(context, 'Test package', 'Testpaket'),
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      Text(
+                        entry.name,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        entry.price == null
+                            ? _priceText(
+                                context,
+                                'Price missing',
+                                'Preis fehlt',
+                              )
+                            : checked == null
+                            ? _priceText(
+                                context,
+                                'Not yet checked',
+                                'Noch nicht geprüft',
+                              )
+                            : _priceText(
+                                context,
+                                'Checked $checked',
+                                'Geprüft $checked',
+                              ),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 120,
+                  child: TextField(
+                    key: ValueKey('price-${entry.key}'),
+                    controller: field,
+                    focusNode: focus,
+                    enabled: enabled,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    textInputAction: TextInputAction.next,
+                    decoration: InputDecoration(
+                      labelText: _priceText(context, 'Price (€)', 'Preis (€)'),
+                      hintText: '—',
+                      errorText: _invalid.contains(entry.key)
+                          ? _priceText(
+                              context,
+                              'Invalid price',
+                              'Ungültiger Preis',
+                            )
+                          : null,
+                    ),
+                    onChanged: (value) => setState(() {
+                      final parsed = double.tryParse(
+                        value.trim().replaceAll(',', '.'),
+                      );
+                      if (value == initial ||
+                          (parsed != null && parsed == entry.price)) {
+                        _edits.remove(entry.key);
+                      } else {
+                        _edits[entry.key] = value;
+                      }
+                      _invalid.remove(entry.key);
+                      _error = null;
+                    }),
+                  ),
+                ),
+              ],
+            ),
+            if (_edits.containsKey(entry.key))
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  _priceText(
+                    context,
+                    'Unsaved change',
+                    'Ungespeicherte Änderung',
+                  ),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: enabled && _edits.isEmpty
+                    ? () => _editPrice(controller, entry)
+                    : null,
+                icon: const Icon(Icons.link, size: 16),
+                label: Text(
+                  _priceText(
+                    context,
+                    'Price details / source',
+                    'Preisdetails / Quelle',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _aiImport(AppController controller, bool enabled) => ExpansionTile(
+    key: ValueKey('import-${labKey(_lab.text)}'),
+    leading: const Icon(Icons.auto_awesome_outlined),
+    title: Text(
+      _priceText(context, 'Import prices with AI', 'Preise mit KI übernehmen'),
+    ),
+    subtitle: Text(
+      _priceText(
+        context,
+        'From a website or pasted price list',
+        'Aus einer Webseite oder eingefügten Preisliste',
+      ),
+    ),
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          children: [
+            Text(
+              _priceText(
+                context,
+                'Only the biomarker catalog is sent — no measurements, supplements or symptoms. Review proposals before saving.',
+                'Es wird nur der Biomarkerkatalog gesendet — keine Messwerte, Ergänzungen oder Symptome. Vorschläge vor dem Speichern prüfen.',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _url,
+              enabled: enabled && _edits.isEmpty,
+              keyboardType: TextInputType.url,
+              onChanged: (_) => setState(() => _fetched = null),
+              decoration: InputDecoration(
+                labelText: _priceText(
+                  context,
+                  'Lab price list address (optional)',
+                  'Adresse der Laborpreisliste (optional)',
+                ),
+                hintText: 'https://…',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed:
+                    enabled && _edits.isEmpty && _url.text.trim().isNotEmpty
+                    ? () => _fetch(controller)
+                    : null,
+                icon: const Icon(Icons.download_outlined),
+                label: Text(_priceText(context, 'Fetch page', 'Seite laden')),
+              ),
+            ),
+            if (_fetched != null)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _priceText(
+                          context,
+                          'Read ${_fetched!.length} characters. First lines:',
+                          '${_fetched!.length} Zeichen gelesen. Erste Zeilen:',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _fetched!.split('\n').take(8).join('\n'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _instructions,
+              enabled: enabled && _edits.isEmpty,
+              minLines: 3,
+              maxLines: 8,
+              decoration: InputDecoration(
+                labelText: _priceText(
+                  context,
+                  'Notes or a pasted price list (optional)',
+                  'Hinweise oder eingefügte Preisliste (optional)',
+                ),
+                hintText: _priceText(
+                  context,
+                  'Paste the lab’s prices here.',
+                  'Füge hier die Preise des Labors ein.',
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: enabled && _edits.isEmpty
+                  ? () => _propose(controller)
+                  : null,
+              icon: const Icon(Icons.auto_awesome),
+              label: Text(
+                _priceText(context, 'Suggest prices', 'Preise vorschlagen'),
+              ),
+            ),
+            if (_edits.isNotEmpty)
+              Text(
+                _priceText(
+                  context,
+                  'Save or discard your price changes first.',
+                  'Speichere oder verwirf zuerst deine Preisänderungen.',
+                ),
+              ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _searchField() => TextField(
+    controller: _search,
+    enabled: !_working,
+    onChanged: (_) => setState(() {}),
+    decoration: InputDecoration(
+      prefixIcon: const Icon(Icons.search),
+      labelText: _priceText(
+        context,
+        'Search tests or packages',
+        'Tests oder Pakete suchen',
+      ),
+      suffixIcon: _search.text.isEmpty
+          ? null
+          : IconButton(
+              tooltip: _priceText(context, 'Clear search', 'Suche löschen'),
+              onPressed: () => setState(_search.clear),
+              icon: const Icon(Icons.close),
+            ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<AppController>();
-    final scheme = Theme.of(context).colorScheme;
-    final catalog = controller
-        .pricesForLab(_lab.text.trim().isEmpty ? null : _lab.text.trim())
-        .catalog(controller.biomarkers);
-    final priced = catalog
-        .where((item) => !item.deleted && !item.isCalculated && item.hasPrice)
-        .length;
-    final total = catalog
-        .where((item) => !item.deleted && !item.isCalculated)
-        .length;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _priceText(context, 'Update lab prices', 'Laborpreise aktualisieren'),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        children: [
-          Text(
-            _priceText(
-              context,
-              '$priced of $total biomarkers have a price.',
-              '$priced von $total Biomarkern haben einen Preis.',
-            ),
-            style: Theme.of(context).textTheme.titleMedium,
+    final lab = _lab.text;
+    final enabled = !_working && !controller.busy;
+    final labs = <String, String>{
+      for (final name in [...controller.labNames, ..._newLabs])
+        labKey(name): name,
+      if (lab.isNotEmpty) labKey(lab): lab,
+    }.values.toList();
+    final pricing = controller.pricesForLab(lab);
+    final entries = <_PriceEntry>[
+      for (final marker in pricing.catalog(controller.biomarkers))
+        if (!marker.deleted && !marker.isCalculated)
+          _PriceEntry(
+            key: 'm:${marker.id}',
+            name: marker.displayName,
+            searchText:
+                '${marker.displayName} ${marker.canonicalName} ${marker.synonyms.join(' ')}',
+            price: marker.hasPrice ? marker.priceEur : null,
+            checkedAt: marker.priceCheckedAt,
           ),
-          const SizedBox(height: 4),
-          Text(
-            _priceText(
-              context,
-              'Only the biomarker catalog is sent — no measurements, '
-                  'supplements or symptoms. Nothing is saved until you approve it.',
-              'Es wird nur der Biomarkerkatalog gesendet — keine Messwerte, '
-                  'Ergänzungen oder Symptome. Nichts wird gespeichert, bevor du es freigibst.',
-            ),
-            style: Theme.of(context).textTheme.bodySmall,
+      for (final package in pricing.packages(controller.biomarkerPackages))
+        if (!package.deleted)
+          _PriceEntry(
+            key: 'p:${package.id}',
+            name: package.name,
+            searchText: package.name,
+            price: package.hasPrice ? package.priceEur : null,
+            checkedAt: package.priceCheckedAt,
           ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _lab,
-            enabled: !_working && !controller.busy,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: _priceText(context, 'Laboratory', 'Labor'),
-              helperText: _priceText(
-                context,
-                'Choose an existing lab or enter a new name.',
-                'Wähle ein vorhandenes Labor oder gib einen neuen Namen ein.',
-              ),
-            ),
+    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final markers = entries.where((entry) => !entry.isPackage).toList();
+    final priced = markers.where((entry) => entry.price != null).length;
+    final query = _search.text.trim().toLowerCase();
+    final visible = entries
+        .where(
+          (entry) =>
+              (!_missingOnly || entry.price == null) &&
+              (!_packagesOnly || entry.isPackage) &&
+              (query.isEmpty || entry.searchText.toLowerCase().contains(query)),
+        )
+        .toList();
+    return PopScope(
+      canPop: _edits.isEmpty && !_working,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || _working) return;
+        if (await _discardChanges() && mounted) {
+          setState(_clearEdits);
+          // PopScope must rebuild with canPop before requesting the pop again.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) Navigator.of(context).pop();
+          });
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            _priceText(context, 'Manage lab prices', 'Laborpreise pflegen'),
           ),
-          if (controller.labNames.isNotEmpty)
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final lab in controller.labNames)
-                  ActionChip(
-                    label: Text(lab),
-                    onPressed: _working || controller.busy
-                        ? null
-                        : () => setState(() => _lab.text = lab),
+          bottom: lab.isEmpty
+              ? null
+              : PreferredSize(
+                  preferredSize: const Size.fromHeight(80),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: _searchField(),
                   ),
-              ],
-            ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _working || controller.busy || _lab.text.trim().isEmpty
-                ? null
-                : () => _editPrice(controller),
-            icon: const Icon(Icons.edit_outlined),
-            label: Text(
-              _priceText(
-                context,
-                'Add or edit price',
-                'Preis hinzufügen oder bearbeiten',
-              ),
-            ),
-          ),
-          if (_lab.text.trim().isNotEmpty)
-            ExpansionTile(
-              title: Text(
-                _priceText(
-                  context,
-                  'Stored prices · ${_lab.text.trim()}',
-                  'Gespeicherte Preise · ${_lab.text.trim()}',
                 ),
-              ),
-              children: [
-                for (final marker in catalog.where(
-                  (item) =>
-                      !item.deleted && !item.isCalculated && item.hasPrice,
-                ))
-                  ListTile(
-                    title: Text(marker.displayName),
-                    subtitle: Text('${marker.priceEur!.toStringAsFixed(2)} €'),
-                    trailing: const Icon(Icons.edit_outlined),
-                    onTap: controller.busy
-                        ? null
-                        : () =>
-                              _editPrice(controller, target: 'm:${marker.id}'),
-                  ),
-                for (final package
-                    in controller
-                        .pricesForLab(_lab.text.trim())
-                        .packages(controller.biomarkerPackages)
-                        .where((item) => !item.deleted && item.hasPrice))
-                  ListTile(
-                    leading: const Icon(Icons.inventory_2_outlined),
-                    title: Text(package.name),
-                    subtitle: Text('${package.priceEur!.toStringAsFixed(2)} €'),
-                    trailing: const Icon(Icons.edit_outlined),
-                    onTap: controller.busy
-                        ? null
-                        : () =>
-                              _editPrice(controller, target: 'p:${package.id}'),
-                  ),
-              ],
-            ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _url,
-            keyboardType: TextInputType.url,
-            // Without this the Fetch button reads a stale `_url.text`: nothing
-            // rebuilds on typing, so it stayed disabled after a paste and only
-            // came to life when some unrelated setState happened to run.
-            onChanged: (_) => setState(() => _fetched = null),
-            decoration: InputDecoration(
-              labelText: _priceText(
-                context,
-                'Lab price list address (optional)',
-                'Adresse der Laborpreisliste (optional)',
-              ),
-              hintText: 'https://…',
-            ),
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: _working || _url.text.trim().isEmpty
-                  ? null
-                  : () => _fetch(controller),
-              icon: const Icon(Icons.download_outlined),
-              label: Text(_priceText(context, 'Fetch page', 'Seite laden')),
-            ),
-          ),
-          if (_fetched != null) ...[
-            const SizedBox(height: 8),
-            // The fetched text is shown before it is sent, because "what did
-            // it actually read" is the question every wrong price raises.
-            Card(
+        ),
+        body: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _priceText(
-                        context,
-                        'Read ${_fetched!.length} characters. First lines:',
-                        '${_fetched!.length} Zeichen gelesen. Erste Zeilen:',
+                    if (labs.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        key: ValueKey(
+                          'selected-lab-$lab-$_labSelectorRevision',
+                        ),
+                        initialValue: lab.isEmpty ? null : lab,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: _priceText(context, 'Laboratory', 'Labor'),
+                        ),
+                        items: [
+                          for (final name in labs)
+                            DropdownMenuItem(value: name, child: Text(name)),
+                        ],
+                        onChanged: enabled
+                            ? (value) {
+                                if (value != null) _selectLab(value);
+                              }
+                            : null,
                       ),
-                      style: Theme.of(context).textTheme.labelLarge,
+                    TextButton.icon(
+                      onPressed: enabled ? () => _addLab(controller) : null,
+                      icon: const Icon(Icons.add),
+                      label: Text(
+                        _priceText(
+                          context,
+                          'Add laboratory',
+                          'Labor hinzufügen',
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _fetched!.split('\n').take(8).join('\n'),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    if (lab.isNotEmpty) ...[
+                      Text(
+                        _priceText(
+                          context,
+                          '$priced of ${markers.length} tests priced · ${markers.length - priced} missing',
+                          '$priced von ${markers.length} Tests mit Preis · ${markers.length - priced} fehlen',
+                        ),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _priceText(
+                          context,
+                          'Edit prices below and save your changes together.',
+                          'Preise unten ändern und die Änderungen gemeinsam speichern.',
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          FilterChip(
+                            label: Text(
+                              _priceText(
+                                context,
+                                'Missing prices',
+                                'Fehlende Preise',
+                              ),
+                            ),
+                            selected: _missingOnly,
+                            onSelected: !_working
+                                ? (value) =>
+                                      setState(() => _missingOnly = value)
+                                : null,
+                          ),
+                          FilterChip(
+                            label: Text(
+                              _priceText(
+                                context,
+                                'Test packages',
+                                'Testpakete',
+                              ),
+                            ),
+                            selected: _packagesOnly,
+                            onSelected: !_working
+                                ? (value) =>
+                                      setState(() => _packagesOnly = value)
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
             ),
-          ],
-          const SizedBox(height: 16),
-          TextField(
-            controller: _instructions,
-            minLines: 3,
-            maxLines: 8,
-            decoration: InputDecoration(
-              labelText: _priceText(
-                context,
-                'Notes or a pasted price list (optional)',
-                'Hinweise oder eingefügte Preisliste (optional)',
+            if (_working)
+              const SliverToBoxAdapter(child: LinearProgressIndicator()),
+            if (_error != null)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
               ),
-              hintText: _priceText(
-                context,
-                'Use Labor Bayer, Munich. Only the vitamin panel.',
-                'Nutze Labor Bayer, München. Nur das Vitaminpanel.',
+            if (lab.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyState(
+                  icon: Icons.science_outlined,
+                  title: _priceText(
+                    context,
+                    'Choose a laboratory',
+                    'Wähle ein Labor',
+                  ),
+                  message: _priceText(
+                    context,
+                    'Add a laboratory to enter its test and package prices.',
+                    'Füge ein Labor hinzu, um seine Test- und Paketpreise einzutragen.',
+                  ),
+                ),
+              )
+            else ...[
+              SliverToBoxAdapter(child: _aiImport(controller, enabled)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    visible.isEmpty
+                        ? _priceText(
+                            context,
+                            'No tests match your filters.',
+                            'Keine Tests passen zu deinen Filtern.',
+                          )
+                        : _priceText(
+                            context,
+                            '${visible.length} tests / packages',
+                            '${visible.length} Tests / Pakete',
+                          ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
               ),
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(_error!, style: TextStyle(color: scheme.error)),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                sliver: SliverList.builder(
+                  itemCount: visible.length,
+                  itemBuilder: (context, index) =>
+                      _priceRow(controller, visible[index], enabled),
+                ),
+              ),
+            ],
           ],
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: _working || controller.busy || _lab.text.trim().isEmpty
-                ? null
-                : () => _propose(controller),
-            icon: const Icon(Icons.auto_awesome),
-            label: Text(
-              _priceText(context, 'Suggest prices', 'Preise vorschlagen'),
-            ),
-          ),
-          if (_working) ...[
-            const SizedBox(height: 16),
-            const Center(child: CircularProgressIndicator()),
-          ],
-        ],
+        ),
+        bottomNavigationBar: _edits.isEmpty
+            ? null
+            : SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _priceText(
+                          context,
+                          '${_edits.length} unsaved change(s) · $lab',
+                          '${_edits.length} ungespeicherte Änderung(en) · $lab',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: enabled
+                                ? () async {
+                                    if (await _discardChanges() && mounted) {
+                                      setState(_clearEdits);
+                                    }
+                                  }
+                                : null,
+                            child: Text(
+                              _priceText(context, 'Discard', 'Verwerfen'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: enabled
+                                  ? () => _save(controller)
+                                  : null,
+                              icon: const Icon(Icons.save_outlined),
+                              label: Text(
+                                _priceText(
+                                  context,
+                                  'Save ${_edits.length} prices',
+                                  '${_edits.length} Preise speichern',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
       ),
     );
   }
+}
+
+class _PriceEntry {
+  const _PriceEntry({
+    required this.key,
+    required this.name,
+    required this.searchText,
+    this.price,
+    this.checkedAt,
+  });
+  final String key;
+  final String name;
+  final String searchText;
+  final double? price;
+  final DateTime? checkedAt;
+  bool get isPackage => key.startsWith('p:');
 }
 
 /// Shows every proposed price with what it was read from, and applies the
