@@ -1964,24 +1964,10 @@ class AppController extends ChangeNotifier {
       throw StateError('Calculated results cannot be edited directly.');
     }
     await repository.saveMeasurement(
-      Measurement(
-        id: measurement.id,
-        profileId: measurement.profileId,
-        biomarkerId: measurement.biomarkerId,
-        documentId: measurement.documentId,
-        takenAt: measurement.takenAt,
-        value: measurement.value,
+      measurement.copyWith(
         unit: measurement.unit.trim(),
-        labRefLow: measurement.labRefLow,
-        labRefHigh: measurement.labRefHigh,
-        page: measurement.page,
-        rowText: measurement.rowText,
-        extractionConfidence: measurement.extractionConfidence,
-        flags: measurement.flags,
         notes: measurement.notes.trim(),
-        createdAt: measurement.createdAt,
         updatedAt: DateTime.now(),
-        deleted: measurement.deleted,
       ),
     );
     await _refreshActiveData({
@@ -1989,6 +1975,20 @@ class AppController extends ChangeNotifier {
       _ActiveDataSlice.dueBiomarkers,
     });
   }
+
+  Future<void> setLabReportSelfPaid(
+    String documentId,
+    Iterable<String> measurementIds,
+    bool isSelfPaid,
+  ) => _withBusy(() async {
+    await repository.setLabReportSelfPaid(
+      profileId: _profileId,
+      documentId: documentId,
+      measurementIds: measurementIds,
+      isSelfPaid: isSelfPaid,
+    );
+    await _refreshActiveData({_ActiveDataSlice.measurements});
+  });
 
   Future<void> deleteMeasurement(Measurement measurement) async {
     if (measurement.isCalculated) {

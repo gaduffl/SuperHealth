@@ -12,6 +12,7 @@ import '../biomarkers/biomarker_status_service.dart';
 import '../domain/entities.dart';
 import 'biomarker_detail_sheet.dart';
 import 'common.dart';
+import 'lab_self_paid_selection.dart';
 
 String _reportText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
@@ -131,6 +132,14 @@ class LabReportScreen extends StatelessWidget {
     final statusService = BiomarkerStatusService();
     final now = DateTime.now();
 
+    Future<void> setSelfPaid(Iterable<String> ids, bool value) async {
+      try {
+        await controller.setLabReportSelfPaid(documentId, ids, value);
+      } on Object catch (error) {
+        if (context.mounted) await showAppError(context, error);
+      }
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(document.fileName, overflow: TextOverflow.ellipsis),
@@ -241,6 +250,18 @@ class LabReportScreen extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
             ),
+            if (rows.isNotEmpty)
+              LabSelfPaidSelection(
+                total: rows.length,
+                selected: rows.where((item) => item.isSelfPaid).length,
+                savedReport: true,
+                onMarkAll: controller.busy
+                    ? null
+                    : () => setSelfPaid(rows.map((row) => row.id), true),
+                onClear: controller.busy
+                    ? null
+                    : () => setSelfPaid(rows.map((row) => row.id), false),
+              ),
             if (rows.isEmpty)
               Card(
                 child: ListTile(
@@ -284,6 +305,9 @@ class LabReportScreen extends StatelessWidget {
                               now: now,
                             ),
                       highlighted: row.id == highlightMeasurementId,
+                      onSelfPaidChanged: controller.busy
+                          ? null
+                          : (value) => setSelfPaid([row.id], value),
                     );
                   },
                 ),
@@ -317,12 +341,14 @@ class _ExtractedRow extends StatelessWidget {
     required this.biomarker,
     required this.status,
     required this.highlighted,
+    required this.onSelfPaidChanged,
   });
 
   final Measurement measurement;
   final Biomarker? biomarker;
   final BiomarkerStatus? status;
   final bool highlighted;
+  final ValueChanged<bool>? onSelfPaidChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -335,98 +361,112 @@ class _ExtractedRow extends StatelessWidget {
       // The reading this screen was opened from, so it can be found among
       // forty others without hunting for the number.
       color: highlighted ? theme.colorScheme.secondaryContainer : null,
-      child: ExpansionTile(
-        shape: const Border(),
-        collapsedShape: const Border(),
-        title: Row(
-          children: [
-            Expanded(child: Text(name)),
-            Text(
-              '${measurement.value} ${measurement.unit}',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-        subtitle: Text(
-          [
-            if (measurement.labRefLow != null || measurement.labRefHigh != null)
-              '${_reportText(context, 'Lab ref', 'Laborreferenz')} '
-                  '${measurement.labRefLow ?? '…'}–${measurement.labRefHigh ?? '…'}'
-            else
-              _reportText(
-                context,
-                'No lab range on the report',
-                'Kein Laborbereich im Bericht',
-              ),
-            if (measurement.page != null)
-              _reportText(
-                context,
-                'page ${measurement.page}',
-                'Seite ${measurement.page}',
-              ),
-            if (confidence != null)
-              '${_reportText(context, 'parse', 'Extraktion')} ${(confidence * 100).round()}%',
-          ].join(' · '),
-        ),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (status != null)
-            _Detail(
-              label: _reportText(context, 'Status', 'Status'),
-              value: status!.label,
+          ExpansionTile(
+            shape: const Border(),
+            collapsedShape: const Border(),
+            title: Row(
+              children: [
+                Expanded(child: Text(name)),
+                Text(
+                  '${measurement.value} ${measurement.unit}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
             ),
-          if (measurement.canonicalValue != null &&
-              measurement.canonicalUnit != null)
-            _Detail(
-              label: _reportText(context, 'Standardised', 'Standardisiert'),
-              value:
-                  '${measurement.canonicalValue!.toStringAsPrecision(5)} '
-                  '${measurement.canonicalUnit}',
-            ),
-          if (measurement.conversionStatus == 'unsupported')
-            _Detail(
-              label: _reportText(context, 'Conversion', 'Umrechnung'),
-              value: _reportText(
-                context,
-                'No safe conversion to the standard unit',
-                'Keine sichere Umrechnung in die Standardeinheit',
-              ),
-            ),
-          _Detail(
-            label: _reportText(context, 'Taken', 'Entnommen'),
-            value: DateFormat('dd.MM.yyyy').format(measurement.takenAt),
-          ),
-          if (measurement.notes.trim().isNotEmpty)
-            _Detail(
-              label: _reportText(context, 'Remark', 'Anmerkung'),
-              value: measurement.notes.trim(),
-            ),
-          // What the parser actually read. When a value looks wrong this is
-          // the line that says whether the report or the parser is at fault.
-          if (measurement.rowText?.trim().isNotEmpty == true)
-            _Detail(
-              label: _reportText(context, 'Raw row', 'Rohzeile'),
-              value: measurement.rowText!.trim(),
-              monospace: true,
-            ),
-          if (biomarker case final target?) ...[
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => showBiomarkerDetail(context, target),
-                icon: const Icon(Icons.timeline_outlined),
-                label: Text(
+            subtitle: Text(
+              [
+                if (measurement.labRefLow != null ||
+                    measurement.labRefHigh != null)
+                  '${_reportText(context, 'Lab ref', 'Laborreferenz')} '
+                      '${measurement.labRefLow ?? '…'}–${measurement.labRefHigh ?? '…'}'
+                else
                   _reportText(
                     context,
-                    'History for ${target.displayName}',
-                    'Verlauf für ${target.displayName}',
+                    'No lab range on the report',
+                    'Kein Laborbereich im Bericht',
+                  ),
+                if (measurement.page != null)
+                  _reportText(
+                    context,
+                    'page ${measurement.page}',
+                    'Seite ${measurement.page}',
+                  ),
+                if (confidence != null)
+                  '${_reportText(context, 'parse', 'Extraktion')} ${(confidence * 100).round()}%',
+              ].join(' · '),
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (status != null)
+                _Detail(
+                  label: _reportText(context, 'Status', 'Status'),
+                  value: status!.label,
+                ),
+              if (measurement.canonicalValue != null &&
+                  measurement.canonicalUnit != null)
+                _Detail(
+                  label: _reportText(context, 'Standardised', 'Standardisiert'),
+                  value:
+                      '${measurement.canonicalValue!.toStringAsPrecision(5)} '
+                      '${measurement.canonicalUnit}',
+                ),
+              if (measurement.conversionStatus == 'unsupported')
+                _Detail(
+                  label: _reportText(context, 'Conversion', 'Umrechnung'),
+                  value: _reportText(
+                    context,
+                    'No safe conversion to the standard unit',
+                    'Keine sichere Umrechnung in die Standardeinheit',
                   ),
                 ),
+              _Detail(
+                label: _reportText(context, 'Taken', 'Entnommen'),
+                value: DateFormat('dd.MM.yyyy').format(measurement.takenAt),
               ),
+              if (measurement.notes.trim().isNotEmpty)
+                _Detail(
+                  label: _reportText(context, 'Remark', 'Anmerkung'),
+                  value: measurement.notes.trim(),
+                ),
+              // What the parser actually read. When a value looks wrong this is
+              // the line that says whether the report or the parser is at fault.
+              if (measurement.rowText?.trim().isNotEmpty == true)
+                _Detail(
+                  label: _reportText(context, 'Raw row', 'Rohzeile'),
+                  value: measurement.rowText!.trim(),
+                  monospace: true,
+                ),
+              if (biomarker case final target?) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => showBiomarkerDetail(context, target),
+                    icon: const Icon(Icons.timeline_outlined),
+                    label: Text(
+                      _reportText(
+                        context,
+                        'History for ${target.displayName}',
+                        'Verlauf für ${target.displayName}',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: LabSelfPaidCheckbox(
+              key: ValueKey('self-paid-${measurement.id}'),
+              value: measurement.isSelfPaid,
+              onChanged: onSelfPaidChanged,
             ),
-          ],
+          ),
         ],
       ),
     );

@@ -970,6 +970,15 @@ changed rows get a new checked date; source URLs survive a manual price change,
 but a quote for the previous amount does not. Keep the AI import separate from
 pending manual edits, so applying a proposal cannot overwrite an unseen draft.
 
+**IGeL is a per-result user mark, not a biomarker price or coverage claim.**
+`Measurement.selfPaidFlag` in the existing `flags_json` carries self-payment
+through sync, backup and legacy import without a schema change. Unmarked means
+no payment information, never insurance-paid. Parser candidates default off;
+only the review UI sets the mark. Report edits update only this flag and the
+changed row's timestamp in a transaction scoped to its live report and profile;
+other extraction flags survive. Ordinary measurement edits use `copyWith`, so
+editing a value cannot lose the payment mark or extraction provenance.
+
 **A lab plan retains the offers used to draft it.** The digest, read-only tools,
 complete package and item prices all use the same `LabCatalogPricing` selection.
 The package receipt includes the lab, including when the numeric prices match.
