@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:super_health/ai/ai_models.dart';
 import 'package:super_health/ai/ai_settings.dart';
@@ -14,6 +15,90 @@ import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'review saves IGeL only on chosen candidates and retains confidence flags',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Alex');
+      final snapshot = SnapshotService(database, repository);
+      final service = DocumentParsingService(
+        repository: repository,
+        keyStore: _KeyStore(),
+        oneDriveService: _SignedOutOneDrive(snapshot),
+      );
+      final directory = await Directory.systemTemp.createTemp('igel-import-');
+      addTearDown(() => directory.delete(recursive: true));
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async => directory.path);
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      final report = ParsedLabReport(
+        profileId: profile.id,
+        fileName: 'fixture.pdf',
+        pdfBytes: Uint8List.fromList(utf8.encode('%PDF-1.4\n%%EOF')),
+        sha256: 'fixture-hash',
+        provider: AiProvider.openai,
+        model: 'fixture-model',
+        warnings: const [],
+        errors: const [],
+        measurements: const [
+          ParsedMeasurementCandidate(
+            reportedName: 'Marker A',
+            value: 1,
+            unit: 'mg/dL',
+            confidence: 0.7,
+          ),
+          ParsedMeasurementCandidate(
+            reportedName: 'Marker B',
+            value: 2,
+            unit: 'mg/dL',
+            confidence: 0.9,
+          ),
+        ],
+      );
+      final reviewed = [
+        report.measurements.first.copyWith(isSelfPaid: true),
+        report.measurements.last,
+      ];
+      await expectLater(
+        service.saveAfterExplicitReview(
+          report: report,
+          reviewedMeasurements: reviewed,
+          reportDate: DateTime(2026, 1, 1),
+          reportComment: '',
+          userConfirmed: false,
+        ),
+        throwsStateError,
+      );
+      expect(await repository.reportedMeasurements(profile.id), isEmpty);
+      await service.saveAfterExplicitReview(
+        report: report,
+        reviewedMeasurements: reviewed,
+        reportDate: DateTime(2026, 1, 1),
+        reportComment: '',
+        userConfirmed: true,
+      );
+      final rows = await repository.reportedMeasurements(profile.id);
+      expect(rows.singleWhere((row) => row.value == 1).isSelfPaid, isTrue);
+      expect(
+        rows.singleWhere((row) => row.value == 1).flags,
+        contains('low_confidence'),
+      );
+      expect(rows.singleWhere((row) => row.value == 2).isSelfPaid, isFalse);
+    },
+  );
+
   test(
     'reviewed parser candidates can replace or clear every editable field',
     () {
@@ -28,6 +113,7 @@ void main() {
         rowText: 'Original source row',
         confidence: 0.7,
         notes: 'Parser note',
+        isSelfPaid: true,
       );
 
       final edited = candidate.copyWith(
@@ -51,6 +137,8 @@ void main() {
       expect(edited.rowText, 'Original source row');
       expect(edited.confidence, 0.7);
       expect(edited.notes, 'User checked this row');
+      expect(edited.isSelfPaid, isTrue);
+      expect(edited.copyWith(isSelfPaid: false).isSelfPaid, isFalse);
     },
   );
 
@@ -89,6 +177,7 @@ void main() {
                                   'ref_high': 'Infinity',
                                   'page': '-Infinity',
                                   'confidence': 'NaN',
+                                  'is_self_paid': true,
                                 },
                                 {
                                   'reported_name': 'Discard NaN',
@@ -143,6 +232,7 @@ void main() {
         (item) => item.reportedName == 'ApoB',
       );
       expect(candidate.value, -4.5);
+      expect(candidate.isSelfPaid, isFalse);
       expect(candidate.value.isFinite, isTrue);
       expect(candidate.refLow, isNull);
       expect(candidate.refHigh, isNull);
@@ -177,4 +267,11 @@ void main() {
 class _KeyStore extends ApiKeyStore {
   @override
   Future<String?> read(AiProvider provider) async => 'test-key';
+}
+
+class _SignedOutOneDrive extends OneDriveService {
+  _SignedOutOneDrive(super.snapshotService);
+
+  @override
+  Future<bool> isSignedIn() async => false;
 }

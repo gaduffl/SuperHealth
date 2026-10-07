@@ -1606,6 +1606,54 @@ class HealthRepository {
     );
   }
 
+  Future<void> setLabReportSelfPaid({
+    required String profileId,
+    required String documentId,
+    required Iterable<String> measurementIds,
+    required bool isSelfPaid,
+  }) async {
+    final ids = measurementIds.toSet();
+    if (ids.isEmpty) return;
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final documents = await txn.query(
+        'documents',
+        columns: ['id'],
+        where: 'id = ? AND profile_id = ? AND deleted = 0',
+        whereArgs: [documentId, profileId],
+      );
+      if (documents.isEmpty) {
+        throw StateError('The lab report is no longer available.');
+      }
+      final rows = await txn.query(
+        'measurements',
+        where: 'profile_id = ? AND document_id = ? AND deleted = 0',
+        whereArgs: [profileId, documentId],
+      );
+      final byId = {for (final row in rows) '${row['id']}': row};
+      if (!byId.keys.toSet().containsAll(ids)) {
+        throw StateError('A selected result is no longer in this lab report.');
+      }
+      final now = DateTime.now();
+      for (final id in ids) {
+        final measurement = Measurement.fromMap(byId[id]!);
+        if (measurement.isSelfPaid == isSelfPaid) continue;
+        final updated = measurement
+            .copyWith(isSelfPaid: isSelfPaid, updatedAt: now)
+            .toMap();
+        await txn.update(
+          'measurements',
+          {
+            'flags_json': updated['flags_json'],
+            'updated_at': updated['updated_at'],
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      }
+    });
+  }
+
   Future<Map<String, Object?>> measurementMapWithCanonicalUnits(
     DatabaseExecutor db,
     Measurement measurement,

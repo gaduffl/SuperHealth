@@ -1249,6 +1249,51 @@ class Measurement {
   /// Calculated rows are not source evidence and must not be edited directly.
   bool get isCalculated => conversionStatus == 'calculated';
 
+  static const selfPaidFlag = 'self_paid';
+
+  /// An unchecked result means unmarked, not confirmed insurance coverage.
+  bool get isSelfPaid => flags.contains(selfPaidFlag);
+
+  Measurement copyWith({
+    DateTime? takenAt,
+    double? value,
+    String? unit,
+    double? labRefLow,
+    bool clearLabRefLow = false,
+    double? labRefHigh,
+    bool clearLabRefHigh = false,
+    String? notes,
+    bool? isSelfPaid,
+    DateTime? updatedAt,
+  }) => Measurement(
+    id: id,
+    profileId: profileId,
+    biomarkerId: biomarkerId,
+    documentId: documentId,
+    takenAt: takenAt ?? this.takenAt,
+    value: value ?? this.value,
+    unit: unit ?? this.unit,
+    canonicalValue: canonicalValue,
+    canonicalUnit: canonicalUnit,
+    conversionStatus: conversionStatus,
+    labRefLow: clearLabRefLow ? null : labRefLow ?? this.labRefLow,
+    labRefHigh: clearLabRefHigh ? null : labRefHigh ?? this.labRefHigh,
+    page: page,
+    rowText: rowText,
+    extractionConfidence: extractionConfidence,
+    flags: isSelfPaid == null
+        ? flags
+        : [
+            for (final flag in flags)
+              if (flag != selfPaidFlag) flag,
+            if (isSelfPaid) selfPaidFlag,
+          ],
+    notes: notes ?? this.notes,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    deleted: deleted,
+  );
+
   Map<String, Object?> toMap() => {
     'id': id,
     'profile_id': profileId,

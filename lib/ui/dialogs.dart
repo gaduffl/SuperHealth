@@ -2220,23 +2220,15 @@ Future<void> showAddMeasurementDialog(
           );
         } else {
           await controller.updateMeasurement(
-            Measurement(
-              id: existing.id,
-              profileId: existing.profileId,
-              biomarkerId: existing.biomarkerId,
-              documentId: existing.documentId,
+            existing.copyWith(
               takenAt: date,
               value: parsed,
               unit: unit.text,
               labRefLow: parseOptionalDouble(low.text),
+              clearLabRefLow: parseOptionalDouble(low.text) == null,
               labRefHigh: parseOptionalDouble(high.text),
-              page: existing.page,
-              rowText: existing.rowText,
-              extractionConfidence: existing.extractionConfidence,
-              flags: existing.flags,
+              clearLabRefHigh: parseOptionalDouble(high.text) == null,
               notes: notes.text,
-              createdAt: existing.createdAt,
-              updatedAt: DateTime.now(),
             ),
           );
         }

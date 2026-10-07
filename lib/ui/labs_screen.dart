@@ -34,6 +34,7 @@ import 'dialogs.dart';
 import 'interaction_findings_view.dart';
 import 'lab_price_screen.dart';
 import 'lab_report_screen.dart';
+import 'lab_self_paid_selection.dart';
 import 'dose_underlay.dart';
 import 'plan_coverage_view.dart';
 import 'record_lookup_labels.dart';
@@ -1844,13 +1845,14 @@ Future<void> _importLabPdf(
       bytes: bytes,
     );
     if (!context.mounted) return;
-    await _reviewParsedReport(context, controller, report);
+    await reviewParsedLabReport(context, controller, report);
   } on Object catch (error) {
     if (context.mounted) await showAppError(context, error);
   }
 }
 
-Future<void> _reviewParsedReport(
+/// Payment and mapping choices stay in memory until the report is approved.
+Future<void> reviewParsedLabReport(
   BuildContext context,
   AppController controller,
   ParsedLabReport report,
@@ -1949,6 +1951,21 @@ Future<void> _reviewParsedReport(
                 ),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
+              if (candidates.isNotEmpty)
+                LabSelfPaidSelection(
+                  total: candidates.length,
+                  selected: candidates.where((item) => item.isSelfPaid).length,
+                  onMarkAll: () => setState(() {
+                    for (var i = 0; i < candidates.length; i++) {
+                      candidates[i] = candidates[i].copyWith(isSelfPaid: true);
+                    }
+                  }),
+                  onClear: () => setState(() {
+                    for (var i = 0; i < candidates.length; i++) {
+                      candidates[i] = candidates[i].copyWith(isSelfPaid: false);
+                    }
+                  }),
+                ),
               const SizedBox(height: 8),
               for (var index = 0; index < candidates.length; index++)
                 Card(
@@ -2051,6 +2068,15 @@ Future<void> _reviewParsedReport(
                             candidates[index] = candidates[index].copyWith(
                               biomarkerId: value == temporary ? null : value,
                               clearMapping: value == temporary,
+                            );
+                          }),
+                        ),
+                        LabSelfPaidCheckbox(
+                          key: ValueKey('self-paid-$index'),
+                          value: candidates[index].isSelfPaid,
+                          onChanged: (value) => setState(() {
+                            candidates[index] = candidates[index].copyWith(
+                              isSelfPaid: value,
                             );
                           }),
                         ),

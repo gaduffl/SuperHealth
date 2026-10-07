@@ -30,6 +30,7 @@ class ParsedMeasurementCandidate {
     this.page,
     this.rowText,
     this.notes = '',
+    this.isSelfPaid = false,
   });
 
   final String? biomarkerId;
@@ -43,6 +44,7 @@ class ParsedMeasurementCandidate {
   final double confidence;
   final bool hasExtractionConfidence;
   final String notes;
+  final bool isSelfPaid;
 
   ParsedMeasurementCandidate copyWith({
     String? biomarkerId,
@@ -60,6 +62,7 @@ class ParsedMeasurementCandidate {
     double? confidence,
     bool? hasExtractionConfidence,
     String? notes,
+    bool? isSelfPaid,
   }) => ParsedMeasurementCandidate(
     biomarkerId: clearMapping ? null : biomarkerId ?? this.biomarkerId,
     reportedName: reportedName ?? this.reportedName,
@@ -73,6 +76,7 @@ class ParsedMeasurementCandidate {
     hasExtractionConfidence:
         hasExtractionConfidence ?? this.hasExtractionConfidence,
     notes: notes ?? this.notes,
+    isSelfPaid: isSelfPaid ?? this.isSelfPaid,
   );
 }
 
@@ -325,10 +329,12 @@ class DocumentParsingService {
               ? candidate.confidence
               : null,
           notes: candidate.notes,
-          flags:
-              candidate.hasExtractionConfidence && candidate.confidence < 0.85
-              ? const ['low_confidence']
-              : const [],
+          flags: [
+            if (candidate.hasExtractionConfidence &&
+                candidate.confidence < 0.85)
+              'low_confidence',
+            if (candidate.isSelfPaid) Measurement.selfPaidFlag,
+          ],
           createdAt: now,
           updatedAt: now,
         ),

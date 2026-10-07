@@ -99,3 +99,22 @@ The advisor may read text files in its profile workspace and propose a create, r
 ## Safety
 
 SuperHealth is a personal research and planning tool. Do not use it to diagnose illness or to start, stop, or change prescription medication without a qualified clinician. Seek urgent medical care for red-flag or emergency symptoms.
+
+## Self-paid lab results (IGeL)
+
+After parsing a PDF, tick **Self-paid (IGeL)** on the results you paid for
+yourself. Use **Mark all IGeL** for a fully self-paid report, then untick any
+exceptions. The marks are saved when you choose **Save PDF + results**;
+discarding the review saves nothing. Unmarked results have no payment
+information; they are not labelled as insurance-paid.
+
+You can also change these marks in a saved lab report's **Extracted results**.
+Those changes save immediately, individually or for the whole report, and
+travel with the results in sync and backups.
+
+Deutsch: Nach der PDF-Auswertung bei den selbst bezahlten Ergebnissen
+**Selbst bezahlt (IGeL)** aktivieren. **Alle als IGeL markieren** markiert den
+ganzen Bericht; Ausnahmen können einzeln abgewählt werden. Im Prüfdialog werden
+die Markierungen erst mit **PDF und Ergebnisse speichern** übernommen. Im
+bereits gespeicherten Laborbericht werden Änderungen sofort gespeichert.
+Nicht markiert bedeutet keine Zahlungsangabe.
