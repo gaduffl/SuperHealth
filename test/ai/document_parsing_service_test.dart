@@ -262,6 +262,221 @@ void main() {
       await database.close();
     },
   );
+
+  test(
+    'a result printed as a limit is imported at the limit and keeps its comparator in the note',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Alex');
+      final service = DocumentParsingService(
+        repository: repository,
+        keyStore: _KeyStore(),
+        oneDriveService: _SignedOutOneDrive(
+          SnapshotService(database, repository),
+        ),
+        dio: _openAiParserReturning([
+          {
+            'reported_name': 'Marker Low',
+            'value': '<0.2',
+            'unit': 'mg/L',
+            'ref_high': 5,
+            'row_text': 'Marker Low <0,2 mg/l <5,0',
+          },
+          {'reported_name': 'Marker High', 'value': '> 90', 'unit': 'mL/min'},
+          {
+            'reported_name': 'Marker Bounded',
+            'value': '≤0,5',
+            'unit': 'mg/dL',
+            'notes': 'Sample haemolysed',
+          },
+          {
+            'reported_name': 'Marker Plain',
+            'value': 1.5,
+            'unit': 'mg/dL',
+            'notes': ' Parser note ',
+          },
+          {
+            'reported_name': 'Marker Without Figure',
+            'value': '<',
+            'unit': 'mg/L',
+          },
+        ]),
+      );
+      final directory = await Directory.systemTemp.createTemp('limit-import-');
+      addTearDown(() => directory.delete(recursive: true));
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async => directory.path);
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+
+      final report = await service.parse(
+        profileId: profile.id,
+        fileName: 'report.pdf',
+        pdfBytes: Uint8List.fromList(utf8.encode('%PDF-1.4\n%%EOF')),
+        settings: const AiTaskSettings(
+          provider: AiProvider.openai,
+          model: 'gpt-5.6',
+        ),
+      );
+
+      final byName = {
+        for (final item in report.measurements) item.reportedName: item,
+      };
+      expect(byName.keys, [
+        'Marker Low',
+        'Marker High',
+        'Marker Bounded',
+        'Marker Plain',
+      ]);
+      expect(byName['Marker Low']!.value, 0.2);
+      expect(byName['Marker Low']!.refHigh, 5);
+      expect(
+        byName['Marker Low']!.notes,
+        "Reported as <0.2 mg/L, below the lab's reporting limit; "
+        'saved as that limit.',
+      );
+      expect(byName['Marker High']!.value, 90);
+      expect(
+        byName['Marker High']!.notes,
+        startsWith('Reported as > 90 mL/min, above'),
+      );
+      expect(byName['Marker Bounded']!.value, 0.5);
+      expect(
+        byName['Marker Bounded']!.notes,
+        allOf(
+          startsWith('Reported as ≤0,5 mg/dL, below'),
+          endsWith('\nSample haemolysed'),
+        ),
+      );
+      expect(byName['Marker Plain']!.value, 1.5);
+      expect(byName['Marker Plain']!.notes, 'Parser note');
+      expect(
+        report.warnings.join('\n'),
+        contains('Skipped an incomplete measurement row'),
+      );
+
+      await service.saveAfterExplicitReview(
+        report: report,
+        reviewedMeasurements: report.measurements,
+        reportDate: DateTime(2026, 1, 1),
+        reportComment: '',
+        userConfirmed: true,
+      );
+      final saved = (await repository.reportedMeasurements(
+        profile.id,
+      )).singleWhere((row) => row.notes.contains('<0.2 mg/L'));
+      expect(saved.value, 0.2);
+      expect(saved.unit, 'mg/L');
+      expect(saved.labRefHigh, 5);
+    },
+  );
+
+  test(
+    'a reference range printed with one limit keeps that side and leaves the other open',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Alex');
+      final service = DocumentParsingService(
+        repository: repository,
+        keyStore: _KeyStore(),
+        oneDriveService: _SignedOutOneDrive(
+          SnapshotService(database, repository),
+        ),
+        dio: _openAiParserReturning([
+          for (final (name, low, high) in const [
+            ('Upper As Number', null, 5),
+            ('Upper As Printed', '', '<5,0'),
+            ('Lower As Printed', '> 60', null),
+            ('Lower Under The Upper Key', null, '≥60'),
+            ('Upper Under Both Keys', '<5', '<5'),
+            ('Two Upper Bounds', '<5', 10),
+          ])
+            {
+              'reported_name': name,
+              'value': 1,
+              'unit': 'mg/L',
+              'ref_low': low,
+              'ref_high': high,
+            },
+        ]),
+      );
+
+      final report = await service.parse(
+        profileId: profile.id,
+        fileName: 'report.pdf',
+        pdfBytes: Uint8List.fromList(utf8.encode('%PDF-1.4\n%%EOF')),
+        settings: const AiTaskSettings(
+          provider: AiProvider.openai,
+          model: 'gpt-5.6',
+        ),
+      );
+
+      expect(
+        {
+          for (final item in report.measurements)
+            item.reportedName: (low: item.refLow, high: item.refHigh),
+        },
+        {
+          'Upper As Number': (low: null, high: 5.0),
+          'Upper As Printed': (low: null, high: 5.0),
+          'Lower As Printed': (low: 60.0, high: null),
+          'Lower Under The Upper Key': (low: 60.0, high: null),
+          'Upper Under Both Keys': (low: null, high: 5.0),
+          'Two Upper Bounds': (low: null, high: null),
+        },
+      );
+      expect(report.warnings, [
+        'Ignored conflicting lab reference bounds for Two Upper Bounds.',
+      ]);
+    },
+  );
+}
+
+Dio _openAiParserReturning(List<Map<String, Object?>> measurements) {
+  final parserOutput = jsonEncode({
+    'document': const {},
+    'warnings': const [],
+    'errors': const [],
+    'measurements': measurements,
+  });
+  return Dio()
+    ..interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) => handler.resolve(
+          Response(
+            requestOptions: options,
+            data: options.path.endsWith('/v1/files')
+                ? {'id': 'file-1'}
+                : options.path.endsWith('/v1/responses')
+                ? {
+                    'output': [
+                      {
+                        'content': [
+                          {'text': parserOutput},
+                        ],
+                      },
+                    ],
+                  }
+                : <String, Object?>{},
+          ),
+        ),
+      ),
+    );
 }
 
 class _KeyStore extends ApiKeyStore {
