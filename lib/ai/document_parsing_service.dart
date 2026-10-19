@@ -701,9 +701,9 @@ class DocumentParsingService {
     for (final value in rows is List ? rows.whereType<Map>() : const <Map>[]) {
       final row = Map<String, Object?>.from(value);
       final reportedName = row['reported_name']?.toString().trim() ?? '';
-      final parsedValue = _number(row['value']);
       final unit = row['unit']?.toString().trim() ?? '';
-      if (reportedName.isEmpty || parsedValue == null || unit.isEmpty) {
+      final reported = _reportedValue(row['value'], unit);
+      if (reportedName.isEmpty || reported == null || unit.isEmpty) {
         warnings.add(
           'Skipped an incomplete measurement row: ${jsonEncode(row)}',
         );
@@ -739,11 +739,12 @@ class DocumentParsingService {
         page = null;
         warnings.add('Ignored a measurement page below 1 for $reportedName.');
       }
+      final parserNote = row['notes']?.toString().trim() ?? '';
       candidates.add(
         ParsedMeasurementCandidate(
           biomarkerId: mapped?.id,
           reportedName: reportedName,
-          value: parsedValue,
+          value: reported.value,
           unit: unit,
           refLow: refLow,
           refHigh: refHigh,
@@ -751,7 +752,10 @@ class DocumentParsingService {
           rowText: row['row_text']?.toString(),
           confidence: confidence,
           hasExtractionConfidence: hasExtractionConfidence,
-          notes: row['notes']?.toString() ?? '',
+          notes: [
+            ?reported.note,
+            if (parserNote.isNotEmpty) parserNote,
+          ].join('\n'),
         ),
       );
     }
@@ -805,6 +809,36 @@ class DocumentParsingService {
     return parsed != null && parsed.isFinite ? parsed : null;
   }
 
+  static final _limitComparator = RegExp(r'^(?:<=|>=|[<>≤≥])\s*');
+
+  /// The row's value, including one the report printed as a limit.
+  ///
+  /// `<0.2` is a result below what the lab reports, not a missing one, and the
+  /// limit is the only figure the report gives for it: recording the limit
+  /// invents nothing, where zero or half of it would. The note carries the
+  /// comparator wherever the number goes, so the limit is never read as a
+  /// measured value. Only the value accepts a comparator; reference bounds,
+  /// pages and confidences keep the strict [_number].
+  ({double value, String? note})? _reportedValue(Object? raw, String unit) {
+    final text = raw is String ? raw.trim() : null;
+    final comparator = text == null ? null : _limitComparator.firstMatch(text);
+    if (text == null || comparator == null) {
+      final value = _number(raw);
+      return value == null ? null : (value: value, note: null);
+    }
+    final value = _number(text.substring(comparator.end));
+    if (value == null) return null;
+    final side = text.startsWith('<') || text.startsWith('≤')
+        ? 'below'
+        : 'above';
+    return (
+      value: value,
+      note:
+          'Reported as $text $unit, $side the lab\'s reporting limit; '
+          'saved as that limit.',
+    );
+  }
+
   double? _optionalNumber(
     Map<String, Object?> row,
     String key,
@@ -833,6 +867,7 @@ MAPPING RULES
 NUMBERS AND UNITS
 - Parse German or English decimal separators. Convert commas to decimal points and strip thousands separators.
 - Keep the unit string exactly as printed. Do not infer units, convert values, or calculate derived markers.
+- A result printed as a limit, such as "<0.2" or "> 90", is a result, not a missing value. Return its value as a string that keeps the comparator ("<0.2", ">90"); never drop the row or return null for it.
 - Extract lab reference ranges exactly as printed.
 
 DATES
