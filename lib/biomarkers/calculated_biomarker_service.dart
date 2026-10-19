@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 
 import '../domain/entities.dart';
+import 'leukocyte_differential.dart';
 import 'unit_conversion_service.dart';
 
 /// Builds deterministic calculated biomarkers from stored source evidence.
@@ -10,7 +11,11 @@ import 'unit_conversion_service.dart';
 /// second copy that could become stale.
 class CalculatedBiomarkerService {
   CalculatedBiomarkerService({UnitConversionService? unitConversions})
-    : _unitConversions = unitConversions ?? UnitConversionService();
+    : _unitConversions = unitConversions ?? UnitConversionService(),
+      _leukocytes = LeukocyteDifferential(
+        unitConversions: unitConversions,
+        pairWindow: sourcePairWindow,
+      );
 
   static const homa1CanonicalName = 'homa1_ir';
   static const homa1FallbackId = 'calculated_homa1_ir';
@@ -32,6 +37,7 @@ class CalculatedBiomarkerService {
   ];
 
   final UnitConversionService _unitConversions;
+  final LeukocyteDifferential _leukocytes;
 
   static bool isHoma1(Biomarker biomarker) =>
       biomarker.canonicalName == homa1CanonicalName ||
@@ -41,12 +47,37 @@ class CalculatedBiomarkerService {
       measurement.conversionStatus == 'calculated' &&
       measurement.flags.contains(homa1Flag);
 
+  static bool isDerivedLeukocyteCount(Measurement measurement) =>
+      measurement.conversionStatus == 'calculated' &&
+      measurement.flags.contains(LeukocyteDifferential.flag);
+
+  /// Every calculated measurement the stored rows support, newest first.
+  List<Measurement> derive({
+    required List<Biomarker> biomarkers,
+    required List<Measurement> measurements,
+  }) => [
+    ..._deriveHoma1(biomarkers: biomarkers, measurements: measurements),
+    ..._leukocytes.derive(biomarkers: biomarkers, measurements: measurements),
+  ]..sort((a, b) => b.takenAt.compareTo(a.takenAt));
+
+  /// Catalog rows a calculation needs and the catalog lacks; see
+  /// [LeukocyteDifferential.missingBiomarkers].
+  List<Biomarker> missingBiomarkers({
+    required List<Biomarker> biomarkers,
+    required List<Measurement> measurements,
+    required DateTime now,
+  }) => _leukocytes.missingBiomarkers(
+    biomarkers: biomarkers,
+    measurements: measurements,
+    now: now,
+  );
+
   /// Adds HOMA1-IR only when the stored rows form a defensible fasting pair.
   ///
   /// Inputs must fall on the same recorded calendar date and either share a
   /// source document or be no more than six hours apart. Each input is used at
   /// most once, and a reported HOMA1 value suppresses a duplicate that day.
-  List<Measurement> derive({
+  List<Measurement> _deriveHoma1({
     required List<Biomarker> biomarkers,
     required List<Measurement> measurements,
   }) {

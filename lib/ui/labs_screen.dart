@@ -2864,8 +2864,14 @@ class _BiomarkerDashboardSection extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${latest.value} ${latest.unit} · '
-                        '${DateFormat('yyyy-MM-dd').format(latest.takenAt)}',
+                        [
+                          '${latest.value} ${latest.unit}',
+                          DateFormat('yyyy-MM-dd').format(latest.takenAt),
+                          // A calculated count on a measured test's card would
+                          // otherwise read as a result the lab reported.
+                          if (latest.isCalculated)
+                            _labsText(context, 'calculated', 'berechnet'),
+                        ].join(' · '),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
@@ -4251,6 +4257,8 @@ class _BiomarkerTile extends StatelessWidget {
             '${latest!.value} ${latest!.unit} · ${DateFormat.yMMMd().format(latest!.takenAt)}'
           else
             _labsText(context, 'No result yet', 'Noch kein Ergebnis'),
+          if (latest?.isCalculated == true && !biomarker.isCalculated)
+            _labsText(context, 'calculated', 'berechnet'),
           _localizedStatusLabel(context, status),
           if (latest?.conversionStatus == 'unsupported')
             _labsText(

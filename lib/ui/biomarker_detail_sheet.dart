@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../biomarkers/biomarker_status_service.dart';
+import '../biomarkers/calculated_biomarker_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import 'biomarker_lists_sheet.dart';
@@ -785,11 +786,20 @@ class _BiomarkerDetail extends StatelessWidget {
                           ),
                           trailing: value.isCalculated
                               ? Tooltip(
-                                  message: _detailText(
-                                    context,
-                                    'Calculated automatically from fasting glucose and fasting insulin',
-                                    'Automatisch aus Nüchternglukose und Nüchterninsulin berechnet',
-                                  ),
+                                  message:
+                                      CalculatedBiomarkerService.isDerivedLeukocyteCount(
+                                        value,
+                                      )
+                                      ? _detailText(
+                                          context,
+                                          'Calculated automatically from the leukocyte count and the differential blood count',
+                                          'Automatisch aus Leukozytenzahl und Differentialblutbild berechnet',
+                                        )
+                                      : _detailText(
+                                          context,
+                                          'Calculated automatically from fasting glucose and fasting insulin',
+                                          'Automatisch aus Nüchternglukose und Nüchterninsulin berechnet',
+                                        ),
                                   child: const Icon(Icons.calculate_outlined),
                                 )
                               : PopupMenuButton<String>(

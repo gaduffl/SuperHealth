@@ -1596,6 +1596,45 @@ class HealthRepository {
       ..sort((a, b) => b.takenAt.compareTo(a.takenAt));
   }
 
+  /// Adds the catalog rows the calculations over [measurements] need and
+  /// [biomarkers] lacks, and returns the ones it added.
+  ///
+  /// A row whose id or name is already taken is skipped, deleted ones
+  /// included: a marker the owner removed stays removed, and a catalog that
+  /// quietly brought it back would be one nobody could tidy.
+  Future<List<Biomarker>> installDerivedBiomarkers({
+    required List<Biomarker> biomarkers,
+    required List<Measurement> measurements,
+  }) async {
+    final missing = _calculatedBiomarkers.missingBiomarkers(
+      biomarkers: biomarkers,
+      measurements: measurements,
+      now: DateTime.now(),
+    );
+    if (missing.isEmpty) return const [];
+    final db = await _database.database;
+    return db.transaction((txn) async {
+      final installed = <Biomarker>[];
+      for (final biomarker in missing) {
+        final taken = await txn.query(
+          'biomarkers',
+          columns: ['id'],
+          where: 'id = ? OR (canonical_name = ? AND deleted = 0)',
+          whereArgs: [biomarker.id, biomarker.canonicalName],
+          limit: 1,
+        );
+        if (taken.isNotEmpty) continue;
+        _validateBiomarker(biomarker);
+        await txn.insert(
+          'biomarkers',
+          _canonicalUnits('biomarkers', biomarker.toMap()),
+        );
+        installed.add(biomarker);
+      }
+      return installed;
+    });
+  }
+
   Future<void> saveMeasurement(Measurement measurement) async {
     _validateMeasurement(measurement);
     final db = await _database.database;
