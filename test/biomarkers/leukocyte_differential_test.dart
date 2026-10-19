@@ -258,6 +258,36 @@ void main() {
       expect(derived.single.biomarkerId, 'neut');
     },
   );
+
+  test(
+    'the note on a calculated count and a created series read in German on request',
+    () {
+      final measurements = [
+        _result('total', 'wbc', 6.5, '10^9/L', day, document: 'report'),
+        _result('share', 'neut-rel', 58.2, '%', day, document: 'report'),
+      ];
+      final derived = service.derive(
+        biomarkers: catalog,
+        measurements: measurements,
+        german: true,
+      );
+      final missing = service.missingBiomarkers(
+        biomarkers: [leukocytes, neutrophilShare],
+        measurements: measurements,
+        now: day,
+        german: true,
+      );
+
+      expect(
+        derived.single.notes,
+        'Berechnet aus Leukozyten (6.5 10^9/L) und Neutrophilen (58.2 %) vom '
+        'selben Tag: Leukozyten × Anteil / 100. Das Labor hat diesen '
+        'Absolutwert nicht angegeben.',
+      );
+      expect(missing.single.description, startsWith('Absolutwert der '));
+      expect(missing.single.displayName, 'Neutrophile (absolut)');
+    },
+  );
 }
 
 const _week = Duration(days: 7);

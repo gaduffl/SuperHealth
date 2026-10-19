@@ -752,10 +752,21 @@ telling the user to keep the app open. Holds are refcounted, and `release()`
 never stops a service the guard did not start.
 
 **A notification the platform shows needs the user's language at the call
-site.** `AppController` cannot resolve `AppLanguage.system` — only the widget
-tree knows what the user is reading — so `generateLabPlan` takes a required
-`LongTaskNotice` rather than defaulting to English. Do the same for any other
-string that leaves the app.
+site.** `generateLabPlan` takes a required `LongTaskNotice` from the screen
+rather than defaulting to English. Do the same for any other string that
+leaves the app.
+
+**Text the app writes into the record is in the language the person reads.**
+A note on a calculated result, on a result a report printed as a limit, on an
+initial stock entry, and the description of a series the app creates all go
+through `LocalizedText.pick(german: controller.writesGerman)`. The controller
+resolves `AppLanguage.system` only through the `localizationsFor` main.dart
+injects (`AppLocalizations.resolve`, MaterialApp's own resolution); without it,
+as in a test that never started a binding, "system" reads as English. Notes on
+calculated results are rebuilt on every read, and `_rewriteCalculatedNotes`
+rebuilds them the moment the setting changes. A stored note keeps the language
+it was written in, as one the person typed would — never rewrite stored text
+behind the person's back.
 
 **Android manifest changes are not optional plugin extras.** A foreground
 service needs its `<service>` declaration, its `foregroundServiceType`, and the

@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
+import '../domain/localized_text.dart';
 import '../sync/one_drive_service.dart';
 import 'ai_models.dart';
 import 'ai_settings.dart';
@@ -162,11 +163,17 @@ class DocumentParsingService {
 
   static const _maxPdfBytes = 32 * 1024 * 1024;
 
+  /// Reads [pdfBytes] into reviewable candidates.
+  ///
+  /// A note the parser writes itself is in German when [german] is set. It is
+  /// stored like any other note and keeps that language afterwards, as a note
+  /// the person typed would.
   Future<ParsedLabReport> parse({
     required String profileId,
     required String fileName,
     required Uint8List pdfBytes,
     required AiTaskSettings settings,
+    bool german = false,
   }) async {
     if (pdfBytes.isEmpty) throw ArgumentError('The selected PDF is empty.');
     if (pdfBytes.length > _maxPdfBytes) {
@@ -239,6 +246,7 @@ class DocumentParsingService {
       hash: hash,
       settings: settings,
       catalog: catalog,
+      german: german,
     );
   }
 
@@ -684,6 +692,7 @@ class DocumentParsingService {
     required String hash,
     required AiTaskSettings settings,
     required List<Biomarker> catalog,
+    required bool german,
   }) {
     final decoded = _jsonObject(raw);
     final document = decoded['document'] is Map
@@ -702,7 +711,7 @@ class DocumentParsingService {
       final row = Map<String, Object?>.from(value);
       final reportedName = row['reported_name']?.toString().trim() ?? '';
       final unit = row['unit']?.toString().trim() ?? '';
-      final reported = _reportedValue(row['value'], unit);
+      final reported = _reportedValue(row['value'], unit, german: german);
       if (reportedName.isEmpty || reported == null || unit.isEmpty) {
         warnings.add(
           'Skipped an incomplete measurement row: ${jsonEncode(row)}',
@@ -827,17 +836,24 @@ class DocumentParsingService {
   /// invents nothing, where zero or half of it would. The note carries the
   /// comparator wherever the number goes, so the limit is never read as a
   /// measured value.
-  ({double value, String? note})? _reportedValue(Object? raw, String unit) {
+  ({double value, String? note})? _reportedValue(
+    Object? raw,
+    String unit, {
+    required bool german,
+  }) {
     final parsed = _numberOrLimit(raw);
     if (parsed == null) return null;
     final upper = parsed.upper;
     if (upper == null) return (value: parsed.value, note: null);
-    final side = upper ? 'below' : 'above';
+    final printed = '${'$raw'.trim()} $unit';
     return (
       value: parsed.value,
-      note:
-          'Reported as ${'$raw'.trim()} $unit, $side the lab\'s reporting '
-          'limit; saved as that limit.',
+      note: LocalizedText(
+        'Reported as $printed, ${upper ? 'below' : 'above'} the lab\'s '
+            'reporting limit; saved as that limit.',
+        'Laut Bericht $printed, also ${upper ? 'unter' : 'über'} der vom '
+            'Labor angegebenen Grenze; gespeichert ist die Grenze selbst.',
+      ).pick(german: german),
     );
   }
 

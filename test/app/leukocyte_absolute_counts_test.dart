@@ -11,6 +11,8 @@ import 'package:super_health/ai/lab_price_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 import 'package:super_health/analysis/correlation_service.dart';
 import 'package:super_health/app/app_controller.dart';
+import 'package:super_health/app/app_localizations.dart';
+import 'package:super_health/app/appearance_settings.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
@@ -27,8 +29,10 @@ void main() {
 
   final reportDay = DateTime(2025, 11, 4);
 
-  Future<(_Fixture, Profile)> storedDifferential() async {
-    final fixture = await _Fixture.create();
+  Future<(_Fixture, Profile)> storedDifferential({
+    AppLocalizations Function(AppLanguage language)? localizationsFor,
+  }) async {
+    final fixture = await _Fixture.create(localizationsFor: localizationsFor);
     final profile = await fixture.repository.createProfile(displayName: 'Alex');
     for (final biomarker in [
       _marker('leuko', 'Leukozyten', unit: '10^9/L', category: 'Blutbild'),
@@ -97,6 +101,41 @@ void main() {
     );
     expect(calculated(fixture.controller), isEmpty);
   });
+
+  test(
+    'text the app writes follows the language the person reads, and changes with it',
+    () async {
+      // A German device with the setting left on "system".
+      final (fixture, _) = await storedDifferential(
+        localizationsFor: (language) => language == AppLanguage.english
+            ? AppLocalizations.english
+            : AppLocalizations.german,
+      );
+      addTearDown(fixture.dispose);
+
+      await fixture.controller.refreshActiveData();
+
+      expect(fixture.controller.writesGerman, isTrue);
+      expect(
+        calculated(fixture.controller).single.notes,
+        startsWith('Berechnet aus Leukozyten'),
+      );
+      expect(
+        fixture.controller.biomarkers
+            .singleWhere((item) => item.id == 'neut')
+            .description,
+        startsWith('Absolutwert der Neutrophilen'),
+      );
+
+      await fixture.controller.setLanguage(AppLanguage.english);
+
+      expect(fixture.controller.writesGerman, isFalse);
+      expect(
+        calculated(fixture.controller).single.notes,
+        startsWith('Calculated from leukocytes'),
+      );
+    },
+  );
 }
 
 Biomarker _marker(
@@ -144,7 +183,9 @@ class _Fixture {
   final HealthRepository repository;
   final AppController controller;
 
-  static Future<_Fixture> create() async {
+  static Future<_Fixture> create({
+    AppLocalizations Function(AppLanguage language)? localizationsFor,
+  }) async {
     final database = AppDatabase(
       factory: databaseFactoryFfi,
       databasePath: inMemoryDatabasePath,
@@ -185,6 +226,7 @@ class _Fixture {
       workspaceService: workspace,
       exportService: LabPlanExportService(),
       clientFactory: clientFactory,
+      localizationsFor: localizationsFor,
     );
     return _Fixture(
       database: database,

@@ -25,6 +25,7 @@ import '../analysis/exposure_analysis.dart';
 import '../analysis/interaction_findings.dart';
 import '../analysis/lab_plan_pricing.dart';
 import '../analysis/lab_catalog_pricing.dart';
+import 'app_localizations.dart';
 import 'feature_visibility.dart';
 import 'long_task_guard.dart';
 import '../analysis/supplement_insights.dart';
@@ -32,6 +33,7 @@ import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
+import '../domain/localized_text.dart';
 import '../export/lab_plan_export_service.dart';
 import '../import/legacy_import_service.dart';
 import '../reminders/reminder_service.dart';
@@ -95,6 +97,7 @@ class AppController extends ChangeNotifier {
     LongTaskGuard? longTaskGuard,
     AiTraceStore? labPlanTraceStore,
     AiTraceStore? advisorTraceStore,
+    AppLocalizations Function(AppLanguage language)? localizationsFor,
   }) : _database = database,
        repository = repository,
        keyStore = keyStore,
@@ -127,6 +130,7 @@ class AppController extends ChangeNotifier {
        _restoreSyncGateStore = restoreSyncGateStore ?? RestoreSyncGateStore(),
        _syncStatusStore = syncStatusStore ?? SyncStatusStore(),
        _longTaskGuard = longTaskGuard ?? LongTaskGuard(),
+       _localizationsFor = localizationsFor ?? _localizationsWithoutPlatform,
        _labPlanTraceStore = labPlanTraceStore,
        _advisorTraceStore = advisorTraceStore {
     _chatGptChanges = keyStore.chatGpt?.changes.listen(
@@ -166,6 +170,26 @@ class AppController extends ChangeNotifier {
   final PortableBackupService? _portableBackupService;
   final DocumentsDirectory? _documentsDirectory;
   final AppearanceSettingsStore _appearanceSettingsStore;
+
+  /// What the person reads for a language setting. main.dart passes
+  /// [AppLocalizations.resolve], which follows the device the way MaterialApp
+  /// does; without it, "system" reads as English, so a test that never
+  /// started a binding does not need one.
+  final AppLocalizations Function(AppLanguage language) _localizationsFor;
+
+  static AppLocalizations _localizationsWithoutPlatform(AppLanguage language) =>
+      language == AppLanguage.german
+      ? AppLocalizations.german
+      : AppLocalizations.english;
+
+  /// Whether text the app writes into the record itself — a note on a
+  /// calculated result, on a result a report printed as a limit, or on an
+  /// initial stock entry — is German, matching the language the screens are
+  /// in.
+  bool get writesGerman => identical(
+    _localizationsFor(appearanceSettings.language),
+    AppLocalizations.german,
+  );
   final InitialSetupProgressStore _initialSetupProgressStore;
   final RestoreSyncGateStore _restoreSyncGateStore;
   final SyncStatusStore _syncStatusStore;
@@ -437,6 +461,7 @@ class AppController extends ChangeNotifier {
       if (!await _appearanceSettingsStore.save(next)) {
         throw StateError('Could not save appearance settings on this device.');
       }
+      if (next.language != previous.language) _rewriteCalculatedNotes();
     } on Object {
       appearanceSettings = previous;
       rethrow;
@@ -444,6 +469,19 @@ class AppController extends ChangeNotifier {
       appearanceSaving = false;
       notifyListeners();
     }
+  }
+
+  /// Calculated results are rebuilt from the stored ones, because their notes
+  /// are the one part of them written in the language the person reads.
+  void _rewriteCalculatedNotes() {
+    measurements = repository.measurementsFrom(
+      reported: [
+        for (final measurement in measurements)
+          if (!measurement.isCalculated) measurement,
+      ],
+      biomarkers: biomarkers,
+      german: writesGerman,
+    );
   }
 
   Future<void> refreshKeyStatus() async {
@@ -890,11 +928,13 @@ class AppController extends ChangeNotifier {
       final installed = await repository.installDerivedBiomarkers(
         biomarkers: nextBiomarkers ?? biomarkers,
         measurements: nextReportedMeasurements!,
+        german: writesGerman,
       );
       if (installed.isNotEmpty) nextBiomarkers = await repository.biomarkers();
       nextMeasurements = repository.measurementsFrom(
         reported: nextReportedMeasurements!,
         biomarkers: nextBiomarkers ?? biomarkers,
+        german: writesGerman,
       );
     }
 
@@ -1065,7 +1105,10 @@ class AppController extends ChangeNotifier {
           quantityUnits: initialUnits,
           occurredAt: now,
           reason: 'initial',
-          notes: 'Initial stock',
+          notes: LocalizedText(
+            'Initial stock',
+            'Anfangsbestand',
+          ).pick(german: writesGerman),
           createdAt: now,
           updatedAt: now,
         ),
@@ -2914,6 +2957,7 @@ class AppController extends ChangeNotifier {
         fileName: fileName,
         pdfBytes: bytes,
         settings: settings,
+        german: writesGerman,
       );
       pendingLabReport = report;
       return report;
