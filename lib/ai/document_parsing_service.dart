@@ -725,15 +725,7 @@ class DocumentParsingService {
         );
       }
       final confidence = hasExtractionConfidence ? parsedConfidence : 0.0;
-      var refLow = _optionalNumber(row, 'ref_low', reportedName, warnings);
-      var refHigh = _optionalNumber(row, 'ref_high', reportedName, warnings);
-      if (refLow != null && refHigh != null && refLow > refHigh) {
-        refLow = null;
-        refHigh = null;
-        warnings.add(
-          'Ignored unordered lab reference bounds for $reportedName.',
-        );
-      }
+      final reference = _referenceRange(row, reportedName, warnings);
       var page = _optionalNumber(row, 'page', reportedName, warnings)?.toInt();
       if (page != null && page < 1) {
         page = null;
@@ -746,8 +738,8 @@ class DocumentParsingService {
           reportedName: reportedName,
           value: reported.value,
           unit: unit,
-          refLow: refLow,
-          refHigh: refHigh,
+          refLow: reference.low,
+          refHigh: reference.high,
           page: page,
           rowText: row['row_text']?.toString(),
           confidence: confidence,
@@ -811,32 +803,84 @@ class DocumentParsingService {
 
   static final _limitComparator = RegExp(r'^(?:<=|>=|[<>≤≥])\s*');
 
+  /// [raw] as a number, also when it was printed as a limit (`<0.2`, `> 90`).
+  ///
+  /// [upper] is true for `<`, `<=` and `≤`, false for their mirror images, and
+  /// null for a plain number. Pages and confidences never come as a limit, so
+  /// they keep the strict [_number].
+  ({double value, bool? upper})? _numberOrLimit(Object? raw) {
+    final text = raw is String ? raw.trim() : null;
+    final comparator = text == null ? null : _limitComparator.firstMatch(text);
+    if (text == null || comparator == null) {
+      final value = _number(raw);
+      return value == null ? null : (value: value, upper: null);
+    }
+    final value = _number(text.substring(comparator.end));
+    if (value == null) return null;
+    return (value: value, upper: text.startsWith('<') || text.startsWith('≤'));
+  }
+
   /// The row's value, including one the report printed as a limit.
   ///
   /// `<0.2` is a result below what the lab reports, not a missing one, and the
   /// limit is the only figure the report gives for it: recording the limit
   /// invents nothing, where zero or half of it would. The note carries the
   /// comparator wherever the number goes, so the limit is never read as a
-  /// measured value. Only the value accepts a comparator; reference bounds,
-  /// pages and confidences keep the strict [_number].
+  /// measured value.
   ({double value, String? note})? _reportedValue(Object? raw, String unit) {
-    final text = raw is String ? raw.trim() : null;
-    final comparator = text == null ? null : _limitComparator.firstMatch(text);
-    if (text == null || comparator == null) {
-      final value = _number(raw);
-      return value == null ? null : (value: value, note: null);
-    }
-    final value = _number(text.substring(comparator.end));
-    if (value == null) return null;
-    final side = text.startsWith('<') || text.startsWith('≤')
-        ? 'below'
-        : 'above';
+    final parsed = _numberOrLimit(raw);
+    if (parsed == null) return null;
+    final upper = parsed.upper;
+    if (upper == null) return (value: parsed.value, note: null);
+    final side = upper ? 'below' : 'above';
     return (
-      value: value,
+      value: parsed.value,
       note:
-          'Reported as $text $unit, $side the lab\'s reporting limit; '
-          'saved as that limit.',
+          'Reported as ${'$raw'.trim()} $unit, $side the lab\'s reporting '
+          'limit; saved as that limit.',
     );
+  }
+
+  /// The row's lab reference range, including one printed with a single limit.
+  ///
+  /// `<5.0` bounds a range from above only and `>60` from below only. The
+  /// comparator says which bound it is, so it decides the side even when the
+  /// model filed it under the other key; the open side stays null, which every
+  /// comparison, band and label downstream reads as unbounded. A blank bound is
+  /// an open side, not an invalid one.
+  ({double? low, double? high}) _referenceRange(
+    Map<String, Object?> row,
+    String reportedName,
+    List<String> warnings,
+  ) {
+    final lows = <double>{};
+    final highs = <double>{};
+    for (final key in const ['ref_low', 'ref_high']) {
+      final raw = row[key];
+      if (raw == null || '$raw'.trim().isEmpty) continue;
+      final bound = _numberOrLimit(raw);
+      if (bound == null) {
+        warnings.add('Ignored an invalid $key for $reportedName.');
+        continue;
+      }
+      final upper = bound.upper ?? key == 'ref_high';
+      (upper ? highs : lows).add(bound.value);
+    }
+    // Two different numbers for one side means the row contradicts itself,
+    // and picking either would present a guess as the lab's range.
+    if (lows.length > 1 || highs.length > 1) {
+      warnings.add(
+        'Ignored conflicting lab reference bounds for $reportedName.',
+      );
+      return (low: null, high: null);
+    }
+    final low = lows.firstOrNull;
+    final high = highs.firstOrNull;
+    if (low != null && high != null && low > high) {
+      warnings.add('Ignored unordered lab reference bounds for $reportedName.');
+      return (low: null, high: null);
+    }
+    return (low: low, high: high);
   }
 
   double? _optionalNumber(
@@ -868,7 +912,7 @@ NUMBERS AND UNITS
 - Parse German or English decimal separators. Convert commas to decimal points and strip thousands separators.
 - Keep the unit string exactly as printed. Do not infer units, convert values, or calculate derived markers.
 - A result printed as a limit, such as "<0.2" or "> 90", is a result, not a missing value. Return its value as a string that keeps the comparator ("<0.2", ">90"); never drop the row or return null for it.
-- Extract lab reference ranges exactly as printed.
+- Extract lab reference ranges exactly as printed. A range with only one limit has only that bound: "<5.0" is ref_low null and ref_high 5.0, "> 60" is ref_low 60 and ref_high null. Never fill the open side with 0 or a guess.
 
 DATES
 - report_date: prefer sample collection date; otherwise use report date. Format YYYY-MM-DD.

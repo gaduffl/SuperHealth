@@ -987,8 +987,17 @@ or half of it would invent one — and the parser writes the printed result into
 the row's note, so the chart, the report screen, the PDF export and the advisor
 never read it as a measured 0.2. Keep that note: `row_text` is whatever the
 model chose to copy, so the note is the only place the comparator is sure to
-survive. Only the measurement value accepts a comparator; reference bounds,
-pages and confidences still parse strictly.
+survive.
+
+**A reference range can have one side.** `<5.0` bounds a range from above only
+and `>60` from below only. Every comparison, band and label downstream already
+reads a null bound as open — the status service, both charts, the PDF's `≤ 5`
+— so the parser's only job is to put the number on the right side. The
+comparator decides the side, even when the model filed it under the other key;
+a blank bound is an open side, not an invalid one; two different numbers for
+one side drop the range with a warning rather than pick one. Never fill the
+open side with 0: a value below it would be flagged against a limit the lab
+never set. Pages and confidences still parse strictly.
 
 **A lab plan retains the offers used to draft it.** The digest, read-only tools,
 complete package and item prices all use the same `LabCatalogPricing` selection.

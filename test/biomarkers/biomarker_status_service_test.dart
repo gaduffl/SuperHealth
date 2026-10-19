@@ -374,4 +374,20 @@ void main() {
     expect(nonFiniteValue.kind, BiomarkerStatusKind.unavailable);
     expect(nonFiniteBounds.kind, BiomarkerStatusKind.unavailable);
   });
+
+  test('a lab range printed with one limit judges only that side', () {
+    final underUpper = evaluate(result: measurement(value: 0.2, labHigh: 5));
+    final overUpper = evaluate(result: measurement(value: 6, labHigh: 5));
+    final overLower = evaluate(result: measurement(value: 95, labLow: 60));
+    final underLower = evaluate(result: measurement(value: 50, labLow: 60));
+
+    expect(underUpper.kind, BiomarkerStatusKind.withinLabRange);
+    expect(underUpper.usedLow, isNull);
+    expect(underUpper.usedHigh, 5);
+    expect(overUpper.kind, BiomarkerStatusKind.above);
+    expect(overLower.kind, BiomarkerStatusKind.withinLabRange);
+    expect(overLower.usedLow, 60);
+    expect(overLower.usedHigh, isNull);
+    expect(underLower.kind, BiomarkerStatusKind.below);
+  });
 }

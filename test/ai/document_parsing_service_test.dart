@@ -379,6 +379,72 @@ void main() {
       expect(saved.labRefHigh, 5);
     },
   );
+
+  test(
+    'a reference range printed with one limit keeps that side and leaves the other open',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Alex');
+      final service = DocumentParsingService(
+        repository: repository,
+        keyStore: _KeyStore(),
+        oneDriveService: _SignedOutOneDrive(
+          SnapshotService(database, repository),
+        ),
+        dio: _openAiParserReturning([
+          for (final (name, low, high) in const [
+            ('Upper As Number', null, 5),
+            ('Upper As Printed', '', '<5,0'),
+            ('Lower As Printed', '> 60', null),
+            ('Lower Under The Upper Key', null, '≥60'),
+            ('Upper Under Both Keys', '<5', '<5'),
+            ('Two Upper Bounds', '<5', 10),
+          ])
+            {
+              'reported_name': name,
+              'value': 1,
+              'unit': 'mg/L',
+              'ref_low': low,
+              'ref_high': high,
+            },
+        ]),
+      );
+
+      final report = await service.parse(
+        profileId: profile.id,
+        fileName: 'report.pdf',
+        pdfBytes: Uint8List.fromList(utf8.encode('%PDF-1.4\n%%EOF')),
+        settings: const AiTaskSettings(
+          provider: AiProvider.openai,
+          model: 'gpt-5.6',
+        ),
+      );
+
+      expect(
+        {
+          for (final item in report.measurements)
+            item.reportedName: (low: item.refLow, high: item.refHigh),
+        },
+        {
+          'Upper As Number': (low: null, high: 5.0),
+          'Upper As Printed': (low: null, high: 5.0),
+          'Lower As Printed': (low: 60.0, high: null),
+          'Lower Under The Upper Key': (low: 60.0, high: null),
+          'Upper Under Both Keys': (low: null, high: 5.0),
+          'Two Upper Bounds': (low: null, high: null),
+        },
+      );
+      expect(report.warnings, [
+        'Ignored conflicting lab reference bounds for Two Upper Bounds.',
+      ]);
+    },
+  );
 }
 
 Dio _openAiParserReturning(List<Map<String, Object?>> measurements) {
