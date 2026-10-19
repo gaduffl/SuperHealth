@@ -883,6 +883,15 @@ class AppController extends ChangeNotifier {
     await Future.wait(loads);
 
     if (nextReportedMeasurements != null) {
+      // A differential whose catalog has nowhere to put the absolute counts it
+      // implies gets that series first, so the load right after an import or
+      // an app update already shows them. Nothing is re-read unless a row was
+      // actually added.
+      final installed = await repository.installDerivedBiomarkers(
+        biomarkers: nextBiomarkers ?? biomarkers,
+        measurements: nextReportedMeasurements!,
+      );
+      if (installed.isNotEmpty) nextBiomarkers = await repository.biomarkers();
       nextMeasurements = repository.measurementsFrom(
         reported: nextReportedMeasurements!,
         biomarkers: nextBiomarkers ?? biomarkers,

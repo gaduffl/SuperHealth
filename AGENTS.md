@@ -999,6 +999,21 @@ one side drop the range with a warning rather than pick one. Never fill the
 open side with 0: a value below it would be flagged against a limit the lab
 never set. Pages and confidences still parse strictly.
 
+**An absolute leukocyte count is derived, never stored.** A differential that
+printed only percentages has still printed the inputs: the leukocyte total
+times each share. `LeukocyteDifferential` derives them on read, like HOMA1-IR,
+so every past report gains them and an edited or deleted source recalculates
+them. The unit decides relative versus absolute, never the name — reports print
+"Neutrophile" for both, and a parser may file both under one marker. A count
+the lab reported for that type and day always wins, and an ambiguous pairing
+(two different totals, or two different shares, in one report) calculates
+nothing rather than guessing. A catalog with no absolute series for a type gets
+one from `installDerivedBiomarkers` on the next measurement load, under the
+legacy id (`neut`, `lymphs`, `monos`, `eos`, `basos`), so a synced or restored
+legacy row merges into it instead of doubling it; one the owner deleted stays
+deleted. `normalizeUnit` folds case, so a printed `G/l` (giga per litre) is
+stored as `g/L`: anything reading cell counts has to read that as giga.
+
 **A lab plan retains the offers used to draft it.** The digest, read-only tools,
 complete package and item prices all use the same `LabCatalogPricing` selection.
 The package receipt includes the lab, including when the numeric prices match.
