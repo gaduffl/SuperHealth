@@ -129,6 +129,30 @@ void main() {
 
     expect(result, isEmpty);
   });
+
+  test('the note on a calculated HOMA1-IR is written in German on request', () {
+    final result = service.derive(
+      biomarkers: [
+        _marker(
+          'homa',
+          CalculatedBiomarkerService.homa1CanonicalName,
+          CalculatedBiomarkerService.homa1DisplayName,
+          unit: 'index',
+          calculated: true,
+        ),
+        _marker('glucose', 'glu', 'Glucose (nüchtern)', unit: 'mg/dL'),
+        _marker('insulin', 'ins', 'Insulin (nüchtern)', unit: 'µIU/mL'),
+      ],
+      measurements: [
+        _measurement('glucose-result', 'glucose', 90, 'mg/dL', now),
+        _measurement('insulin-result', 'insulin', 5, 'µIU/mL', now),
+      ],
+      german: true,
+    );
+
+    expect(result.single.notes, startsWith('HOMA1-IR berechnet aus'));
+    expect(result.single.notes, contains('Nicht HOMA2-IR.'));
+  });
 }
 
 Biomarker _marker(

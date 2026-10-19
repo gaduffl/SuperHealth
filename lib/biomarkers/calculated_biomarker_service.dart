@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 
 import '../domain/entities.dart';
+import '../domain/localized_text.dart';
 import 'leukocyte_differential.dart';
 import 'unit_conversion_service.dart';
 
@@ -52,12 +53,25 @@ class CalculatedBiomarkerService {
       measurement.flags.contains(LeukocyteDifferential.flag);
 
   /// Every calculated measurement the stored rows support, newest first.
+  ///
+  /// Their notes are written in German when [german] is set: they are
+  /// rebuilt on every read, so they follow the language the person reads now
+  /// rather than the one set when the source rows were stored.
   List<Measurement> derive({
     required List<Biomarker> biomarkers,
     required List<Measurement> measurements,
+    bool german = false,
   }) => [
-    ..._deriveHoma1(biomarkers: biomarkers, measurements: measurements),
-    ..._leukocytes.derive(biomarkers: biomarkers, measurements: measurements),
+    ..._deriveHoma1(
+      biomarkers: biomarkers,
+      measurements: measurements,
+      german: german,
+    ),
+    ..._leukocytes.derive(
+      biomarkers: biomarkers,
+      measurements: measurements,
+      german: german,
+    ),
   ]..sort((a, b) => b.takenAt.compareTo(a.takenAt));
 
   /// Catalog rows a calculation needs and the catalog lacks; see
@@ -66,10 +80,12 @@ class CalculatedBiomarkerService {
     required List<Biomarker> biomarkers,
     required List<Measurement> measurements,
     required DateTime now,
+    bool german = false,
   }) => _leukocytes.missingBiomarkers(
     biomarkers: biomarkers,
     measurements: measurements,
     now: now,
+    german: german,
   );
 
   /// Adds HOMA1-IR only when the stored rows form a defensible fasting pair.
@@ -80,6 +96,7 @@ class CalculatedBiomarkerService {
   List<Measurement> _deriveHoma1({
     required List<Biomarker> biomarkers,
     required List<Measurement> measurements,
+    required bool german,
   }) {
     final homa1 = biomarkers.where(isHoma1).firstOrNull;
     if (homa1 == null) return const [];
@@ -203,11 +220,16 @@ class CalculatedBiomarkerService {
           canonicalUnit: 'index',
           conversionStatus: 'calculated',
           flags: const [homa1Flag],
-          notes:
-              'HOMA1-IR calculated from fasting glucose '
-              '(${pair.glucose.convertedValue} mmol/L) and fasting insulin '
-              '(${pair.insulin.convertedValue} µIU/mL) recorded on the same '
-              'date. Formula: glucose × insulin / 22.5. Not HOMA2-IR.',
+          notes: LocalizedText(
+            'HOMA1-IR calculated from fasting glucose '
+                '(${pair.glucose.convertedValue} mmol/L) and fasting insulin '
+                '(${pair.insulin.convertedValue} µIU/mL) recorded on the same '
+                'date. Formula: glucose × insulin / 22.5. Not HOMA2-IR.',
+            'HOMA1-IR berechnet aus Nüchternglukose '
+                '(${pair.glucose.convertedValue} mmol/L) und Nüchterninsulin '
+                '(${pair.insulin.convertedValue} µIU/mL) vom selben Tag. '
+                'Formel: Glukose × Insulin / 22,5. Nicht HOMA2-IR.',
+          ).pick(german: german),
           createdAt: createdAt,
           updatedAt: updatedAt,
         ),

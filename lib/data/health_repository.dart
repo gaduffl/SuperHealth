@@ -1587,10 +1587,12 @@ class HealthRepository {
   List<Measurement> measurementsFrom({
     required List<Measurement> reported,
     required List<Biomarker> biomarkers,
+    bool german = false,
   }) {
     final calculated = _calculatedBiomarkers.derive(
       biomarkers: biomarkers,
       measurements: reported,
+      german: german,
     );
     return [...reported, ...calculated]
       ..sort((a, b) => b.takenAt.compareTo(a.takenAt));
@@ -1605,11 +1607,13 @@ class HealthRepository {
   Future<List<Biomarker>> installDerivedBiomarkers({
     required List<Biomarker> biomarkers,
     required List<Measurement> measurements,
+    bool german = false,
   }) async {
     final missing = _calculatedBiomarkers.missingBiomarkers(
       biomarkers: biomarkers,
       measurements: measurements,
       now: DateTime.now(),
+      german: german,
     );
     if (missing.isEmpty) return const [];
     final db = await _database.database;

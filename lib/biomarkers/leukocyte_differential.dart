@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 
 import '../domain/entities.dart';
+import '../domain/localized_text.dart';
 import '../domain/name_matching.dart';
 import 'unit_conversion_service.dart';
 
@@ -14,6 +15,7 @@ enum LeukocyteType {
   neutrophils(
     catalogId: 'neut',
     german: 'Neutrophile',
+    germanInflected: 'Neutrophilen',
     english: 'neutrophils',
     names: {
       'neutrophile',
@@ -38,6 +40,7 @@ enum LeukocyteType {
   lymphocytes(
     catalogId: 'lymphs',
     german: 'Lymphozyten',
+    germanInflected: 'Lymphozyten',
     english: 'lymphocytes',
     names: {
       'lymphozyten',
@@ -57,6 +60,7 @@ enum LeukocyteType {
   monocytes(
     catalogId: 'monos',
     german: 'Monozyten',
+    germanInflected: 'Monozyten',
     english: 'monocytes',
     names: {'monozyten', 'monocytes', 'monocyte', 'mono', 'monos'},
     absoluteSynonyms: [
@@ -69,6 +73,7 @@ enum LeukocyteType {
   eosinophils(
     catalogId: 'eos',
     german: 'Eosinophile',
+    germanInflected: 'Eosinophilen',
     english: 'eosinophils',
     names: {
       'eosinophile',
@@ -92,6 +97,7 @@ enum LeukocyteType {
   basophils(
     catalogId: 'basos',
     german: 'Basophile',
+    germanInflected: 'Basophilen',
     english: 'basophils',
     names: {
       'basophile',
@@ -115,6 +121,7 @@ enum LeukocyteType {
   const LeukocyteType({
     required this.catalogId,
     required this.german,
+    required this.germanInflected,
     required this.english,
     required this.names,
     required this.absoluteSynonyms,
@@ -122,6 +129,9 @@ enum LeukocyteType {
 
   final String catalogId;
   final String german;
+
+  /// The plural after a preposition or article: "aus den Neutrophilen".
+  final String germanInflected;
   final String english;
 
   /// Whole names, compared after folding and with parentheticals and
@@ -161,17 +171,19 @@ class LeukocyteDifferential {
   /// A count the lab reported for that type on that date suppresses the
   /// calculation entirely: the reported value is evidence, the product is not.
   /// A type whose catalog has no absolute series gets nothing here; see
-  /// [missingBiomarkers].
+  /// [missingBiomarkers]. The note is written in German when [german] is set.
   List<Measurement> derive({
     required List<Biomarker> biomarkers,
     required List<Measurement> measurements,
+    bool german = false,
   }) {
     final roles = _roles(biomarkers);
     final targets = _targets(biomarkers, roles);
     if (targets.isEmpty) return const [];
     return [
       for (final slot in _slots(roles, measurements))
-        if (targets[slot.type] case final target?) _absolute(slot, target),
+        if (targets[slot.type] case final target?)
+          _absolute(slot, target, german: german),
     ];
   }
 
@@ -184,6 +196,7 @@ class LeukocyteDifferential {
     required List<Biomarker> biomarkers,
     required List<Measurement> measurements,
     required DateTime now,
+    bool german = false,
   }) {
     final roles = _roles(biomarkers);
     final targets = _targets(biomarkers, roles);
@@ -207,11 +220,16 @@ class LeukocyteDifferential {
             // owner filed that.
             category: needed[type]?.category ?? '',
             defaultUnit: '10^9/L',
-            description:
-                'Absolute ${type.english} count. A blood count that reported '
-                'only the percentage has it calculated from the leukocyte '
-                'count recorded on the same date; a count the lab reported is '
-                'kept as reported.',
+            description: LocalizedText(
+              'Absolute ${type.english} count. A blood count that reported '
+                  'only the percentage has it calculated from the leukocyte '
+                  'count recorded on the same date; a count the lab reported '
+                  'is kept as reported.',
+              'Absolutwert der ${type.germanInflected}. Hat ein Blutbild nur '
+                  'den Anteil angegeben, wird er aus der Leukozytenzahl vom '
+                  'selben Tag berechnet; vom Labor angegebene Werte bleiben, '
+                  'wie sie sind.',
+            ).pick(german: german),
             synonyms: type.absoluteSynonyms,
             createdAt: now,
             updatedAt: now,
@@ -219,7 +237,7 @@ class LeukocyteDifferential {
     ];
   }
 
-  Measurement _absolute(_Slot slot, Biomarker target) {
+  Measurement _absolute(_Slot slot, Biomarker target, {required bool german}) {
     final percentage = slot.percentage.measurement;
     final total = slot.total.measurement;
     final targetFactor = _cellsPerNanolitre(target.defaultUnit);
@@ -236,6 +254,8 @@ class LeukocyteDifferential {
         : (exact * 100).roundToDouble() / 100;
     DateTime later(DateTime left, DateTime right) =>
         left.isAfter(right) ? left : right;
+    final totalText = '${_plain(total.value)} ${total.unit}';
+    final shareText = '${_plain(percentage.value)} ${percentage.unit}';
     return Measurement(
       id: '$_idPrefix:${percentage.id}:${total.id}',
       profileId: percentage.profileId,
@@ -247,11 +267,15 @@ class LeukocyteDifferential {
       canonicalUnit: unit,
       conversionStatus: 'calculated',
       flags: const [flag],
-      notes:
-          'Calculated from leukocytes (${_plain(total.value)} ${total.unit}) '
-          'and ${slot.type.english} (${_plain(percentage.value)} '
-          '${percentage.unit}) recorded on the same date: leukocytes × '
-          'percentage / 100. The lab did not report this absolute count.',
+      notes: LocalizedText(
+        'Calculated from leukocytes ($totalText) and ${slot.type.english} '
+            '($shareText) recorded on the same date: leukocytes × percentage '
+            '/ 100. The lab did not report this absolute count.',
+        'Berechnet aus Leukozyten ($totalText) und '
+            '${slot.type.germanInflected} ($shareText) vom selben Tag: '
+            'Leukozyten × Anteil / 100. Das Labor hat diesen Absolutwert nicht '
+            'angegeben.',
+      ).pick(german: german),
       createdAt: later(percentage.createdAt, total.createdAt),
       updatedAt: later(percentage.updatedAt, total.updatedAt),
     );

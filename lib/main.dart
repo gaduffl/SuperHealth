@@ -114,6 +114,7 @@ void main() {
     documentsDirectory: getApplicationDocumentsDirectory,
     labPlanTraceStore: labPlanTraceStore,
     advisorTraceStore: advisorTraceStore,
+    localizationsFor: (language) => AppLocalizations.resolve(language.locale),
   );
 
   final updateDio = Dio(

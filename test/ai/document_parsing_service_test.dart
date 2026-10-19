@@ -445,6 +445,49 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'the note on a result printed as a limit is written in German on request',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Alex');
+      final service = DocumentParsingService(
+        repository: repository,
+        keyStore: _KeyStore(),
+        oneDriveService: _SignedOutOneDrive(
+          SnapshotService(database, repository),
+        ),
+        dio: _openAiParserReturning([
+          {'reported_name': 'Marker Low', 'value': '<0.2', 'unit': 'mg/L'},
+          {'reported_name': 'Marker High', 'value': '>90', 'unit': 'mL/min'},
+        ]),
+      );
+
+      final report = await service.parse(
+        profileId: profile.id,
+        fileName: 'report.pdf',
+        pdfBytes: Uint8List.fromList(utf8.encode('%PDF-1.4\n%%EOF')),
+        settings: const AiTaskSettings(
+          provider: AiProvider.openai,
+          model: 'gpt-5.6',
+        ),
+        german: true,
+      );
+
+      expect(report.measurements.map((item) => item.notes), [
+        'Laut Bericht <0.2 mg/L, also unter der vom Labor angegebenen Grenze; '
+            'gespeichert ist die Grenze selbst.',
+        'Laut Bericht >90 mL/min, also über der vom Labor angegebenen Grenze; '
+            'gespeichert ist die Grenze selbst.',
+      ]);
+    },
+  );
 }
 
 Dio _openAiParserReturning(List<Map<String, Object?>> measurements) {
