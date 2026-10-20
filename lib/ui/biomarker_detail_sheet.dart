@@ -10,6 +10,7 @@ import '../biomarkers/calculated_biomarker_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
 import 'biomarker_lists_sheet.dart';
+import 'biomarker_merge_flow.dart';
 import 'biomarker_trend_notes.dart';
 import 'charts.dart';
 import 'common.dart';
@@ -302,6 +303,15 @@ class _BiomarkerDetail extends StatelessWidget {
                     if (targetToDelete != null) {
                       await controller.deleteProfileTarget(targetToDelete);
                     }
+                  } else if (value == 'merge') {
+                    final merged = await mergeBiomarkerFlow(
+                      context,
+                      controller,
+                      biomarker,
+                    );
+                    if (merged != null && context.mounted) {
+                      Navigator.pop(context);
+                    }
                   } else if (value == 'delete') {
                     await controller.deleteBiomarker(biomarker);
                     if (context.mounted) Navigator.pop(context);
@@ -323,6 +333,18 @@ class _BiomarkerDetail extends StatelessWidget {
                       value: 'edit',
                       child: Text(
                         _detailText(context, 'Edit test', 'Test bearbeiten'),
+                      ),
+                    ),
+                    // Deleting refuses a test that has results, so a
+                    // duplicate entry needs a way out that keeps them.
+                    PopupMenuItem(
+                      value: 'merge',
+                      child: Text(
+                        _detailText(
+                          context,
+                          'Merge into another test',
+                          'Mit anderem Test zusammenführen',
+                        ),
                       ),
                     ),
                   ],

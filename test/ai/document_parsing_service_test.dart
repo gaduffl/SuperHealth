@@ -11,6 +11,7 @@ import 'package:super_health/ai/api_key_store.dart';
 import 'package:super_health/ai/document_parsing_service.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
+import 'package:super_health/domain/entities.dart';
 import 'package:super_health/sync/one_drive_service.dart';
 import 'package:super_health/sync/snapshot_service.dart';
 
@@ -486,6 +487,76 @@ void main() {
         'Laut Bericht >90 mL/min, also über der vom Labor angegebenen Grenze; '
             'gespeichert ist die Grenze selbst.',
       ]);
+    },
+  );
+
+  test(
+    'a report printing a merged-away name is matched to the test that stayed',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Alex');
+      final now = DateTime.utc(2026, 7, 18);
+      Biomarker entry(
+        String id,
+        String name, {
+        List<String> synonyms = const [],
+      }) => Biomarker(
+        id: id,
+        canonicalName: HealthRepository.normalizeName(name),
+        displayName: name,
+        defaultUnit: '%',
+        synonyms: synonyms,
+        createdAt: now,
+        updatedAt: now,
+      );
+      await repository.saveBiomarker(entry('retired', 'Transferrin-Sättigung'));
+      await repository.saveBiomarker(entry('kept', 'Transferrinsättigung'));
+      await repository.mergeBiomarker(
+        sourceBiomarkerId: 'retired',
+        targetBiomarkerId: 'kept',
+      );
+      // Two entries sharing a synonym are ambiguous, so neither is guessed.
+      await repository.saveBiomarker(
+        entry('first', 'Marker One', synonyms: const ['Shared Name']),
+      );
+      await repository.saveBiomarker(
+        entry('second', 'Marker Two', synonyms: const ['Shared Name']),
+      );
+      final service = DocumentParsingService(
+        repository: repository,
+        keyStore: _KeyStore(),
+        oneDriveService: _SignedOutOneDrive(
+          SnapshotService(database, repository),
+        ),
+        dio: _openAiParserReturning([
+          {'reported_name': 'Transferrin-Sättigung', 'value': 24, 'unit': '%'},
+          {'reported_name': 'Shared Name', 'value': 1, 'unit': '%'},
+        ]),
+      );
+
+      final report = await service.parse(
+        profileId: profile.id,
+        fileName: 'report.pdf',
+        pdfBytes: Uint8List.fromList(utf8.encode('%PDF-1.4\n%%EOF')),
+        settings: const AiTaskSettings(
+          provider: AiProvider.openai,
+          model: 'gpt-5.6',
+        ),
+      );
+
+      expect(
+        {
+          for (final item in report.measurements)
+            item.reportedName: item.biomarkerId,
+        },
+        {'Transferrin-Sättigung': 'kept', 'Shared Name': null},
+      );
     },
   );
 }

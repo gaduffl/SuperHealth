@@ -314,9 +314,9 @@ void main() {
         ),
       );
 
-      final result = await repository.mergeTemporaryBiomarker(
-        temporaryBiomarkerId: temporary.id,
-        canonicalBiomarkerId: canonical.id,
+      final result = await repository.mergeBiomarker(
+        sourceBiomarkerId: temporary.id,
+        targetBiomarkerId: canonical.id,
       );
 
       expect(result.movedMeasurements, 1);
