@@ -702,6 +702,20 @@ class DocumentParsingService {
     final errors = _stringList(decoded['errors']);
     final byId = {for (final item in catalog) item.id: item};
     final byCanonical = {for (final item in catalog) item.canonicalName: item};
+    // A merge keeps the retired name as a synonym of the test that stayed.
+    // Matching it here is what stops the next report printing that name from
+    // recreating the duplicate; a synonym two entries share matches neither.
+    final bySynonym = <String, Biomarker?>{};
+    for (final item in catalog) {
+      for (final synonym in item.synonyms) {
+        final key = HealthRepository.normalizeName(synonym);
+        if (key.isEmpty) continue;
+        bySynonym[key] =
+            bySynonym.containsKey(key) && bySynonym[key]?.id != item.id
+            ? null
+            : item;
+      }
+    }
     final candidates = <ParsedMeasurementCandidate>[];
     final rows = decoded['measurements'];
     if (rows is! List) {
@@ -722,7 +736,8 @@ class DocumentParsingService {
       final mapped =
           byId[requestedId] ??
           byCanonical[HealthRepository.normalizeName(requestedId ?? '')] ??
-          byCanonical[HealthRepository.normalizeName(reportedName)];
+          byCanonical[HealthRepository.normalizeName(reportedName)] ??
+          bySynonym[HealthRepository.normalizeName(reportedName)];
       final parsedConfidence = _number(row['confidence']);
       final hasExtractionConfidence =
           parsedConfidence != null &&

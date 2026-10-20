@@ -202,6 +202,47 @@ void main() {
     expect(find.text('Glucose'), findsNothing);
   });
 
+  testWidgets('a duplicate entry can be merged from its own sheet', (
+    tester,
+  ) async {
+    // Deleting refuses a test that has results, so without this a second
+    // entry for the same test could only be lived with. The likely partner is
+    // listed first rather than somewhere among the whole catalog.
+    final controller = _seededController();
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+    controller.setBiomarkersForTest([
+      _glucose(),
+      Biomarker(
+        id: 'ferritin',
+        canonicalName: 'ferritin',
+        displayName: 'Ferritin',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      ),
+      Biomarker(
+        id: 'blood-sugar',
+        canonicalName: 'blood_sugar',
+        displayName: 'Blood sugar',
+        synonyms: const ['Glucose'],
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      ),
+    ]);
+    await _settleSheet(tester);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await _settleSheet(tester);
+    await tester.tap(find.text('Merge into another test').last);
+    await _settleSheet(tester);
+
+    expect(find.text('Merge “Glucose”'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Blood sugar')).dy,
+      lessThan(tester.getTopLeft(find.text('Ferritin')).dy),
+    );
+  });
+
   testWidgets('add to list ticks the lists the marker is already on', (
     tester,
   ) async {

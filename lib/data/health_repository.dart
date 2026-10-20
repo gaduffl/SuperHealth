@@ -1049,140 +1049,173 @@ class HealthRepository {
     }
   }
 
-  /// Merges a temporary parser-created biomarker into an existing catalog entry.
-  ///
-  /// The operation is intentionally one transaction: a crash cannot leave a
-  /// measurement pointing at a soft-deleted temporary entry.  Conflicting
-  /// target/list/range links are retained as tombstones rather than discarded.
-  Future<TemporaryBiomarkerResolution> mergeTemporaryBiomarker({
-    required String temporaryBiomarkerId,
-    required String canonicalBiomarkerId,
+  /// What [mergeBiomarker] would move, read before anything changes so the
+  /// confirmation can say it.
+  Future<BiomarkerMergePreview> previewBiomarkerMerge({
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
   }) async {
-    if (temporaryBiomarkerId == canonicalBiomarkerId) {
-      throw ArgumentError('Choose a different canonical biomarker.');
+    final db = await _database.database;
+    final (source, target) = await _mergePair(
+      db,
+      sourceBiomarkerId: sourceBiomarkerId,
+      targetBiomarkerId: targetBiomarkerId,
+    );
+    final merged = _mergedTarget(source, target);
+    final rows = await db.query(
+      'measurements',
+      where: 'biomarker_id = ? AND deleted = 0',
+      whereArgs: [sourceBiomarkerId],
+    );
+    final documents = <String>{};
+    final profiles = <String>{};
+    var unconverted = 0;
+    for (final row in rows) {
+      if (row['document_id'] case final String documentId) {
+        documents.add(documentId);
+      }
+      profiles.add('${row['profile_id']}');
+      if (row['conversion_status'] != 'calculated' &&
+          _canonicalFieldsForRow(merged, row)['canonical_value'] == null) {
+        unconverted++;
+      }
     }
+    return BiomarkerMergePreview(
+      measurements: rows.length,
+      documents: documents.length,
+      profiles: profiles.length,
+      unconvertedMeasurements: unconverted,
+      targetUnit: merged.defaultUnit,
+    );
+  }
+
+  /// Merges one catalog biomarker into another and retires the source.
+  ///
+  /// The source may be a temporary entry from a lab import or a permanent one
+  /// that turned out to name the same test twice. The operation is
+  /// intentionally one transaction: a crash cannot leave a measurement
+  /// pointing at a retired entry. A measurement keeps everything that makes it
+  /// evidence — its document, page, source row, reported value and unit, flags
+  /// — and changes only its biomarker and the comparison value derived from
+  /// it. That value is recomputed against the target's unit, because a result
+  /// whose canonical unit differs from its neighbours' drops out of the trend.
+  /// Conflicting target/list/range/package links are retained as tombstones
+  /// rather than discarded.
+  Future<BiomarkerMergeResult> mergeBiomarker({
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
+  }) async {
     final db = await _database.database;
     final now = DateTime.now().toUtc().toIso8601String();
     final counts = <String, int>{};
     await db.transaction((txn) async {
-      final temporary = await txn.query(
-        'biomarkers',
-        where: 'id = ? AND deleted = 0',
-        whereArgs: [temporaryBiomarkerId],
-        limit: 1,
+      final (source, target) = await _mergePair(
+        txn,
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
       );
-      final canonical = await txn.query(
-        'biomarkers',
-        where: 'id = ? AND deleted = 0',
-        whereArgs: [canonicalBiomarkerId],
-        limit: 1,
-      );
-      if (temporary.length != 1 ||
-          canonical.length != 1 ||
-          (temporary.single['is_temporary'] as num?)?.toInt() != 1 ||
-          (canonical.single['is_temporary'] as num?)?.toInt() == 1) {
-        throw StateError(
-          'The selected temporary or canonical biomarker is unavailable.',
-        );
-      }
+      final merged = _mergedTarget(source, target);
 
-      counts['measurements'] = await txn.update(
-        'measurements',
-        {'biomarker_id': canonicalBiomarkerId, 'updated_at': now},
-        where: 'biomarker_id = ?',
-        whereArgs: [temporaryBiomarkerId],
-      );
-      await txn.update(
-        'lab_prices',
-        {'biomarker_id': canonicalBiomarkerId, 'updated_at': now},
-        where: 'biomarker_id = ?',
-        whereArgs: [temporaryBiomarkerId],
-      );
-      counts['lab_plan_items'] = await txn.update(
-        'lab_plan_items',
-        {
-          'biomarker_id': canonicalBiomarkerId,
-          'biomarker_name': '${canonical.single['display_name']}',
-          'updated_at': now,
-        },
-        where: 'biomarker_id = ?',
-        whereArgs: [temporaryBiomarkerId],
-      );
+      var movedMeasurements = 0;
+      var unconverted = 0;
       for (final row in await txn.query(
-        'lab_plans',
-        where: 'pricing_snapshot_json IS NOT NULL',
+        'measurements',
+        where: 'biomarker_id = ?',
+        whereArgs: [sourceBiomarkerId],
       )) {
-        final pricing = LabPricingSnapshot.fromJson(
-          row['pricing_snapshot_json']!,
-        );
-        if (!pricing.members.values.any(
-          (members) => members.contains(temporaryBiomarkerId),
-        )) {
-          continue;
-        }
-        final mapped = LabPricingSnapshot(
-          labName: pricing.labName,
-          packages: pricing.packages,
-          members: {
-            for (final entry in pricing.members.entries)
-              entry.key: {
-                for (final id in entry.value)
-                  id == temporaryBiomarkerId ? canonicalBiomarkerId : id,
-              },
-          },
-        );
+        final calculated = row['conversion_status'] == 'calculated';
+        final canonical = calculated
+            ? const <String, Object?>{}
+            : _canonicalFieldsForRow(merged, row);
         await txn.update(
-          'lab_plans',
-          {
-            'pricing_snapshot_json': jsonEncode(mapped.toJson()),
-            'updated_at': now,
-          },
+          'measurements',
+          {'biomarker_id': targetBiomarkerId, ...canonical, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [row['id']],
         );
+        if ((row['deleted'] as num?)?.toInt() == 1) continue;
+        movedMeasurements++;
+        if (!calculated && canonical['canonical_value'] == null) {
+          unconverted++;
+        }
       }
+      counts['measurements'] = movedMeasurements;
+      counts['unconverted'] = unconverted;
+
+      await _moveLabPrices(
+        txn,
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
+        now: now,
+      );
+      counts['lab_plan_items'] = await _moveLabPlanItems(
+        txn,
+        sourceBiomarkerId: sourceBiomarkerId,
+        target: target,
+        now: now,
+      );
+      await _remapLabPlanSnapshots(
+        txn,
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
+        now: now,
+      );
       counts['targets'] = await _moveConstrainedRelations(
         txn,
         table: 'profile_biomarker_targets',
-        temporaryBiomarkerId: temporaryBiomarkerId,
-        canonicalBiomarkerId: canonicalBiomarkerId,
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
         constraintColumns: const ['profile_id'],
         now: now,
       );
       counts['list_items'] = await _moveConstrainedRelations(
         txn,
         table: 'biomarker_list_items',
-        temporaryBiomarkerId: temporaryBiomarkerId,
-        canonicalBiomarkerId: canonicalBiomarkerId,
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
         constraintColumns: const ['list_id'],
+        now: now,
+      );
+      await _moveConstrainedRelations(
+        txn,
+        table: 'biomarker_package_items',
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
+        constraintColumns: const ['package_id'],
+        now: now,
+      );
+      await _moveConstrainedRelations(
+        txn,
+        table: 'trend_dose_links',
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
+        constraintColumns: const ['profile_id'],
         now: now,
       );
       counts['ranges'] = await _moveRanges(
         txn,
-        temporaryBiomarkerId: temporaryBiomarkerId,
-        canonicalBiomarkerId: canonicalBiomarkerId,
+        sourceBiomarkerId: sourceBiomarkerId,
+        targetBiomarkerId: targetBiomarkerId,
         now: now,
       );
-      final temporaryBiomarker = Biomarker.fromMap(temporary.single);
-      final canonicalBiomarker = Biomarker.fromMap(canonical.single);
-      final synonyms = _mergedSynonyms(temporaryBiomarker, canonicalBiomarker);
       await txn.update(
         'biomarkers',
-        {'synonyms_json': jsonEncode(synonyms), 'updated_at': now},
+        {'synonyms_json': jsonEncode(merged.synonyms), 'updated_at': now},
         where: 'id = ?',
-        whereArgs: [canonicalBiomarkerId],
+        whereArgs: [targetBiomarkerId],
       );
       await txn.update(
         'biomarkers',
         {'deleted': 1, 'updated_at': now},
         where: 'id = ? AND deleted = 0',
-        whereArgs: [temporaryBiomarkerId],
+        whereArgs: [sourceBiomarkerId],
       );
     });
-    return TemporaryBiomarkerResolution(
-      temporaryBiomarkerId: temporaryBiomarkerId,
-      canonicalBiomarkerId: canonicalBiomarkerId,
+    return BiomarkerMergeResult(
+      sourceBiomarkerId: sourceBiomarkerId,
+      targetBiomarkerId: targetBiomarkerId,
       movedMeasurements: counts['measurements'] ?? 0,
+      unconvertedMeasurements: counts['unconverted'] ?? 0,
       movedTargets: counts['targets'] ?? 0,
       movedListItems: counts['list_items'] ?? 0,
       movedRanges: counts['ranges'] ?? 0,
@@ -1190,14 +1223,51 @@ class HealthRepository {
     );
   }
 
-  List<String> _mergedSynonyms(Biomarker temporary, Biomarker canonical) {
+  /// A calculated biomarker has no results of its own to give or take, and a
+  /// temporary one is an import still waiting for a home, not a home itself.
+  Future<(Biomarker, Biomarker)> _mergePair(
+    DatabaseExecutor db, {
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
+  }) async {
+    if (sourceBiomarkerId == targetBiomarkerId) {
+      throw ArgumentError('Choose a different biomarker to merge into.');
+    }
+    Biomarker? source;
+    Biomarker? target;
+    for (final row in await db.query(
+      'biomarkers',
+      where: 'id IN (?, ?) AND deleted = 0',
+      whereArgs: [sourceBiomarkerId, targetBiomarkerId],
+    )) {
+      final biomarker = Biomarker.fromMap(row);
+      if (biomarker.id == sourceBiomarkerId) source = biomarker;
+      if (biomarker.id == targetBiomarkerId) target = biomarker;
+    }
+    if (source == null ||
+        target == null ||
+        source.isCalculated ||
+        target.isCalculated ||
+        target.isTemporary) {
+      throw StateError('The selected biomarkers cannot be merged.');
+    }
+    return (source, target);
+  }
+
+  Biomarker _mergedTarget(Biomarker source, Biomarker target) =>
+      Biomarker.fromMap({
+        ...target.toMap(),
+        'synonyms_json': jsonEncode(_mergedSynonyms(source, target)),
+      });
+
+  List<String> _mergedSynonyms(Biomarker source, Biomarker target) {
     final result = <String>[];
     final seen = <String>{};
     for (final value in [
-      ...canonical.synonyms,
-      temporary.displayName,
-      temporary.canonicalName,
-      ...temporary.synonyms,
+      ...target.synonyms,
+      source.displayName,
+      source.canonicalName,
+      ...source.synonyms,
     ]) {
       final trimmed = value.trim();
       if (trimmed.isEmpty) continue;
@@ -1206,6 +1276,200 @@ class HealthRepository {
       result.add(trimmed);
     }
     return result;
+  }
+
+  Map<String, Object?> _canonicalFieldsForRow(
+    Biomarker biomarker,
+    Map<String, Object?> row,
+  ) => _canonicalFields(
+    biomarker,
+    (row['value'] as num).toDouble(),
+    _unitConversion.normalizeUnit('${row['unit_reported'] ?? ''}'),
+  );
+
+  /// Moves the price each laboratory currently charges for the source, only
+  /// where the target has no price history with that laboratory.
+  ///
+  /// [LabCatalogPricing] takes the newest row per laboratory, tombstones
+  /// included. Moving a row beside one the target already has would let the
+  /// merge, as the newest write, overrule the target's own price; moving a
+  /// whole history under one timestamp would leave the winner to the id
+  /// tiebreak. So exactly the current offer moves, and the rows it superseded
+  /// stay with the retired entry.
+  Future<void> _moveLabPrices(
+    Transaction txn, {
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
+    required String now,
+  }) async {
+    final targetLabs = {
+      for (final row in await txn.query(
+        'lab_prices',
+        columns: const ['lab_name'],
+        where: 'biomarker_id = ?',
+        whereArgs: [targetBiomarkerId],
+      ))
+        labKey('${row['lab_name']}'),
+    };
+    final current = <String, LabPrice>{};
+    for (final row in await txn.query(
+      'lab_prices',
+      where: 'biomarker_id = ?',
+      whereArgs: [sourceBiomarkerId],
+    )) {
+      final price = LabPrice.fromMap(row);
+      final key = labKey(price.labName);
+      if (targetLabs.contains(key)) continue;
+      final held = current[key];
+      if (held == null ||
+          price.updatedAt.isAfter(held.updatedAt) ||
+          (price.updatedAt.isAtSameMomentAs(held.updatedAt) &&
+              price.id.compareTo(held.id) > 0)) {
+        current[key] = price;
+      }
+    }
+    for (final price in current.values) {
+      if (price.deleted) continue;
+      await txn.update(
+        'lab_prices',
+        {'biomarker_id': targetBiomarkerId, 'updated_at': now},
+        where: 'id = ?',
+        whereArgs: [price.id],
+      );
+    }
+  }
+
+  /// Relabels the source's planned tests. A plan that listed both names lists
+  /// one test twice, so the two items fold into one: tiers are cumulative,
+  /// which makes the earlier tier the one that is true of the merged test, and
+  /// a tick on either means it was done.
+  Future<int> _moveLabPlanItems(
+    Transaction txn, {
+    required String sourceBiomarkerId,
+    required Biomarker target,
+    required String now,
+  }) async {
+    final relabel = <String, Object?>{
+      'biomarker_id': target.id,
+      'biomarker_name': target.displayName,
+      'updated_at': now,
+    };
+    var moved = 0;
+    for (final row in await txn.query(
+      'lab_plan_items',
+      where: 'biomarker_id = ?',
+      whereArgs: [sourceBiomarkerId],
+    )) {
+      final live = (row['deleted'] as num?)?.toInt() != 1;
+      final existing = live
+          ? await txn.query(
+              'lab_plan_items',
+              where: 'plan_id = ? AND biomarker_id = ? AND deleted = 0',
+              whereArgs: [row['plan_id'], target.id],
+              limit: 1,
+            )
+          : const <Map<String, Object?>>[];
+      if (existing.isEmpty) {
+        await txn.update(
+          'lab_plan_items',
+          relabel,
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+        if (live) moved++;
+        continue;
+      }
+      final kept = existing.single;
+      final sourceFirst =
+          LabTier.values.byName('${row['tier']}').index <
+          LabTier.values.byName('${kept['tier']}').index;
+      final checked =
+          (row['checked'] as num?)?.toInt() == 1 ||
+          (kept['checked'] as num?)?.toInt() == 1;
+      await txn.update(
+        'lab_plan_items',
+        {...relabel, 'checked': checked ? 1 : 0},
+        where: 'id = ?',
+        whereArgs: [sourceFirst ? row['id'] : kept['id']],
+      );
+      await txn.update(
+        'lab_plan_items',
+        {...relabel, 'deleted': 1},
+        where: 'id = ?',
+        whereArgs: [sourceFirst ? kept['id'] : row['id']],
+      );
+      if (sourceFirst) moved++;
+    }
+    return moved;
+  }
+
+  /// A pricing snapshot names package members and coverage names the planned
+  /// tests a verdict rests on. Left on the retired id, a verdict would cite a
+  /// test its plan no longer lists.
+  Future<void> _remapLabPlanSnapshots(
+    Transaction txn, {
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
+    required String now,
+  }) async {
+    String remap(Object? id) =>
+        id == sourceBiomarkerId ? targetBiomarkerId : '$id';
+    for (final row in await txn.query(
+      'lab_plans',
+      columns: const ['id', 'pricing_snapshot_json', 'coverage_json'],
+    )) {
+      final changes = <String, Object?>{};
+      final pricingJson = row['pricing_snapshot_json'];
+      if (pricingJson != null) {
+        final pricing = LabPricingSnapshot.fromJson(pricingJson);
+        if (pricing.members.values.any(
+          (members) => members.contains(sourceBiomarkerId),
+        )) {
+          changes['pricing_snapshot_json'] = jsonEncode(
+            LabPricingSnapshot(
+              labName: pricing.labName,
+              packages: pricing.packages,
+              members: {
+                for (final entry in pricing.members.entries)
+                  entry.key: {for (final id in entry.value) remap(id)},
+              },
+            ).toJson(),
+          );
+        }
+      }
+      // Rewritten in place rather than through PlanCoverage, whose tolerant
+      // reader would also normalise every entry the merge has nothing to do
+      // with.
+      final coverageJson = row['coverage_json'];
+      final coverage = coverageJson is String && coverageJson.isNotEmpty
+          ? jsonDecode(coverageJson)
+          : null;
+      bool cites(Object? entry) =>
+          entry is Map &&
+          entry['biomarker_ids'] is List &&
+          (entry['biomarker_ids'] as List).contains(sourceBiomarkerId);
+      if (coverage is List && coverage.any(cites)) {
+        changes['coverage_json'] = jsonEncode([
+          for (final entry in coverage)
+            if (cites(entry))
+              {
+                ...entry as Map,
+                'biomarker_ids': {
+                  for (final id in entry['biomarker_ids'] as List) remap(id),
+                }.toList(),
+              }
+            else
+              entry,
+        ]);
+      }
+      if (changes.isEmpty) continue;
+      await txn.update(
+        'lab_plans',
+        {...changes, 'updated_at': now},
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
   }
 
   /// Keeps the temporary row and all its evidence, changing only its catalog
@@ -1229,15 +1493,15 @@ class HealthRepository {
   Future<int> _moveConstrainedRelations(
     Transaction txn, {
     required String table,
-    required String temporaryBiomarkerId,
-    required String canonicalBiomarkerId,
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
     required List<String> constraintColumns,
     required String now,
   }) async {
     final rows = await txn.query(
       table,
       where: 'biomarker_id = ?',
-      whereArgs: [temporaryBiomarkerId],
+      whereArgs: [sourceBiomarkerId],
     );
     var moved = 0;
     for (final row in rows) {
@@ -1245,7 +1509,7 @@ class HealthRepository {
       if ((row['deleted'] as num?)?.toInt() == 1) {
         await txn.update(
           table,
-          {'biomarker_id': canonicalBiomarkerId, 'updated_at': now},
+          {'biomarker_id': targetBiomarkerId, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [id],
         );
@@ -1253,7 +1517,7 @@ class HealthRepository {
         continue;
       }
       final where = <String>['biomarker_id = ?', 'deleted = 0'];
-      final args = <Object?>[canonicalBiomarkerId];
+      final args = <Object?>[targetBiomarkerId];
       for (final column in constraintColumns) {
         where.add('$column = ?');
         args.add(row[column]);
@@ -1268,18 +1532,14 @@ class HealthRepository {
       if (duplicate.isNotEmpty) {
         await txn.update(
           table,
-          {
-            'biomarker_id': canonicalBiomarkerId,
-            'deleted': 1,
-            'updated_at': now,
-          },
+          {'biomarker_id': targetBiomarkerId, 'deleted': 1, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [id],
         );
       } else {
         await txn.update(
           table,
-          {'biomarker_id': canonicalBiomarkerId, 'updated_at': now},
+          {'biomarker_id': targetBiomarkerId, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [id],
         );
@@ -1291,14 +1551,14 @@ class HealthRepository {
 
   Future<int> _moveRanges(
     Transaction txn, {
-    required String temporaryBiomarkerId,
-    required String canonicalBiomarkerId,
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
     required String now,
   }) async {
     final rows = await txn.query(
       'biomarker_ranges',
       where: 'biomarker_id = ?',
-      whereArgs: [temporaryBiomarkerId],
+      whereArgs: [sourceBiomarkerId],
     );
     var moved = 0;
     const fields = [
@@ -1320,7 +1580,7 @@ class HealthRepository {
       if ((row['deleted'] as num?)?.toInt() == 1) {
         await txn.update(
           'biomarker_ranges',
-          {'biomarker_id': canonicalBiomarkerId, 'updated_at': now},
+          {'biomarker_id': targetBiomarkerId, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [id],
         );
@@ -1328,7 +1588,7 @@ class HealthRepository {
         continue;
       }
       final where = <String>['biomarker_id = ?', 'deleted = 0'];
-      final args = <Object?>[canonicalBiomarkerId];
+      final args = <Object?>[targetBiomarkerId];
       for (final field in fields) {
         where.add('$field IS ?');
         args.add(row[field]);
@@ -1343,18 +1603,14 @@ class HealthRepository {
       if (duplicate.isNotEmpty) {
         await txn.update(
           'biomarker_ranges',
-          {
-            'biomarker_id': canonicalBiomarkerId,
-            'deleted': 1,
-            'updated_at': now,
-          },
+          {'biomarker_id': targetBiomarkerId, 'deleted': 1, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [id],
         );
       } else {
         await txn.update(
           'biomarker_ranges',
-          {'biomarker_id': canonicalBiomarkerId, 'updated_at': now},
+          {'biomarker_id': targetBiomarkerId, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [id],
         );
@@ -1715,20 +1971,36 @@ class HealthRepository {
       map['canonical_unit'] = null;
       return map;
     }
-    final biomarker = Biomarker.fromMap(rows.single);
-    final preferredUnit = _unitConversion.normalizeUnit(
-      biomarker.defaultUnit.isEmpty ? measurement.unit : biomarker.defaultUnit,
-    );
     final reportedUnit = _unitConversion.normalizeUnit(measurement.unit);
     map['unit_reported'] = reportedUnit;
-    map['canonical_unit'] = preferredUnit;
+    return map..addAll(
+      _canonicalFields(
+        Biomarker.fromMap(rows.single),
+        measurement.value,
+        reportedUnit,
+      ),
+    );
+  }
+
+  /// The comparison form of a reported value in [biomarker]'s unit, given a
+  /// [reportedUnit] that is already normalised.
+  Map<String, Object?> _canonicalFields(
+    Biomarker biomarker,
+    double value,
+    String reportedUnit,
+  ) {
+    final preferredUnit = _unitConversion.normalizeUnit(
+      biomarker.defaultUnit.isEmpty ? reportedUnit : biomarker.defaultUnit,
+    );
     if (reportedUnit == preferredUnit) {
-      map['canonical_value'] = measurement.value;
-      map['conversion_status'] = 'not_required';
-      return map;
+      return {
+        'canonical_value': value,
+        'canonical_unit': preferredUnit,
+        'conversion_status': 'not_required',
+      };
     }
     final converted = _unitConversion.convertValueForBiomarkerKeys(
-      measurement.value,
+      value,
       reportedUnit,
       preferredUnit,
       _biomarkerConversionKeys(biomarker),
@@ -1738,11 +2010,11 @@ class HealthRepository {
     // boundary: retain the source result and mark its canonical form as
     // unavailable instead.
     final canonicalValue = converted?.isFinite == true ? converted : null;
-    map['canonical_value'] = canonicalValue;
-    map['conversion_status'] = canonicalValue == null
-        ? 'unsupported'
-        : 'converted';
-    return map;
+    return {
+      'canonical_value': canonicalValue,
+      'canonical_unit': preferredUnit,
+      'conversion_status': canonicalValue == null ? 'unsupported' : 'converted',
+    };
   }
 
   /// Recomputes only derived canonical values that an older converter could
@@ -3390,22 +3662,46 @@ class HealthRepository {
   }
 }
 
-class TemporaryBiomarkerResolution {
-  const TemporaryBiomarkerResolution({
-    required this.temporaryBiomarkerId,
-    required this.canonicalBiomarkerId,
+class BiomarkerMergeResult {
+  const BiomarkerMergeResult({
+    required this.sourceBiomarkerId,
+    required this.targetBiomarkerId,
     required this.movedMeasurements,
+    required this.unconvertedMeasurements,
     required this.movedTargets,
     required this.movedListItems,
     required this.movedRanges,
     required this.movedLabPlanItems,
   });
 
-  final String temporaryBiomarkerId;
-  final String canonicalBiomarkerId;
+  final String sourceBiomarkerId;
+  final String targetBiomarkerId;
   final int movedMeasurements;
+
+  /// Moved results with no comparison value in the target's unit. They are
+  /// kept as reported; they only cannot share the target's trend line.
+  final int unconvertedMeasurements;
   final int movedTargets;
   final int movedListItems;
   final int movedRanges;
   final int movedLabPlanItems;
+}
+
+class BiomarkerMergePreview {
+  const BiomarkerMergePreview({
+    required this.measurements,
+    required this.documents,
+    required this.profiles,
+    required this.unconvertedMeasurements,
+    required this.targetUnit,
+  });
+
+  /// Live results of the source, across every profile: the catalog is shared.
+  final int measurements;
+
+  /// Distinct lab reports those results were read from.
+  final int documents;
+  final int profiles;
+  final int unconvertedMeasurements;
+  final String targetUnit;
 }

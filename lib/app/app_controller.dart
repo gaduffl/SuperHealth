@@ -1644,7 +1644,7 @@ class AppController extends ChangeNotifier {
     }
     if (measurements.any((item) => item.biomarkerId == biomarker.id)) {
       throw StateError(
-        'This biomarker has measurements. Reassign or delete those results first.',
+        'This biomarker has results. Merge it into another test to keep them, or delete them first.',
       );
     }
     await repository.softDelete('biomarkers', biomarker.id);
@@ -1656,13 +1656,21 @@ class AppController extends ChangeNotifier {
     });
   }
 
-  Future<TemporaryBiomarkerResolution> mergeTemporaryBiomarker({
-    required String temporaryBiomarkerId,
-    required String canonicalBiomarkerId,
+  Future<BiomarkerMergePreview> previewBiomarkerMerge({
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
+  }) => repository.previewBiomarkerMerge(
+    sourceBiomarkerId: sourceBiomarkerId,
+    targetBiomarkerId: targetBiomarkerId,
+  );
+
+  Future<BiomarkerMergeResult> mergeBiomarker({
+    required String sourceBiomarkerId,
+    required String targetBiomarkerId,
   }) async {
-    final result = await repository.mergeTemporaryBiomarker(
-      temporaryBiomarkerId: temporaryBiomarkerId,
-      canonicalBiomarkerId: canonicalBiomarkerId,
+    final result = await repository.mergeBiomarker(
+      sourceBiomarkerId: sourceBiomarkerId,
+      targetBiomarkerId: targetBiomarkerId,
     );
     await _refreshActiveData({
       _ActiveDataSlice.biomarkers,
@@ -1673,6 +1681,8 @@ class AppController extends ChangeNotifier {
       _ActiveDataSlice.biomarkerLists,
       _ActiveDataSlice.dueBiomarkers,
       _ActiveDataSlice.labPlans,
+      _ActiveDataSlice.biomarkerPackages,
+      _ActiveDataSlice.trendDoseLinks,
     });
     return result;
   }

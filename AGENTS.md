@@ -87,6 +87,22 @@ Omitting a table from the latter silently excludes it from sync and backup.
 
 **Ids come from `repository.newId()`** (UUID v4), never from a counter.
 
+**A merge re-files evidence; it never rewrites it.** `mergeBiomarker` folds a
+temporary import entry, or a permanent duplicate ("Transferrin-Sättigung"
+beside "Transferrinsättigung"), into the test that stays, in one transaction.
+A measurement keeps its document, page, source row, reported value and flags;
+only its biomarker and its canonical value change, and the canonical value is
+recomputed in the target's unit, because a result whose canonical unit differs
+from its neighbours' silently drops out of the trend. Only the current price
+per lab moves, and only where the target has no history with that lab:
+`LabCatalogPricing` takes the newest row, so a moved row would overrule the
+target's own price. A plan that listed both names folds into one item in the
+earlier tier. The retired name becomes a synonym, and the parser matches
+synonyms against the reported name, so the next report printing it does not
+recreate the duplicate. Deleting a test with results is refused; merging is the
+way out that keeps them. A new table with a `biomarker_id` needs a line in
+`mergeBiomarker`, or a merge strands its rows on a retired entry.
+
 **Timestamps are stored UTC ISO-8601**, but day bucketing for charts and
 correlations is *local* calendar days. Several tests pin DST and year
 boundaries; do not "simplify" them into UTC arithmetic.
