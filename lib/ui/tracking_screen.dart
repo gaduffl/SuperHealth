@@ -21,6 +21,7 @@ import 'common.dart';
 import 'dashboard_screen.dart' show periodLabel;
 import 'design.dart';
 import 'dialogs.dart';
+import 'supplement_stock_section.dart';
 
 /// The supplements screen: the catalog, the weekly plan, stock, and history.
 ///
@@ -643,9 +644,6 @@ class _TrackingScreenState extends State<TrackingScreen>
       householdSchedules: controller.householdSchedules,
       stockLevels: controller.stockLevels,
     );
-    final projections = _onlyLowStock
-        ? allProjections.where((item) => item.low).toList()
-        : allProjections;
     final costSchedules = _householdMonthlyCost
         ? controller.householdSchedules
         : controller.schedules;
@@ -677,35 +675,20 @@ class _TrackingScreenState extends State<TrackingScreen>
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: StatTile(
-                  label: strings.lowStock,
-                  value: strings.formatNumber(
-                    allProjections.where((item) => item.low).length.toDouble(),
-                    decimalDigits: 0,
-                  ),
-                  icon: Icons.inventory_outlined,
-                  detail: strings.householdCatalog,
-                  tone: allProjections.any((item) => item.low)
-                      ? Theme.of(context).colorScheme.error
-                      : null,
-                  onTap: () => setState(() => _onlyLowStock = !_onlyLowStock),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: StatTile(
-                  label: strings.plannedMonthlyCost,
-                  value: strings.formatEur(monthlyCost, decimalDigits: 0),
-                  icon: Icons.euro_outlined,
-                  detail: _householdMonthlyCost
-                      ? strings.pick('Household', 'Haushalt')
-                      : strings.pick('Personal', 'Persönlich'),
-                ),
-              ),
-            ],
+          SupplementStockSection(
+            allProjections: allProjections,
+            onlyLowStock: _onlyLowStock,
+            onLowStockChanged: (value) => setState(() => _onlyLowStock = value),
+            monthlyCost: monthlyCost,
+            householdMonthlyCost: _householdMonthlyCost,
+            onPurchase: (supplement) => showAdjustStockDialog(
+              context,
+              controller,
+              supplement,
+              purchase: true,
+            ),
+            onAdjustStock: (supplement) =>
+                showAdjustStockDialog(context, controller, supplement),
           ),
           Align(
             alignment: Alignment.centerRight,
@@ -883,87 +866,6 @@ class _TrackingScreenState extends State<TrackingScreen>
               ],
             ),
           ),
-          SectionHeader(
-            title: strings.householdStock,
-            subtitle: strings.stockProjectionDescription,
-            action: _onlyLowStock
-                ? TextButton.icon(
-                    onPressed: () => setState(() => _onlyLowStock = false),
-                    icon: const Icon(Icons.filter_alt_off_outlined),
-                    label: Text(strings.clearFilter),
-                  )
-                : null,
-          ),
-          if (projections.isEmpty)
-            EmptyState(
-              icon: Icons.inventory_2_outlined,
-              title: _onlyLowStock
-                  ? strings.pick(
-                      'Nothing is running low',
-                      'Nichts geht zur Neige',
-                    )
-                  : strings.noStockToManage,
-              message: _onlyLowStock
-                  ? strings.pick(
-                      'Every tracked product has more than a month of cover.',
-                      'Jedes erfasste Produkt reicht noch über einen Monat.',
-                    )
-                  : strings.addSupplementAndContainerCount,
-            )
-          else
-            for (final projection in projections)
-              SurfaceCard(
-                padding: EdgeInsets.zero,
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: projection.low
-                        ? Theme.of(context).colorScheme.errorContainer
-                        : null,
-                    child: Icon(
-                      projection.low
-                          ? Icons.warning_amber_rounded
-                          : Icons.inventory_2_outlined,
-                    ),
-                  ),
-                  title: Text(projection.supplement.name),
-                  subtitle: Text(
-                    [
-                      formatAmountWithUnit(
-                        strings,
-                        amount: projection.unitsOnHand,
-                        unit: projection.supplement.stockUnit,
-                        form: projection.supplement.form,
-                      ),
-                      if (projection.daysRemaining != null)
-                        strings.daysProjected(
-                          projection.daysRemaining!.clamp(0, 9999).round(),
-                        )
-                      else
-                        strings.noCompatibleHouseholdSchedule,
-                      if (projection.low &&
-                          projection.suggestedPurchaseUnits > 0)
-                        strings.buyForWeeks(
-                          projection.suggestedPurchaseUnits.round(),
-                          12,
-                        ),
-                    ].join(' · '),
-                  ),
-                  trailing: FilledButton.tonal(
-                    onPressed: () => showAdjustStockDialog(
-                      context,
-                      controller,
-                      projection.supplement,
-                      purchase: true,
-                    ),
-                    child: Text(strings.purchase),
-                  ),
-                  onTap: () => showAdjustStockDialog(
-                    context,
-                    controller,
-                    projection.supplement,
-                  ),
-                ),
-              ),
         ],
       ),
     );
