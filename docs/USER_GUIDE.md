@@ -38,6 +38,11 @@ Restoring a portable backup pauses ordinary OneDrive sync. Choose **Resume and m
 
 ## Daily use
 
+In Easy mode, Today shows large buttons for scheduled doses. **Log supplement
+intake** records an intake without a schedule: choose a product, enter the dose,
+and confirm. It stays visible under **Recorded today**, with an undo button.
+The action is available on days without scheduled doses too.
+
 Today opens with the overview tiles. Each one is a shortcut: tapping it opens the screen that owns its number, already filtered — low stock opens the stock list limited to what is running out, biomarkers due opens the catalog limited to overdue markers. A marker that several lists ask for counts once, not once per list; the lists that want it are named beside it.
 
 Below the tiles, the day strip selects which day you are working on; the bar under each number shows how much of that day is recorded. The day's doses are grouped into morning, midday, evening, and bedtime:
