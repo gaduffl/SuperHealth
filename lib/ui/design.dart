@@ -349,6 +349,7 @@ class StatTile extends StatelessWidget {
     this.detail,
     this.onTap,
     this.tone,
+    this.selected,
     super.key,
   });
 
@@ -361,17 +362,25 @@ class StatTile extends StatelessWidget {
   /// Optional accent, used to mark a tile that needs attention.
   final Color? tone;
 
+  /// Set when the tile toggles a filter rather than opening a destination.
+  final bool? selected;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final accent = tone ?? colors.primary;
     return Semantics(
+      container: true,
       button: onTap != null,
+      selected: selected,
+      onTap: onTap,
       label: detail == null ? '$label: $value' : '$label: $value. $detail',
       excludeSemantics: true,
       child: Material(
-        color: colors.surfaceContainerLow,
+        color: selected == true
+            ? colors.secondaryContainer
+            : colors.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppRadius.large),
         child: InkWell(
           onTap: onTap,
@@ -379,7 +388,11 @@ class StatTile extends StatelessWidget {
           child: Ink(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(AppRadius.large),
-              border: Border.all(color: colors.outlineVariant),
+              border: Border.all(
+                color: selected == true
+                    ? colors.secondary
+                    : colors.outlineVariant,
+              ),
             ),
             padding: const EdgeInsets.all(AppSpacing.lg),
             child: Column(
@@ -398,7 +411,11 @@ class StatTile extends StatelessWidget {
                     const Spacer(),
                     if (onTap != null)
                       Icon(
-                        Icons.chevron_right,
+                        selected == null
+                            ? Icons.chevron_right
+                            : selected!
+                            ? Icons.check
+                            : Icons.filter_alt_outlined,
                         size: 18,
                         color: colors.onSurfaceVariant,
                       ),

@@ -1192,12 +1192,20 @@ in the same PR. A stale entry is worse than a missing one, because it gets
 trusted. Record the constraint and its consequence, not a changelog of what you
 did.
 
+**A filter must change what is visible beside its control.** The stock tab's
+low-stock tile and household inventory live together in `SupplementStockSection`,
+above costs and shopping; filtering a list below those sections looked like a
+dead button. The tile exposes its selected state and the list offers a clear
+action. Keep its summary row height bounded: `StatTile` contains a `Spacer`,
+which cannot lay out directly in an unbounded `ListView`.
+
 **`TrackingScreen` does not come up under `flutter_test`.** `pumpWidget` on it
 hangs before the first frame completes — reproduced with both `pumpAndSettle`
 and bounded `pump`, and unrelated to any recent change. `DashboardScreen` and
 `HealthScreen` pump fine, so this is specific to that screen and not yet
 diagnosed. Until it is, test catalog logic through a top-level predicate
-(`catalogMatchesFilter`) rather than by standing the screen up.
+(`catalogMatchesFilter`) and stock interactions through `SupplementStockSection`
+rather than by standing the screen up.
 
 ## Not audited
 
