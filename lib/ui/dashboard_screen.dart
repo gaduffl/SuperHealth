@@ -471,50 +471,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     BuildContext context,
     AppController controller,
   ) async {
-    final strings = AppLocalizations.of(context);
-    final active = controller.supplements
-        .where((item) => item.active && !item.deleted)
-        .toList();
-    final product = await showModalBottomSheet<Supplement>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            ListTile(
-              title: Text(strings.whichSupplement),
-              subtitle: Text(
-                strings.pick(
-                  'Records an unplanned dose for the selected day.',
-                  'Erfasst eine ungeplante Dosis für den gewählten Tag.',
-                ),
-              ),
-            ),
-            for (final item in active)
-              ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: seriesColorFor(
-                    item.name,
-                    colorMode: controller.colorMode,
-                  ).withValues(alpha: 0.18),
-                  child: const Icon(Icons.medication_outlined, size: 20),
-                ),
-                title: Text(item.name),
-                subtitle: item.brand.isEmpty ? null : Text(item.brand),
-                onTap: () => Navigator.pop(sheetContext, item),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (product == null || !context.mounted) return;
-    final now = DateTime.now();
-    await showLogIntakeDialog(
+    final now = widget.clock();
+    await showManualIntakeDialog(
       context,
       controller,
-      product,
       initialTakenAt: _sameDay(_selectedDay, now)
           ? now
           : DateTime(

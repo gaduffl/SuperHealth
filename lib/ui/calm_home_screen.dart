@@ -11,6 +11,7 @@ import '../app/shell_navigation.dart';
 import '../domain/entities.dart';
 import 'common.dart';
 import 'design.dart';
+import 'dialogs.dart';
 import 'initial_setup_widgets.dart';
 import 'settings_screen.dart';
 
@@ -113,6 +114,19 @@ class _CalmHomeScreenState extends State<CalmHomeScreen>
     )..sort((a, b) => a.dueAt.compareTo(b.dueAt));
     final pending = doses.where((item) => item.intake == null).toList();
     final takenCount = doses.length - pending.length;
+    final claimedIntakes = {
+      for (final dose in doses)
+        if (dose.intake != null) dose.intake!.id,
+    };
+    final extraIntakes = controller.intakes
+        .where(
+          (item) =>
+              !item.deleted &&
+              item.profileId == profile.id &&
+              _sameDay(item.takenAt, _today) &&
+              !claimedIntakes.contains(item.id),
+        )
+        .sorted((a, b) => a.takenAt.compareTo(b.takenAt));
 
     return PageBody(
       child: RefreshIndicator(
@@ -147,9 +161,24 @@ class _CalmHomeScreenState extends State<CalmHomeScreen>
               ),
             ],
             const SizedBox(height: 24),
-            if (doses.isEmpty)
+            _BigAction(
+              icon: Icons.add_task,
+              label: strings.pick(
+                'Log supplement intake',
+                'Supplement-Einnahme erfassen',
+              ),
+              onPressed: controller.busy
+                  ? null
+                  : () => showManualIntakeDialog(
+                      context,
+                      controller,
+                      initialTakenAt: widget.clock(),
+                    ),
+            ),
+            const SizedBox(height: 16),
+            if (doses.isEmpty && extraIntakes.isEmpty)
               const _NothingPlannedCard()
-            else ...[
+            else if (doses.isNotEmpty) ...[
               _ProgressCard(taken: takenCount, total: doses.length),
               const SizedBox(height: 8),
               for (final dose in doses)
@@ -164,6 +193,13 @@ class _CalmHomeScreenState extends State<CalmHomeScreen>
                   label: Text(strings.pick('Take all', 'Alle nehmen')),
                 ),
               ],
+            ],
+            if (extraIntakes.isNotEmpty) ...[
+              SectionHeader(
+                title: strings.pick('Recorded today', 'Heute erfasst'),
+              ),
+              for (final intake in extraIntakes)
+                CalmIntakeRow(intake: intake, controller: controller),
             ],
             const SizedBox(height: 28),
             _BigAction(
@@ -342,8 +378,8 @@ class CalmDoseRow extends StatelessWidget {
                 Text(
                   formatAmountWithUnit(
                     strings,
-                    amount: dose.schedule.dose,
-                    unit: dose.schedule.unit,
+                    amount: dose.intake?.dose ?? dose.schedule.dose,
+                    unit: dose.intake?.unit ?? dose.schedule.unit,
                     form: dose.supplement.form,
                   ),
                   style: theme.textTheme.bodyLarge?.copyWith(
@@ -424,14 +460,72 @@ class CalmDoseRow extends StatelessWidget {
   }
 }
 
-/// Shown when the day has no doses at all — a schedule-free day, or a profile
-/// nobody has set up yet.
-///
-/// It offers nothing to press. This screen is for someone who does not manage
-/// their own supplements, so "Add a supplement" would be a dead end dressed as
-/// an instruction: it opens a product form that assumes a decision they did not
-/// make. Whoever does the setting up turns Easy mode off in Settings, works in
-/// the full app, and turns it back on.
+/// A manual intake remains visible even when no scheduled dose claims it.
+class CalmIntakeRow extends StatelessWidget {
+  const CalmIntakeRow({
+    required this.intake,
+    required this.controller,
+    super.key,
+  });
+
+  final SupplementIntake intake;
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final supplement = controller.supplements.firstWhereOrNull(
+      (item) => item.id == intake.supplementId,
+    );
+    return SurfaceCard(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(
+          intake.skipped ? Icons.do_not_disturb_on : Icons.check_circle,
+          color: theme.colorScheme.primary,
+          size: 32,
+        ),
+        title: Text(
+          supplement?.name ?? strings.deletedSupplement,
+          style: theme.textTheme.titleLarge,
+        ),
+        subtitle: Text(
+          [
+            formatAmountWithUnit(
+              strings,
+              amount: intake.dose,
+              unit: intake.unit,
+              form: supplement?.form,
+            ),
+            strings.formatTime(intake.takenAt),
+            if (intake.skipped) strings.skipped,
+          ].join(' · '),
+          style: theme.textTheme.bodyLarge,
+        ),
+        trailing: IconButton(
+          tooltip: strings.undoCheckIn,
+          iconSize: 28,
+          style: IconButton.styleFrom(minimumSize: const Size(60, 56)),
+          onPressed: controller.busy ? null : () => _undo(context),
+          icon: const Icon(Icons.undo),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _undo(BuildContext context) async {
+    try {
+      await controller.deleteIntake(intake);
+    } on Object catch (error) {
+      if (context.mounted) await showAppError(context, error);
+    }
+  }
+}
+
+/// A schedule-free day still has a way to record an as-needed intake.
 class _NothingPlannedCard extends StatelessWidget {
   const _NothingPlannedCard();
 
@@ -446,8 +540,8 @@ class _NothingPlannedCard extends StatelessWidget {
         children: [
           Text(
             strings.pick(
-              'Nothing to take today',
-              'Heute ist nichts einzunehmen',
+              'No doses planned for today',
+              'Heute sind keine Einnahmen geplant',
             ),
             style: theme.textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.w600,
@@ -456,8 +550,8 @@ class _NothingPlannedCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             strings.pick(
-              'Anything scheduled for you shows up here on the day.',
-              'Was für dich geplant ist, erscheint hier am jeweiligen Tag.',
+              'Scheduled doses appear here. You can also log an intake without a schedule.',
+              'Geplante Einnahmen erscheinen hier. Du kannst auch eine Einnahme ohne Plan erfassen.',
             ),
             style: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
@@ -479,7 +573,7 @@ class _BigAction extends StatelessWidget {
 
   final IconData icon;
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) => SizedBox(

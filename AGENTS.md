@@ -918,6 +918,13 @@ mean exactly one thing in both modes, and the shell translates once, at the bar.
 Renumbering per mode is how a shortcut ends up opening Settings when it meant
 the advisor.
 
+**Simple mode still logs intakes without a schedule.** Its Today screen keeps a
+labelled manual-intake action and shows every current-profile intake for today
+that no scheduled dose already represents, with an undo. A schedule-free day
+must not hide logging or imply that an as-needed intake cannot be recorded.
+Both Today screens share `showManualIntakeDialog`, so product selection and
+validation cannot drift; catalog and schedule management remain in the full app.
+
 **`Size.fromHeight(h)` is `Size(double.infinity, h)`.** As a `ButtonStyle
 .minimumSize` it demands the full available width, not a height floor. In a
 column it looks correct, because the column has already tightened the width —

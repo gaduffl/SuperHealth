@@ -8,6 +8,7 @@ import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import 'common.dart';
+import 'design.dart';
 import 'ingredient_editor.dart';
 
 String _dialogText(BuildContext context, String english, String german) =>
@@ -786,6 +787,71 @@ Future<void> showAdjustStockDialog(
   notes.dispose();
 }
 
+/// Both Today screens use the same product picker and intake editor.
+Future<void> showManualIntakeDialog(
+  BuildContext context,
+  AppController controller, {
+  required DateTime initialTakenAt,
+}) async {
+  final strings = AppLocalizations.of(context);
+  final active = controller.supplements
+      .where((item) => item.active && !item.deleted)
+      .toList();
+  final product = await showModalBottomSheet<Supplement>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          ListTile(
+            title: Text(strings.whichSupplement),
+            subtitle: Text(
+              strings.pick(
+                'Records an intake without a schedule.',
+                'Erfasst eine Einnahme ohne Einnahmeplan.',
+              ),
+            ),
+          ),
+          if (active.isEmpty)
+            EmptyState(
+              icon: Icons.medication_outlined,
+              title: strings.pick(
+                'No active supplements',
+                'Keine aktiven Supplemente',
+              ),
+              message: strings.pick(
+                'Add or activate a supplement in the full app to record an intake.',
+                'Füge in der vollständigen App ein Supplement hinzu oder aktiviere es, um eine Einnahme zu erfassen.',
+              ),
+            ),
+          for (final item in active)
+            ListTile(
+              leading: CircleAvatar(
+                backgroundColor: seriesColorFor(
+                  item.name,
+                  colorMode: controller.colorMode,
+                ).withValues(alpha: 0.18),
+                child: const Icon(Icons.medication_outlined, size: 20),
+              ),
+              title: Text(item.name),
+              subtitle: item.brand.isEmpty ? null : Text(item.brand),
+              onTap: () => Navigator.pop(sheetContext, item),
+            ),
+        ],
+      ),
+    ),
+  );
+  if (product == null || !context.mounted) return;
+  await showLogIntakeDialog(
+    context,
+    controller,
+    product,
+    initialTakenAt: initialTakenAt,
+  );
+}
+
 Future<void> showLogIntakeDialog(
   BuildContext context,
   AppController controller,
@@ -804,8 +870,10 @@ Future<void> showLogIntakeDialog(
   final notes = TextEditingController(text: existing?.notes ?? '');
   DateTime takenAt = existing?.takenAt ?? initialTakenAt ?? DateTime.now();
   var skipped = existing?.skipped ?? false;
-  final result = await showDialog<bool>(
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final route = DialogRoute<bool>(
     context: context,
+    themes: InheritedTheme.capture(from: context, to: navigator.context),
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: Text(
@@ -821,97 +889,100 @@ Future<void> showLogIntakeDialog(
                   'Einnahme von ${supplement.name} bearbeiten',
                 ),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: dose,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: _dialogText(context, 'Dose *', 'Dosis *'),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: unit,
-                    decoration: InputDecoration(
-                      labelText: _dialogText(context, 'Unit *', 'Einheit *'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: dose,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: _dialogText(context, 'Dose *', 'Dosis *'),
+                      ),
                     ),
                   ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: unit,
+                      decoration: InputDecoration(
+                        labelText: _dialogText(context, 'Unit *', 'Einheit *'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (controller.visibility.pastDayEditing)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_dialogText(context, 'Date', 'Datum')),
+                  subtitle: Text(
+                    MaterialLocalizations.of(context).formatMediumDate(takenAt),
+                  ),
+                  trailing: const Icon(Icons.calendar_today_outlined),
+                  onTap: () async {
+                    final value = await showDatePicker(
+                      context: context,
+                      firstDate: DateTime(1900),
+                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                      initialDate: takenAt,
+                    );
+                    if (value != null) {
+                      setState(() {
+                        takenAt = DateTime(
+                          value.year,
+                          value.month,
+                          value.day,
+                          takenAt.hour,
+                          takenAt.minute,
+                        );
+                      });
+                    }
+                  },
                 ),
-              ],
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(_dialogText(context, 'Date', 'Datum')),
-              subtitle: Text(
-                MaterialLocalizations.of(context).formatMediumDate(takenAt),
-              ),
-              trailing: const Icon(Icons.calendar_today_outlined),
-              onTap: () async {
-                final value = await showDatePicker(
-                  context: context,
-                  firstDate: DateTime(1900),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                  initialDate: takenAt,
-                );
-                if (value != null) {
-                  setState(() {
-                    takenAt = DateTime(
-                      value.year,
-                      value.month,
-                      value.day,
-                      takenAt.hour,
-                      takenAt.minute,
-                    );
-                  });
-                }
-              },
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(_dialogText(context, 'Time', 'Zeit')),
-              subtitle: Text(TimeOfDay.fromDateTime(takenAt).format(context)),
-              trailing: const Icon(Icons.schedule),
-              onTap: () async {
-                final value = await showTimePicker(
-                  context: context,
-                  initialTime: TimeOfDay.fromDateTime(takenAt),
-                );
-                if (value != null) {
-                  setState(() {
-                    takenAt = DateTime(
-                      takenAt.year,
-                      takenAt.month,
-                      takenAt.day,
-                      value.hour,
-                      value.minute,
-                    );
-                  });
-                }
-              },
-            ),
-            TextField(
-              controller: notes,
-              decoration: InputDecoration(
-                labelText: _dialogText(context, 'Notes', 'Notizen'),
-              ),
-            ),
-            if (existing != null)
-              SwitchListTile(
+              ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text(_dialogText(context, 'Skipped', 'Übersprungen')),
-                value: skipped,
-                onChanged: (value) => setState(() => skipped = value),
+                title: Text(_dialogText(context, 'Time', 'Zeit')),
+                subtitle: Text(TimeOfDay.fromDateTime(takenAt).format(context)),
+                trailing: const Icon(Icons.schedule),
+                onTap: () async {
+                  final value = await showTimePicker(
+                    context: context,
+                    initialTime: TimeOfDay.fromDateTime(takenAt),
+                  );
+                  if (value != null) {
+                    setState(() {
+                      takenAt = DateTime(
+                        takenAt.year,
+                        takenAt.month,
+                        takenAt.day,
+                        value.hour,
+                        value.minute,
+                      );
+                    });
+                  }
+                },
               ),
-          ],
+              TextField(
+                controller: notes,
+                decoration: InputDecoration(
+                  labelText: _dialogText(context, 'Notes', 'Notizen'),
+                ),
+              ),
+              if (existing != null)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_dialogText(context, 'Skipped', 'Übersprungen')),
+                  value: skipped,
+                  onChanged: (value) => setState(() => skipped = value),
+                ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -934,6 +1005,7 @@ Future<void> showLogIntakeDialog(
       ),
     ),
   );
+  final result = await navigator.push(route);
   if (result == true && context.mounted) {
     final parsedDose = parseOptionalDouble(dose.text);
     if (parsedDose == null || parsedDose <= 0 || unit.text.trim().isEmpty) {
@@ -979,6 +1051,8 @@ Future<void> showLogIntakeDialog(
       }
     }
   }
+  // The closing keyboard can rebuild the route during its exit animation.
+  await route.completed;
   dose.dispose();
   unit.dispose();
   notes.dispose();
