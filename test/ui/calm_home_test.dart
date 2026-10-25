@@ -357,6 +357,7 @@ void main() {
       textScale: 1.5,
     );
     await tester.scrollUntilVisible(find.text('Log supplement intake'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Log supplement intake'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Magnesium'));
