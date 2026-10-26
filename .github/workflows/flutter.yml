@@ -228,5 +228,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "SuperHealth $version" \
-              --notes "Private signed Android build for SuperHealth $version."
+              --notes-file RELEASE_NOTES.md
           fi
