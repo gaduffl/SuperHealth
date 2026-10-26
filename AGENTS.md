@@ -305,6 +305,13 @@ goes red after the merge, when the PR that caused it is already closed. Raise
 the minor for a feature or a schema migration, the patch for a fix or a
 refinement; the build number always increments by exactly one.
 
+**Every release has a brief change summary in both languages.** Update
+`RELEASE_NOTES.md` with the same version as `pubspec.yaml` and a short `## English`
+and `## Deutsch` section in every PR. CI publishes this file as the GitHub release
+body; the update card and foreground countdown show the matching language, up to
+three items and 240 characters. The release-notes test rejects a stale version,
+missing translation, or an overlong summary before a build can publish.
+
 **A release that did not run is recovered by dispatching, not by an empty
 commit.** The push to `main` is the normal trigger, but runs do get cancelled
 and runners do go unassigned, and then the version sits merged and unreleased.

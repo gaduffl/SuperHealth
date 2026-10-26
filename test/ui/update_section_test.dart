@@ -47,6 +47,7 @@ void main() {
     WidgetTester tester,
     UpdateController? controller, {
     Locale locale = const Locale('en'),
+    double textScale = 1,
     Widget body = const SingleChildScrollView(child: AppUpdateSection()),
   }) async {
     Widget scope(Widget child) => controller == null
@@ -56,6 +57,12 @@ void main() {
       scope(
         MaterialApp(
           locale: locale,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
           supportedLocales: AppLocalizations.supportedLocales,
           localizationsDelegates: const [
             AppLocalizations.delegate,
@@ -71,20 +78,20 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  AvailableUpdate releaseWithNotes(String notes) => AvailableUpdate(
+    version: AppVersion.tryParse('0.43.0+72')!,
+    downloadUri: Uri.parse('https://api.github.com/a'),
+    sizeBytes: bytes.length,
+    sha256: sha256Of(bytes),
+    notes: notes,
+  );
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     installer = FakeInstaller();
     tokens = MemoryTokens();
     dir = tempDir();
-    source = FixedSource(
-      AvailableUpdate(
-        version: AppVersion.tryParse('0.43.0+72')!,
-        downloadUri: Uri.parse('https://api.github.com/a'),
-        sizeBytes: bytes.length,
-        sha256: sha256Of(bytes),
-        notes: 'Faster charts',
-      ),
-    );
+    source = FixedSource(releaseWithNotes('Faster charts'));
   });
 
   testWidgets('the check is a labelled button on the card, not a bare icon', (
@@ -125,6 +132,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Faster charts'), findsOneWidget);
+      expect(find.text('What’s new'), findsOneWidget);
 
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const ValueKey('update-install')));
@@ -138,6 +146,49 @@ void main() {
       expect(find.textContaining('Confirm the installation'), findsOneWidget);
     },
   );
+
+  for (final language in ['en', 'de']) {
+    testWidgets('the update card previews changes in $language', (
+      tester,
+    ) async {
+      source = FixedSource(releaseWithNotes(_bilingualNotes));
+      await pump(tester, build(), locale: Locale(language));
+      await tester.tap(find.byKey(const ValueKey('update-check')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(language == 'de' ? 'Was ist neu?' : 'What’s new'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          language == 'de' ? 'Schnellere Diagramme.' : 'Faster charts.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          language == 'de' ? 'Faster charts.' : 'Schnellere Diagramme.',
+        ),
+        findsNothing,
+      );
+    });
+  }
+
+  testWidgets('an update without release notes explains the missing summary', (
+    tester,
+  ) async {
+    source = FixedSource(releaseWithNotes(''));
+    await pump(tester, build(), locale: const Locale('de'));
+    await tester.tap(find.byKey(const ValueKey('update-check')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Was ist neu?'), findsOneWidget);
+    expect(
+      find.text('Es wurde keine Änderungsübersicht bereitgestellt.'),
+      findsOneWidget,
+    );
+  });
 
   testWidgets(
     'without permission the card explains it and opens the system page',
@@ -387,6 +438,7 @@ void main() {
     Future<UpdateController> counting(
       WidgetTester tester, {
       Locale locale = const Locale('en'),
+      double textScale = 1,
     }) async {
       installer.silent = SilentInstall.supported;
       final controller = build(clock: () => fixed);
@@ -394,6 +446,7 @@ void main() {
         tester,
         controller,
         locale: locale,
+        textScale: textScale,
         body: const UpdateCountdownBanner(),
       );
       await tester.runAsync(() => controller.setAutoInstall(true));
@@ -421,6 +474,8 @@ void main() {
         findsOneWidget,
       );
       expect(installer.installed, isEmpty);
+      expect(find.text('What’s new'), findsOneWidget);
+      expect(find.text('Faster charts'), findsOneWidget);
     });
 
     testWidgets('Later puts it off and takes the banner away', (tester) async {
@@ -449,6 +504,7 @@ void main() {
     });
 
     testWidgets('speaks German to a German reader', (tester) async {
+      source = FixedSource(releaseWithNotes(_bilingualNotes));
       await counting(tester, locale: const Locale('de'));
 
       expect(
@@ -460,7 +516,27 @@ void main() {
       );
       expect(find.text('Später'), findsOneWidget);
       expect(find.text('Jetzt aktualisieren'), findsOneWidget);
+      expect(find.text('Was ist neu?'), findsOneWidget);
+      expect(find.text('Schnellere Diagramme.'), findsOneWidget);
+      expect(find.text('Faster charts.'), findsNothing);
     });
+
+    testWidgets(
+      'the change summary and controls fit on a phone with larger text',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 780);
+        addTearDown(tester.view.reset);
+        source = FixedSource(releaseWithNotes(_bilingualNotes));
+        await counting(tester, locale: const Locale('de'), textScale: 1.5);
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Schnellere Diagramme.'), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('update-later')));
+        await tester.pump();
+        expect(find.byKey(const ValueKey('update-countdown')), findsNothing);
+      },
+    );
   });
 
   test('the notice that brings the person back is in their language', () {
@@ -491,3 +567,11 @@ void main() {
     },
   );
 }
+
+const _bilingualNotes = '''
+## English
+- Faster charts.
+
+## Deutsch
+- Schnellere Diagramme.
+''';

@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../app/app_localizations.dart';
 import '../updates/apk_installer.dart';
 import '../updates/app_version.dart';
+import '../updates/release_notes.dart';
 import '../updates/update_controller.dart';
 import '../updates/update_models.dart';
 import '../updates/update_settings.dart';
@@ -84,14 +85,24 @@ class _CountdownBannerState extends State<_CountdownBanner> {
     return MaterialBanner(
       key: const ValueKey('update-countdown'),
       leading: const Icon(Icons.system_update),
-      content: Text(
-        _t(
-          context,
-          'Updating to version $version in $seconds s. SuperHealth closes '
-              'while Android installs it.',
-          'Update auf Version $version in $seconds s. SuperHealth schließt '
-              'sich, während Android es installiert.',
-        ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              context,
+              'Updating to version $version in $seconds s. SuperHealth closes '
+                  'while Android installs it.',
+              'Update auf Version $version in $seconds s. SuperHealth schließt '
+                  'sich, während Android es installiert.',
+            ),
+          ),
+          if (controller.available case final update?) ...[
+            const SizedBox(height: 8),
+            _UpdateChangeSummary(notes: update.notes),
+          ],
+        ],
       ),
       actions: [
         TextButton(
@@ -135,6 +146,44 @@ class AppUpdateSection extends StatelessWidget {
           ),
         ),
         _UpdateCard(controller: controller),
+      ],
+    );
+  }
+}
+
+class _UpdateChangeSummary extends StatelessWidget {
+  const _UpdateChangeSummary({required this.notes});
+
+  final String notes;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = briefReleaseNotes(
+      notes,
+      languageCode: Localizations.localeOf(context).languageCode,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _t(context, 'What’s new', 'Was ist neu?'),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          summary.isEmpty
+              ? _t(
+                  context,
+                  'No change summary was provided.',
+                  'Es wurde keine Änderungsübersicht bereitgestellt.',
+                )
+              : summary,
+          key: const ValueKey('update-change-summary'),
+          maxLines: 4,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     );
   }
@@ -217,14 +266,9 @@ class _UpdateCard extends StatelessWidget {
                   const SizedBox(height: 12),
                   const LinearProgressIndicator(),
                 ],
-                if (update != null && update.notes.isNotEmpty) ...[
+                if (update != null) ...[
                   const SizedBox(height: 12),
-                  Text(
-                    update.notes,
-                    maxLines: 8,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall,
-                  ),
+                  _UpdateChangeSummary(notes: update.notes),
                 ],
                 if (phase == UpdatePhase.failed &&
                     controller.failure != null) ...[

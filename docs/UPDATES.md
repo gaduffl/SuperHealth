@@ -1,12 +1,18 @@
 # In-app updates
 
 SuperHealth can update itself on Android: it looks for a newer release, downloads
-the APK, checks it, and hands it to Android's package installer. Nothing is
-downloaded or installed without a tap; the optional check at startup only looks.
+the APK, checks it, and hands it to Android's package installer. By default,
+you choose when to download and install. Optional auto update downloads in
+advance and waits until work is finished; an install in front of you starts
+with a countdown that can be postponed.
 
 Settings → **App updates** holds the card. Updates are device-wide, so the card
 is hidden for profiles in easy mode — whoever set the device up turns easy mode
 off to update, as with the portable backup.
+
+When an update is available, **What’s new** shows a very short summary on the
+update card and in the automatic-update countdown. It uses the app's language
+and shows at most three brief items, bounded to 240 characters.
 
 ## Sources
 
@@ -14,6 +20,11 @@ off to update, as with the portable backup.
 non-draft, non-prerelease Release through the GitHub API, which is the route that
 also works for a private repository. CI already publishes `superhealth-<version>.apk`
 under a `v<version>` tag on every merge to `main`, so no extra release step exists.
+
+Each PR updates [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) alongside the app version.
+Keep its `## English` and `## Deutsch` sections to short, plain-text bullets;
+CI checks the version and both translations, then publishes the file as the
+release body.
 
 A private repository needs an access token: a fine-grained personal access token
 with **Contents: read** on that one repository. It is stored in Android encrypted
@@ -37,6 +48,10 @@ URL on another host; the token is deliberately not forwarded there.
 `version` and `sha256` are required. `apk_url` may be relative to the manifest.
 An optional token is sent as `Authorization: Bearer …`, and only to the
 manifest's own host.
+
+The optional `notes` field can be plain text, or use the same `## English` and
+`## Deutsch` sections for localized summaries. If a release provides no summary,
+the app says so.
 
 ## What is checked
 
