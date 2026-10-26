@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,7 @@ import 'package:super_health/ai/lab_price_service.dart';
 import 'package:super_health/ai/provider_clients.dart';
 import 'package:super_health/analysis/correlation_service.dart';
 import 'package:super_health/app/app_controller.dart';
+import 'package:super_health/app/app_localizations.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
@@ -27,6 +29,85 @@ void main() {
   setUpAll(sqfliteFfiInit);
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  for (final language in ['en', 'de']) {
+    testWidgets('inactive profile details stay hidden in $language', (
+      tester,
+    ) async {
+      final controller = _controller()
+        ..profiles = [_alice, _ben]
+        ..activeProfile = _alice;
+      addTearDown(controller.dispose);
+      final semantics = tester.ensureSemantics();
+      try {
+        await _pumpSettings(tester, controller, Locale(language));
+
+        expect(find.text('Alice'), findsOneWidget);
+        expect(find.text('Ben'), findsOneWidget);
+        final aliceRow = find.widgetWithText(ListTile, 'Alice');
+        final benRow = find.widgetWithText(ListTile, 'Ben');
+        expect(tester.widget<ListTile>(benRow).subtitle, isNull);
+        expect(find.textContaining('62.0 kg'), findsOneWidget);
+        expect(find.textContaining('170.0 cm'), findsOneWidget);
+        expect(find.textContaining('79.3 kg'), findsNothing);
+        expect(find.textContaining('181.0 cm'), findsNothing);
+        expect(
+          find.textContaining(
+            language == 'de' ? 'Alter ${_ben.age}' : 'Age ${_ben.age}',
+          ),
+          findsNothing,
+        );
+        expect(
+          find.textContaining(language == 'de' ? 'Männlich' : 'Male'),
+          findsNothing,
+        );
+        final inactiveLabel = tester.getSemantics(benRow).label;
+        expect(inactiveLabel, contains('Ben'));
+        for (final detail in [
+          '79.3',
+          '181.0',
+          '${_ben.age}',
+          'Male',
+          'Männlich',
+        ]) {
+          expect(inactiveLabel, isNot(contains(detail)));
+        }
+        expect(tester.getSemantics(aliceRow).label, contains('62.0 kg'));
+
+        controller
+          ..activeProfile = _ben
+          ..notifyListeners();
+        await tester.pumpAndSettle();
+
+        expect(tester.widget<ListTile>(aliceRow).subtitle, isNull);
+        expect(find.textContaining('62.0 kg'), findsNothing);
+        expect(find.textContaining('170.0 cm'), findsNothing);
+        expect(find.textContaining('79.3 kg'), findsOneWidget);
+        expect(find.textContaining('181.0 cm'), findsOneWidget);
+        expect(tester.getSemantics(aliceRow).label, isNot(contains('62.0')));
+        expect(tester.getSemantics(benRow).label, contains('79.3 kg'));
+      } finally {
+        semantics.dispose();
+      }
+    });
+  }
+
+  testWidgets('no personal details appear before a profile is selected', (
+    tester,
+  ) async {
+    final controller = _controller()..profiles = [_alice, _ben];
+    addTearDown(controller.dispose);
+    await _pumpSettings(tester, controller, const Locale('en'));
+
+    for (final name in ['Alice', 'Ben']) {
+      expect(
+        tester.widget<ListTile>(find.widgetWithText(ListTile, name)).subtitle,
+        isNull,
+      );
+    }
+    expect(find.textContaining('62.0 kg'), findsNothing);
+    expect(find.textContaining('79.3 kg'), findsNothing);
+  });
 
   testWidgets(
     'profile actions expose editing fields and deletion safety copy',
@@ -114,6 +195,55 @@ void main() {
     },
   );
 }
+
+Future<void> _pumpSettings(
+  WidgetTester tester,
+  AppController controller,
+  Locale locale,
+) async {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = const Size(900, 2200);
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    ChangeNotifierProvider.value(
+      value: controller,
+      child: MaterialApp(
+        locale: locale,
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: const SettingsScreen(),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+final _profileDate = DateTime(2020);
+final _alice = Profile(
+  id: 'alice',
+  displayName: 'Alice',
+  dateOfBirth: DateTime(1990, 7, 18),
+  sex: 'female',
+  heightCm: 170,
+  weightKg: 62,
+  createdAt: _profileDate,
+  updatedAt: _profileDate,
+);
+final _ben = Profile(
+  id: 'ben',
+  displayName: 'Ben',
+  dateOfBirth: DateTime(1984, 2, 10),
+  sex: 'male',
+  heightCm: 181,
+  weightKg: 79.3,
+  createdAt: _profileDate,
+  updatedAt: _profileDate,
+);
 
 AppController _controller() {
   final database = AppDatabase(

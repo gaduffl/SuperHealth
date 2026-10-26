@@ -2648,13 +2648,15 @@ class _ProfileRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final details = <String>[
-      if (active) _settingsText(context, 'Active profile', 'Aktives Profil'),
-      if (profile.age != null)
-        _settingsText(context, 'Age ${profile.age}', 'Alter ${profile.age}'),
-      if (profile.sex?.isNotEmpty == true)
-        _profileSexLabel(context, profile.sex!),
-      if (profile.heightCm != null) '${profile.heightCm} cm',
-      if (profile.weightKg != null) '${profile.weightKg} kg',
+      if (active) ...[
+        _settingsText(context, 'Active profile', 'Aktives Profil'),
+        if (profile.age != null)
+          _settingsText(context, 'Age ${profile.age}', 'Alter ${profile.age}'),
+        if (profile.sex?.isNotEmpty == true)
+          _profileSexLabel(context, profile.sex!),
+        if (profile.heightCm != null) '${profile.heightCm} cm',
+        if (profile.weightKg != null) '${profile.weightKg} kg',
+      ],
     ];
     return Semantics(
       selected: active,
@@ -2678,17 +2680,13 @@ class _ProfileRow extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
-          details.isEmpty
-              ? _settingsText(
-                  context,
-                  'No optional details',
-                  'Keine optionalen Angaben',
-                )
-              : details.join(' · '),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
+        subtitle: details.isEmpty
+            ? null
+            : Text(
+                details.join(' · '),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
         trailing: PopupMenuButton<_ProfileAction>(
           tooltip: _settingsText(
             context,
