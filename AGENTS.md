@@ -141,6 +141,20 @@ correctness bug even when it type-checks. Where two quantities genuinely cannot
 be converted — a blood concentration and a daily intake — give them separate
 axes rather than a shared scale, as the `TrendChart` dose underlay does.
 
+**Exposure lists, chart lines and saved selections use one ingredient key.**
+`SupplementInsights.ingredientSeriesKey` combines the substance identity with
+the canonical unit. Normalize unit aliases on read too: old snapshots predate
+write normalization and still contain `microgram` beside `µg`. Weekly ingredient
+series use the same snapshot/current-product fallback as exposure totals. Saved
+pins normalize older display names and unit spellings before matching or pruning,
+so choosing a component cannot remove its own selection on the next rebuild.
+
+**The supplement editor must fit a phone and keep invalid edits open.** It uses
+a full-screen route with Save above the keyboard on phones, responsive field
+pairs, and growing stock-unit chips. Ingredient names, amounts and unit choices
+must stay readable at larger text sizes. Validate before closing and keep text
+controllers alive until the route's exit animation finishes.
+
 **A snapshot can be a missing record rather than a record of nothing.**
 `SupplementIntake.ingredientSnapshot` is captured at log time and stays empty
 forever if the product had no ingredients entered yet — 94% of intakes in one
@@ -1204,8 +1218,9 @@ hangs before the first frame completes — reproduced with both `pumpAndSettle`
 and bounded `pump`, and unrelated to any recent change. `DashboardScreen` and
 `HealthScreen` pump fine, so this is specific to that screen and not yet
 diagnosed. Until it is, test catalog logic through a top-level predicate
-(`catalogMatchesFilter`) and stock interactions through `SupplementStockSection`
-rather than by standing the screen up.
+(`catalogMatchesFilter`), stock interactions through `SupplementStockSection`,
+and chart selection through `showExposureSeriesPicker` rather than by standing
+the screen up.
 
 ## Not audited
 

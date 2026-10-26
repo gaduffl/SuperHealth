@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../ai/supplement_label_service.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
+import '../domain/units.dart';
 import 'common.dart';
 import 'design.dart';
 
@@ -93,6 +94,7 @@ class IngredientRows {
           ? null
           : parseOptionalDouble(amountText);
       if (amountText.isNotEmpty && amount == null) return null;
+      if (amount != null && amount <= 0) return null;
       result.add({
         'name': name,
         'amount': ?amount,
@@ -161,14 +163,13 @@ class _IngredientEditorState extends State<IngredientEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
+        Text(
+          strings.pick('Ingredients', 'Inhaltsstoffe'),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        Wrap(
+          spacing: 8,
           children: [
-            Expanded(
-              child: Text(
-                strings.pick('Ingredients', 'Inhaltsstoffe'),
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-            ),
             TextButton.icon(
               onPressed: () => setState(() => _labelExpanded = !_labelExpanded),
               icon: Icon(
@@ -215,55 +216,89 @@ class _IngredientEditorState extends State<IngredientEditor> {
         else
           for (final (index, row) in widget.rows.rows.indexed)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              key: ObjectKey(row),
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Column(
                 children: [
-                  Expanded(
-                    flex: 5,
-                    child: TextField(
-                      controller: row.name,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        labelText: strings.pick('Name', 'Name'),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: row.name,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            labelText: strings.pick('Name', 'Name'),
+                          ),
+                        ),
                       ),
-                    ),
+                      IconButton(
+                        tooltip: strings.pick('Remove row', 'Zeile entfernen'),
+                        onPressed: () {
+                          final removed = widget.rows._rows[index];
+                          setState(() => widget.rows._rows.removeAt(index));
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            removed.name.dispose();
+                            removed.amount.dispose();
+                            removed.unit.dispose();
+                          });
+                        },
+                        icon: const Icon(Icons.remove_circle_outline),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 3,
-                    child: TextField(
-                      controller: row.amount,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        labelText: strings.pick('Amount', 'Menge'),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: TextField(
-                      controller: row.unit,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        labelText: strings.pick('Unit', 'Einheit'),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: strings.pick('Remove row', 'Zeile entfernen'),
-                    onPressed: () => setState(() {
-                      final removed = widget.rows._rows.removeAt(index);
-                      removed.name.dispose();
-                      removed.amount.dispose();
-                      removed.unit.dispose();
-                    }),
-                    icon: const Icon(Icons.remove_circle_outline),
+                  const SizedBox(height: 10),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final amount = TextField(
+                        controller: row.amount,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: strings.pick('Amount', 'Menge'),
+                        ),
+                      );
+                      final unit = DropdownMenu<CanonicalUnit>(
+                        controller: row.unit,
+                        expandedInsets: EdgeInsets.zero,
+                        enableFilter: true,
+                        filterCallback: (entries, query) {
+                          final canonical = CanonicalUnit.tryParse(query);
+                          return entries
+                              .where(
+                                (entry) =>
+                                    entry.label.toLowerCase().contains(
+                                      query.toLowerCase(),
+                                    ) ||
+                                    entry.value == canonical,
+                              )
+                              .toList();
+                        },
+                        requestFocusOnTap: true,
+                        menuHeight: 240,
+                        label: Text(strings.pick('Unit', 'Einheit')),
+                        dropdownMenuEntries: [
+                          for (final unit in CanonicalUnit.values)
+                            DropdownMenuEntry(value: unit, label: unit.symbol),
+                        ],
+                      );
+                      final scale =
+                          MediaQuery.textScalerOf(context).scale(16) / 16;
+                      if (constraints.maxWidth < 320 * scale) {
+                        return Column(
+                          children: [amount, const SizedBox(height: 10), unit],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: amount),
+                          const SizedBox(width: 10),
+                          Expanded(child: unit),
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),
@@ -340,7 +375,7 @@ class _IngredientEditorState extends State<IngredientEditor> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            Row(
+            Wrap(
               children: [
                 FilledButton.tonalIcon(
                   onPressed: _readingLabel ? null : _readLabel,

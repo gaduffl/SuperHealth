@@ -1,5 +1,6 @@
 import '../domain/entities.dart';
 import '../domain/substance_catalog.dart';
+import '../domain/units.dart';
 
 /// The named part of the day a scheduled dose belongs to.
 ///
@@ -134,6 +135,8 @@ class IngredientExposure {
   final String name;
   final String unit;
   final double total;
+
+  String get seriesKey => SupplementInsights.ingredientSeriesKey(name, unit);
 }
 
 /// What a dose underlay follows: either one ingredient across every product
@@ -716,13 +719,15 @@ class SupplementInsights {
         ingredientsBySupplement,
       )) {
         final name = ingredient['name']?.toString().trim() ?? '';
-        final unit = ingredient['unit']?.toString().trim() ?? '';
+        final unit = CanonicalUnit.normalize(
+          ingredient['unit']?.toString() ?? '',
+        );
         final amount = _asDouble(ingredient['amount']);
         if (name.isEmpty || amount == null || !intake.dose.isFinite) continue;
         // Grouped by substance rather than by spelling, so "Vitamin C" and
         // "Vitamin c" are one row. The unit stays in the key because two
         // units of one substance are still two series.
-        final key = '${_substances.groupingKeyFor(name)}|${unit.toLowerCase()}';
+        final key = ingredientSeriesKey(name, unit);
         final contribution = amount * intake.dose;
         if (!contribution.isFinite) continue;
         final next = (totals[key] ?? 0) + contribution;
@@ -744,6 +749,9 @@ class SupplementInsights {
   }
 
   static const _substances = SubstanceCatalog();
+
+  static String ingredientSeriesKey(String name, String unit) =>
+      '${_substances.groupingKeyFor(name)}|${CanonicalUnit.normalize(unit).toLowerCase()}';
 
   Map<String, List<Map<String, Object?>>> _ingredientsBySupplement(
     List<Supplement> supplements,
@@ -1138,27 +1146,34 @@ class SupplementInsights {
   /// Weekly totals per ingredient and unit, for the component chart.
   List<ExposureSeries> weeklyIngredientSeries({
     required List<SupplementIntake> intakes,
+    List<Supplement> supplements = const [],
     required DateTime from,
     required DateTime through,
   }) {
+    final ingredientsBySupplement = _ingredientsBySupplement(supplements);
     final totals = <String, Map<DateTime, double>>{};
     final display = <String, (String, String)>{};
     for (final intake in _actualIntakesInRange(intakes, from, through)) {
       if (!intake.dose.isFinite) continue;
       final week = _weekStart(intake.takenAt);
-      for (final ingredient in intake.ingredientSnapshot) {
+      for (final ingredient in _ingredientsFor(
+        intake,
+        ingredientsBySupplement,
+      )) {
         final name = ingredient['name']?.toString().trim() ?? '';
-        final unit = ingredient['unit']?.toString().trim() ?? '';
+        final unit = CanonicalUnit.normalize(
+          ingredient['unit']?.toString() ?? '',
+        );
         final amount = _asDouble(ingredient['amount']);
         if (name.isEmpty || amount == null) continue;
         final contribution = amount * intake.dose;
         if (!contribution.isFinite) continue;
-        final key = '${name.toLowerCase()}|${unit.toLowerCase()}';
+        final key = ingredientSeriesKey(name, unit);
         final bucket = totals.putIfAbsent(key, () => <DateTime, double>{});
         final next = (bucket[week] ?? 0) + contribution;
         if (!next.isFinite) continue;
         bucket[week] = next;
-        display[key] = (name, unit);
+        display[key] ??= (_substances.displayNameFor(name), unit);
       }
     }
     return _sortedSeries(totals, display);

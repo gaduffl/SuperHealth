@@ -21,6 +21,7 @@ import 'common.dart';
 import 'dashboard_screen.dart' show periodLabel;
 import 'design.dart';
 import 'dialogs.dart';
+import 'exposure_series_picker.dart';
 import 'supplement_stock_section.dart';
 
 /// The supplements screen: the catalog, the weekly plan, stock, and history.
@@ -914,6 +915,7 @@ class _TrackingScreenState extends State<TrackingScreen>
     );
     final ingredientSeries = _insights.weeklyIngredientSeries(
       intakes: controller.intakes,
+      supplements: controller.supplements,
       from: window.$1,
       through: window.$2,
     );
@@ -1025,13 +1027,15 @@ class _TrackingScreenState extends State<TrackingScreen>
 
     // Charts only draw the pinned series, so a catalog of thirty products does
     // not turn into thirty overlapping lines.
-    final pinnedSupplementSeries = _pinnedOrTop(
+    final pinnedSupplementSeries = selectedExposureSeries(
       supplementSeries,
-      (item) => 'supplement|${item.key}',
+      _historyPins,
+      category: 'supplement',
     );
-    final pinnedIngredientSeries = _pinnedOrTop(
+    final pinnedIngredientSeries = selectedExposureSeries(
       ingredientSeries,
-      (item) => 'ingredient|${item.key}',
+      _historyPins,
+      category: 'ingredient',
     );
     final supplementColors = seriesColors(
       pinnedSupplementSeries.map((item) => item.key),
@@ -1136,7 +1140,7 @@ class _TrackingScreenState extends State<TrackingScreen>
                   context,
                   title: strings.supplementExposure,
                   series: supplementSeries,
-                  pinKey: (item) => 'supplement|${item.key}',
+                  category: 'supplement',
                 ),
                 icon: const Icon(Icons.tune, size: 18),
                 label: Text(strings.pick('Choose', 'Auswählen')),
@@ -1181,7 +1185,7 @@ class _TrackingScreenState extends State<TrackingScreen>
                   context,
                   title: strings.ingredientExposure,
                   series: ingredientSeries,
-                  pinKey: (item) => 'ingredient|${item.key}',
+                  category: 'ingredient',
                 ),
                 icon: const Icon(Icons.tune, size: 18),
                 label: Text(strings.pick('Choose', 'Auswählen')),
@@ -1392,127 +1396,25 @@ class _TrackingScreenState extends State<TrackingScreen>
           'Wochensummen der $shown größten von $available. Wähle eigene aus.',
         );
 
-  /// Picks which series the chart draws.
-  ///
-  /// Writes to the same pins the exposure lists below use, so a series pinned
-  /// here shows as pinned there and the two never disagree.
   Future<void> _chooseSeries(
     BuildContext context, {
     required String title,
     required List<ExposureSeries> series,
-    required String Function(ExposureSeries item) pinKey,
+    required String category,
   }) async {
-    final strings = AppLocalizations.of(context);
-    final ordered = [...series]
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => FractionallySizedBox(
-        heightFactor: 0.8,
-        child: StatefulBuilder(
-          builder: (builderContext, setSheetState) {
-            final selected = ordered
-                .where((item) => _historyPins.contains(pinKey(item)))
-                .length;
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: Theme.of(builderContext).textTheme.titleLarge,
-                      ),
-                      Text(
-                        selected == 0
-                            ? strings.pick(
-                                'Nothing selected — the chart shows the '
-                                    'largest series.',
-                                'Nichts ausgewählt — das Diagramm zeigt die '
-                                    'größten Reihen.',
-                              )
-                            : strings.pick(
-                                '$selected selected',
-                                '$selected ausgewählt',
-                              ),
-                        style: Theme.of(builderContext).textTheme.bodySmall
-                            ?.copyWith(
-                              color: Theme.of(
-                                builderContext,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
-                    children: [
-                      for (final item in ordered)
-                        CheckboxListTile(
-                          value: _historyPins.contains(pinKey(item)),
-                          title: Text(item.name),
-                          subtitle: Text(
-                            '${strings.formatNumber(item.total)} ${item.unit}',
-                          ),
-                          onChanged: (_) async {
-                            await _toggleHistoryPin(pinKey(item));
-                            setSheetState(() {});
-                          },
-                        ),
-                    ],
-                  ),
-                ),
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    child: Row(
-                      children: [
-                        TextButton(
-                          onPressed: selected == 0
-                              ? null
-                              : () async {
-                                  await _clearHistoryPins(
-                                    ordered.map(pinKey).toSet(),
-                                  );
-                                  setSheetState(() {});
-                                },
-                          child: Text(strings.pick('Clear', 'Zurücksetzen')),
-                        ),
-                        const Spacer(),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(sheetContext),
-                          child: Text(strings.pick('Done', 'Fertig')),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
+    final profileId = context.read<AppController>().activeProfile?.id;
+    final next = await showExposureSeriesPicker(
+      context,
+      title: title,
+      series: series,
+      initialPins: _historyPins,
+      category: category,
     );
-  }
-
-  /// Pinned series if any are pinned, otherwise the six largest.
-  List<ExposureSeries> _pinnedOrTop(
-    List<ExposureSeries> series,
-    String Function(ExposureSeries item) pinKey,
-  ) {
-    final pinned = series
-        .where((item) => _historyPins.contains(pinKey(item)))
-        .toList();
-    // An explicit choice is drawn in full. Only the unselected default is
-    // capped, so a large catalog does not open as an unreadable tangle.
-    return pinned.isNotEmpty ? pinned : series.take(6).toList();
+    if (next == null || !mounted || !context.mounted) {
+      return;
+    }
+    if (context.read<AppController>().activeProfile?.id != profileId) return;
+    await _saveHistoryPins(next);
   }
 
   Future<void> _exportHistoryCsv(
@@ -1725,39 +1627,39 @@ class _TrackingScreenState extends State<TrackingScreen>
       _historyPinPreferenceKey(profileId),
     );
     if (!mounted) return;
+    if (context.read<AppController>().activeProfile?.id != profileId) {
+      setState(() => _historyPinsLoading = false);
+      return;
+    }
     setState(() {
       _historyPinsProfileId = profileId;
-      _historyPins = {...?stored};
+      _historyPins = {...?stored?.map(canonicalExposurePin)};
       _historyPinsLoading = false;
     });
   }
 
   Future<void> _toggleHistoryPin(String pinKey) async {
-    final profileId = context.read<AppController>().activeProfile?.id;
-    if (profileId == null) return;
     final next = {..._historyPins};
     if (!next.add(pinKey)) next.remove(pinKey);
+    await _saveHistoryPins(next);
+  }
+
+  Future<void> _saveHistoryPins(Set<String> next) async {
+    final profileId = context.read<AppController>().activeProfile?.id;
+    if (profileId == null) return;
     setState(() {
       _historyPinsProfileId = profileId;
       _historyPins = next;
     });
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(
-      _historyPinPreferenceKey(profileId),
-      next.toList()..sort(),
-    );
-  }
-
-  Future<void> _clearHistoryPins(Set<String> keys) async {
-    final profileId = context.read<AppController>().activeProfile?.id;
-    if (profileId == null) return;
-    final next = _historyPins.difference(keys);
-    setState(() => _historyPins = next);
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(
-      _historyPinPreferenceKey(profileId),
-      next.toList()..sort(),
-    );
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setStringList(
+        _historyPinPreferenceKey(profileId),
+        next.toList()..sort(),
+      );
+    } on Object catch (error) {
+      if (mounted) await showAppError(context, error);
+    }
   }
 
   Future<void> _pruneHistoryPins(
@@ -1782,7 +1684,7 @@ class _TrackingScreenState extends State<TrackingScreen>
       'supplement|${item.seriesKey}';
 
   String _ingredientPinKey(IngredientExposure item) =>
-      'ingredient|${item.name.trim().toLowerCase()}|${item.unit.trim().toLowerCase()}';
+      'ingredient|${item.seriesKey}';
 
   int _comparePinned(String aKey, String bKey, String aName, String bName) {
     final aPinned = _historyPins.contains(aKey);

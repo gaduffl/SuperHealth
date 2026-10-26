@@ -57,6 +57,12 @@ The Supplements screen has four tabs:
 
 The stock button in the app bar opens a drawer with days of cover for every product, from any screen.
 
+On a phone, the supplement editor opens full screen with **Save** above the
+keyboard. Ingredient fields stay wide enough to read, units can be chosen from
+a list, and invalid entries stay open for correction. Component exposure groups
+equivalent unit spellings such as `microgram` and `µg` into one series. The totals
+list, chart, and **Choose** picker use the same ingredient identity and data.
+
 Elsewhere:
 
 - Log symptoms and tags. A symptom asks only for a name and a 0–10 rating; a tag asks only what it was, with an optional amount. Measured values, duration, and notes sit behind **More details**. Tapping a tag in the quick check-ins records it immediately with an undo; tapping a symptom opens the rating with the name already filled in. Under Health, the tune button next to the quick check-ins renames, archives, or switches a symptom to a tag and back. Tags are intake proxies used only as predictors in correlations; symptoms are the outcomes. Renaming carries through the recorded history so the journal does not show the same thing under two names, and archiving hides a symptom from future check-ins without removing what was already recorded.

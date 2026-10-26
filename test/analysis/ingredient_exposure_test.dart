@@ -179,4 +179,102 @@ void main() {
     // elemental iron.
     expect(exposure, hasLength(2));
   });
+
+  test(
+    'historic B12 names and microgram spellings form one selectable series',
+    () {
+      final intakes = [
+        intake(
+          'old',
+          's',
+          snapshot: const [
+            {'name': 'B12', 'unit': 'microgram', 'amount': 4004},
+          ],
+        ),
+        intake(
+          'new',
+          's',
+          snapshot: const [
+            {'name': 'Vitamin B12', 'unit': 'µg', 'amount': 1001},
+          ],
+        ),
+      ];
+      final exposure = insights.ingredientExposure(
+        intakes: intakes,
+        from: day,
+        to: day,
+      );
+      final series = insights.weeklyIngredientSeries(
+        intakes: intakes,
+        from: day,
+        through: day,
+      );
+
+      expect(exposure, hasLength(1));
+      expect(series, hasLength(1));
+      expect(exposure.single.unit, 'µg');
+      expect(exposure.single.total, 5005);
+      expect(series.single.unit, 'µg');
+      expect(series.single.total, exposure.single.total);
+      expect(series.single.key, exposure.single.seriesKey);
+      expect(series.single.name, exposure.single.name);
+    },
+  );
+
+  test('the chart uses the same snapshot fallback as the exposure list', () {
+    final products = [
+      supplement('s', const [
+        {'name': 'B12', 'unit': 'microgram', 'amount': 300},
+      ]),
+    ];
+    final intakes = [
+      intake('empty', 's'),
+      intake(
+        'recorded',
+        's',
+        snapshot: const [
+          {'name': 'Vitamin B12', 'unit': 'µg', 'amount': 100},
+        ],
+      ),
+    ];
+    final exposure = insights.ingredientExposure(
+      intakes: intakes,
+      supplements: products,
+      from: day,
+      to: day,
+    );
+    final series = insights.weeklyIngredientSeries(
+      intakes: intakes,
+      supplements: products,
+      from: day,
+      through: day,
+    );
+
+    expect(exposure.single.total, 400);
+    expect(series.single.total, 400);
+    expect(series.single.key, exposure.single.seriesKey);
+  });
+
+  test('unit aliases merge without converting different quantities', () {
+    final intakes = [
+      for (final unit in ['microgram', 'µg', 'mg', 'IU', 'unknown'])
+        intake(
+          unit,
+          's',
+          snapshot: [
+            {'name': 'B12', 'unit': unit, 'amount': 10},
+          ],
+        ),
+    ];
+    final series = insights.weeklyIngredientSeries(
+      intakes: intakes,
+      from: day,
+      through: day,
+    );
+    expect(series, hasLength(4));
+    expect(
+      {for (final item in series) item.unit: item.total},
+      {'µg': 20, 'mg': 10, 'IU': 10, 'unknown': 10},
+    );
+  });
 }
