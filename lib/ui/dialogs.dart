@@ -394,184 +394,298 @@ Future<void> showAddSupplementDialog(
   );
   final notes = TextEditingController(text: existing?.notes);
   final ingredients = IngredientRows.from(existing?.ingredients ?? const []);
-  final result = await showDialog<bool>(
+  final formKey = GlobalKey<FormState>();
+  final ingredientKey = GlobalKey();
+  String? ingredientError;
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final route = DialogRoute<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(
-        existing == null
-            ? _dialogText(
-                context,
-                'Add supplement',
-                'Nahrungsergänzung hinzufügen',
-              )
-            : _dialogText(
-                context,
-                'Edit supplement',
-                'Nahrungsergänzung bearbeiten',
-              ),
-      ),
-      content: SingleChildScrollView(
-        child: SizedBox(
-          width: 560,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: name,
-                autofocus: true,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  labelText: _dialogText(
+    themes: InheritedTheme.capture(from: context, to: navigator.context),
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) {
+        String? numberError(
+          String? text, {
+          bool integer = false,
+          bool positive = false,
+        }) {
+          if (text == null || text.trim().isEmpty) return null;
+          final value = integer
+              ? parseOptionalInt(text)?.toDouble()
+              : parseOptionalDouble(text);
+          if (value == null || value < 0 || (positive && value == 0)) {
+            return _dialogText(
+              context,
+              'Enter a valid ${positive ? 'positive' : 'non-negative'} number.',
+              positive
+                  ? 'Gib eine gültige positive Zahl ein.'
+                  : 'Gib eine gültige nicht negative Zahl ein.',
+            );
+          }
+          return null;
+        }
+
+        void save() {
+          final invalid = formKey.currentState!.validateGranularly();
+          final validIngredients = ingredients.parse() != null;
+          setDialogState(
+            () => ingredientError = validIngredients
+                ? null
+                : _dialogText(
                     context,
-                    'Product name *',
-                    'Produktname *',
+                    'Each ingredient needs a name and a positive amount, or leave the amount empty.',
+                    'Jeder Inhaltsstoff braucht einen Namen und eine positive Menge; die Menge darf auch leer bleiben.',
                   ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: brand,
-                      decoration: InputDecoration(
-                        labelText: _dialogText(context, 'Brand', 'Marke'),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: form,
-                      decoration: InputDecoration(
-                        labelText: _dialogText(
-                          context,
-                          'Form (capsule, powder…)',
-                          'Form (Kapsel, Pulver …)',
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              IngredientEditor(
-                rows: ingredients,
-                stockUnitLabel: existing?.stockUnit,
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: unitsPerContainer,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: _dialogText(
-                          context,
-                          'Units / container',
-                          'Einheiten / Behälter',
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _StockUnitField(controller: stockUnit, form: form),
-                  ),
-                ],
-              ),
-              if (existing == null) ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: initialContainers,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
+          );
+          final target = invalid.isNotEmpty
+              ? invalid.first.context
+              : !validIngredients
+              ? ingredientKey.currentContext
+              : null;
+          if (target != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (target.mounted) {
+                Scrollable.ensureVisible(
+                  target,
+                  duration: const Duration(milliseconds: 200),
+                );
+              }
+            });
+            return;
+          }
+          Navigator.pop(dialogContext, true);
+        }
+
+        final title = _dialogText(
+          context,
+          existing == null ? 'Add supplement' : 'Edit supplement',
+          existing == null ? 'Supplement hinzufügen' : 'Supplement bearbeiten',
+        );
+        final saveLabel = _dialogText(
+          context,
+          existing == null ? 'Add' : 'Save',
+          existing == null ? 'Hinzufügen' : 'Speichern',
+        );
+        final fields = Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextFormField(
+                  controller: name,
+                  autofocus: existing == null,
+                  textCapitalization: TextCapitalization.sentences,
                   decoration: InputDecoration(
                     labelText: _dialogText(
                       context,
-                      'Current containers (initial stock)',
-                      'Aktuelle Behälter (Anfangsbestand)',
+                      'Product name *',
+                      'Produktname *',
+                    ),
+                  ),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? _dialogText(
+                          context,
+                          'Enter a product name.',
+                          'Gib einen Produktnamen ein.',
+                        )
+                      : null,
+                ),
+                const SizedBox(height: 14),
+                _SupplementFieldPair(
+                  first: TextField(
+                    controller: brand,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(context, 'Brand', 'Marke'),
+                    ),
+                  ),
+                  second: TextField(
+                    controller: form,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Form (capsule, powder…)',
+                        'Form (Kapsel, Pulver …)',
+                      ),
                     ),
                   ),
                 ),
-              ],
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: price,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: InputDecoration(
-                        labelText: _dialogText(
-                          context,
-                          'Price / container (EUR)',
-                          'Preis / Behälter (EUR)',
-                        ),
-                      ),
+                const SizedBox(height: 20),
+                Container(
+                  key: ingredientKey,
+                  child: ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: stockUnit,
+                    builder: (context, value, _) => IngredientEditor(
+                      rows: ingredients,
+                      stockUnitLabel: value.text,
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: lowStock,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
+                ),
+                if (ingredientError != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    ingredientError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                _SupplementFieldPair(
+                  first: TextFormField(
+                    controller: unitsPerContainer,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Units / container',
+                        'Einheiten / Behälter',
                       ),
-                      decoration: InputDecoration(
-                        labelText: _dialogText(
-                          context,
-                          'Low-stock threshold',
-                          'Grenze für niedrigen Bestand',
-                        ),
+                    ),
+                    validator: (value) =>
+                        numberError(value, integer: true, positive: true),
+                  ),
+                  second: _StockUnitField(controller: stockUnit, form: form),
+                ),
+                if (existing == null) ...[
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: initialContainers,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Current containers (initial stock)',
+                        'Aktuelle Behälter (Anfangsbestand)',
                       ),
+                    ),
+                    validator: numberError,
+                  ),
+                ],
+                const SizedBox(height: 14),
+                _SupplementFieldPair(
+                  first: TextFormField(
+                    controller: price,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Price / container (EUR)',
+                        'Preis / Behälter (EUR)',
+                      ),
+                    ),
+                    validator: numberError,
+                  ),
+                  second: TextFormField(
+                    controller: lowStock,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Low-stock threshold',
+                        'Grenze für niedrigen Bestand',
+                      ),
+                    ),
+                    validator: numberError,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: bioavailability,
+                  decoration: InputDecoration(
+                    labelText: _dialogText(
+                      context,
+                      'Form / bioavailability notes',
+                      'Hinweise zu Form / Bioverfügbarkeit',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: notes,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: _dialogText(context, 'Notes', 'Notizen'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (MediaQuery.sizeOf(context).shortestSide < 600) {
+          return Dialog.fullscreen(
+            child: Scaffold(
+              appBar: AppBar(
+                toolbarHeight: 80,
+                leading: IconButton(
+                  tooltip: _dialogText(context, 'Cancel', 'Abbrechen'),
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  icon: const Icon(Icons.close),
+                ),
+                title: Text(title, maxLines: 2),
+                actions: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: FilledButton(
+                      onPressed: save,
+                      child: Text(saveLabel),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: bioavailability,
-                decoration: InputDecoration(
-                  labelText: _dialogText(
-                    context,
-                    'Form / bioavailability notes',
-                    'Hinweise zu Form / Bioverfügbarkeit',
+              body: fields,
+            ),
+          );
+        }
+        final height =
+            (MediaQuery.sizeOf(context).height -
+                MediaQuery.viewInsetsOf(context).bottom) *
+            0.9;
+        return Dialog(
+          child: SizedBox(
+            width: 640,
+            height: height.clamp(0, 900),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: notes,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: _dialogText(context, 'Notes', 'Notizen'),
+                Expanded(child: fields),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: 12,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: Text(
+                          _dialogText(context, 'Cancel', 'Abbrechen'),
+                        ),
+                      ),
+                      FilledButton(onPressed: save, child: Text(saveLabel)),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(
-            existing == null
-                ? _dialogText(context, 'Add', 'Hinzufügen')
-                : _dialogText(context, 'Save', 'Speichern'),
-          ),
-        ),
-      ],
+        );
+      },
     ),
   );
+  final result = await navigator.push(route);
   if (result == true && name.text.trim().isNotEmpty && context.mounted) {
     try {
       final parsedIngredients = ingredients.parse();
@@ -631,6 +745,8 @@ Future<void> showAddSupplementDialog(
       await showAppError(context, error);
     }
   }
+  // Closing the keyboard can rebuild fields during the route's exit animation.
+  await route.completed;
   ingredients.dispose();
   for (final item in [
     name,
@@ -646,6 +762,34 @@ Future<void> showAddSupplementDialog(
   ]) {
     item.dispose();
   }
+}
+
+class _SupplementFieldPair extends StatelessWidget {
+  const _SupplementFieldPair({required this.first, required this.second});
+
+  final Widget first;
+  final Widget second;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final scale = MediaQuery.textScalerOf(context).scale(16) / 16;
+      if (constraints.maxWidth < 480 * scale) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [first, const SizedBox(height: 14), second],
+        );
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: first),
+          const SizedBox(width: 14),
+          Expanded(child: second),
+        ],
+      );
+    },
+  );
 }
 
 Future<void> showAdjustStockDialog(
@@ -2700,9 +2844,23 @@ class _StockUnitField extends StatefulWidget {
 
 class _StockUnitFieldState extends State<_StockUnitField> {
   @override
+  void initState() {
+    super.initState();
+    widget.form.addListener(_formChanged);
+  }
+
+  void _formChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    widget.form.removeListener(_formChanged);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
-    final suggestions = <String>{
+    final candidates = <String>{
       if (widget.form.text.trim().isNotEmpty) widget.form.text.trim(),
       ...strings
           .pick(
@@ -2711,6 +2869,10 @@ class _StockUnitFieldState extends State<_StockUnitField> {
           )
           .split(','),
     };
+    final suggestions = <String, String>{};
+    for (final candidate in candidates) {
+      suggestions.putIfAbsent(candidate.toLowerCase(), () => candidate);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2725,30 +2887,24 @@ class _StockUnitFieldState extends State<_StockUnitField> {
               'What one of these is called',
               'Wie eine Einheit davon heißt',
             ),
+            helperMaxLines: 2,
           ),
         ),
         const SizedBox(height: 6),
-        SizedBox(
-          height: 34,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              for (final suggestion in suggestions)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: ChoiceChip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text(suggestion),
-                    selected:
-                        widget.controller.text.trim().toLowerCase() ==
-                        suggestion.toLowerCase(),
-                    onSelected: (_) => setState(() {
-                      widget.controller.text = suggestion;
-                    }),
-                  ),
-                ),
-            ],
-          ),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final suggestion in suggestions.values)
+              ChoiceChip(
+                label: Text(suggestion),
+                selected:
+                    widget.controller.text.trim().toLowerCase() ==
+                    suggestion.toLowerCase(),
+                onSelected: (_) =>
+                    setState(() => widget.controller.text = suggestion),
+              ),
+          ],
         ),
       ],
     );

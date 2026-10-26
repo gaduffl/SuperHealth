@@ -63,6 +63,19 @@ void main() {
     expect(rows.parse(), isNull);
   });
 
+  test(
+    'a non-positive ingredient amount is rejected before closing the editor',
+    () {
+      final rows = IngredientRows.from(const []);
+      addTearDown(rows.dispose);
+      rows.rows.single.name.text = 'B12';
+      for (final amount in ['-1', '0']) {
+        rows.rows.single.amount.text = amount;
+        expect(rows.parse(), isNull);
+      }
+    },
+  );
+
   test('a parsed label replaces the rows and stays editable', () {
     final rows = IngredientRows.from(const [
       {'name': 'Old entry', 'amount': 1.0, 'unit': 'mg'},
