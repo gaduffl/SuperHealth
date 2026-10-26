@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../biomarkers/calculated_biomarker_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
+import '../domain/ingredient_composition.dart';
 import '../domain/units.dart';
 import 'app_database.dart';
 
@@ -49,6 +50,7 @@ const _binaryColumns = <String>{
   'low_stock_alerts',
   'reminder_enabled',
   'skipped',
+  'ingredient_snapshot_recorded',
   'use_score',
   'archived',
   'is_temporary',
@@ -431,6 +433,72 @@ class HealthRepository {
       _canonicalUnits('supplements', supplement.toMap()),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  /// Saves a recipe and its reviewed effect on every profile's intake history
+  /// atomically. Inventory and the rest of each intake remain untouched.
+  Future<void> updateSupplement(
+    Supplement supplement, {
+    SupplementHistoryUpdate? historyUpdate,
+  }) async {
+    _validateSupplement(supplement);
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'supplements',
+        where: 'id = ? AND deleted = 0',
+        whereArgs: [supplement.id],
+      );
+      if (rows.length != 1) {
+        throw StateError(
+          'The supplement no longer exists. Refresh and try again.',
+        );
+      }
+      final previous = Supplement.fromMap(rows.single);
+      final changed = !ingredientRecipesEqual(
+        previous.ingredients,
+        supplement.ingredients,
+      );
+      if (changed && historyUpdate == null) {
+        throw StateError(
+          'Choose how this ingredient change affects intake history.',
+        );
+      }
+      final stamp = supplement.updatedAt.toUtc().toIso8601String();
+      if (changed || historyUpdate == SupplementHistoryUpdate.correctHistory) {
+        final intakes = await txn.query(
+          'supplement_intakes',
+          where: 'supplement_id = ? AND deleted = 0',
+          whereArgs: [supplement.id],
+        );
+        for (final row in intakes) {
+          final intake = SupplementIntake.fromMap(row);
+          if (historyUpdate == SupplementHistoryUpdate.startingNow &&
+              intake.hasIngredientSnapshot) {
+            continue;
+          }
+          final recipe = historyUpdate == SupplementHistoryUpdate.correctHistory
+              ? supplement.ingredients
+              : previous.ingredients;
+          await txn.update(
+            'supplement_intakes',
+            {
+              'ingredients_json': _canonicalIngredientUnits(jsonEncode(recipe)),
+              'ingredient_snapshot_recorded': 1,
+              'updated_at': stamp,
+            },
+            where: 'id = ?',
+            whereArgs: [intake.id],
+          );
+        }
+      }
+      await txn.update(
+        'supplements',
+        _canonicalUnits('supplements', supplement.toMap()),
+        where: 'id = ?',
+        whereArgs: [supplement.id],
+      );
+    });
   }
 
   Future<List<InventoryMovement>> inventoryMovements({

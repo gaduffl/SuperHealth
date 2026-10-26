@@ -20,7 +20,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 16;
+  static const schemaVersion = 17;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -161,6 +161,7 @@ class AppDatabase {
           skipped INTEGER NOT NULL DEFAULT 0,
           notes TEXT NOT NULL DEFAULT '',
           ingredients_json TEXT NOT NULL DEFAULT '[]',
+          ingredient_snapshot_recorded INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           deleted INTEGER NOT NULL DEFAULT 0
@@ -784,6 +785,26 @@ class AppDatabase {
             'updated_at': row['updated_at'],
             'deleted': 0,
           });
+        }
+      }
+    }
+    if (oldVersion < 17) {
+      await db.execute(
+        'ALTER TABLE supplement_intakes ADD COLUMN '
+        'ingredient_snapshot_recorded INTEGER NOT NULL DEFAULT 0',
+      );
+      for (final row in await db.query(
+        'supplement_intakes',
+        columns: ['id', 'ingredients_json'],
+      )) {
+        final ingredients = jsonDecode(row['ingredients_json']! as String);
+        if (ingredients is List && ingredients.isNotEmpty) {
+          await db.update(
+            'supplement_intakes',
+            {'ingredient_snapshot_recorded': 1},
+            where: 'id = ?',
+            whereArgs: [row['id']],
+          );
         }
       }
     }

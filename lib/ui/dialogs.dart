@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../domain/entities.dart';
+import '../domain/ingredient_composition.dart';
 import 'common.dart';
 import 'ingredient_editor.dart';
 
@@ -397,6 +398,8 @@ Future<void> showAddSupplementDialog(
   final formKey = GlobalKey<FormState>();
   final ingredientKey = GlobalKey();
   String? ingredientError;
+  SupplementHistoryUpdate? historyUpdate;
+  var choosingHistory = false;
   final navigator = Navigator.of(context, rootNavigator: true);
   final route = DialogRoute<bool>(
     context: context,
@@ -424,7 +427,8 @@ Future<void> showAddSupplementDialog(
           return null;
         }
 
-        void save() {
+        Future<void> save() async {
+          if (choosingHistory) return;
           final invalid = formKey.currentState!.validateGranularly();
           final validIngredients = ingredients.parse() != null;
           setDialogState(
@@ -452,7 +456,19 @@ Future<void> showAddSupplementDialog(
             });
             return;
           }
-          Navigator.pop(dialogContext, true);
+          if (existing != null &&
+              historyUpdate == null &&
+              !ingredientRecipesEqual(
+                existing.ingredients,
+                ingredients.parse()!,
+              )) {
+            choosingHistory = true;
+            final choice = await _chooseSupplementHistoryUpdate(dialogContext);
+            choosingHistory = false;
+            if (!dialogContext.mounted || choice == null) return;
+            historyUpdate = choice;
+          }
+          if (dialogContext.mounted) Navigator.pop(dialogContext, true);
         }
 
         final title = _dialogText(
@@ -529,6 +545,40 @@ Future<void> showAddSupplementDialog(
                       color: Theme.of(context).colorScheme.error,
                     ),
                   ),
+                ],
+                if (existing != null) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () async {
+                        final choice = await _chooseSupplementHistoryUpdate(
+                          dialogContext,
+                        );
+                        if (!dialogContext.mounted || choice == null) return;
+                        setDialogState(() => historyUpdate = choice);
+                      },
+                      icon: const Icon(Icons.history),
+                      label: Text(
+                        _dialogText(
+                          context,
+                          'Correct ingredient history…',
+                          'Inhaltsstoffverlauf korrigieren …',
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (historyUpdate != null)
+                    Text(
+                      _dialogText(
+                        context,
+                        historyUpdate == SupplementHistoryUpdate.correctHistory
+                            ? 'Saving will also correct this supplement’s existing intakes in every profile.'
+                            : 'Saving will preserve existing intake history.',
+                        historyUpdate == SupplementHistoryUpdate.correctHistory
+                            ? 'Beim Speichern werden auch bestehende Einnahmen dieses Präparats in allen Profilen korrigiert.'
+                            : 'Beim Speichern bleibt der bestehende Einnahmeverlauf erhalten.',
+                      ),
+                    ),
                 ],
                 const SizedBox(height: 20),
                 _SupplementFieldPair(
@@ -739,6 +789,7 @@ Future<void> showAddSupplementDialog(
             createdAt: existing.createdAt,
             updatedAt: existing.updatedAt,
           ),
+          historyUpdate: historyUpdate,
         );
       }
     } on Object catch (error) {
@@ -763,6 +814,70 @@ Future<void> showAddSupplementDialog(
     item.dispose();
   }
 }
+
+Future<SupplementHistoryUpdate?> _chooseSupplementHistoryUpdate(
+  BuildContext context,
+) => showDialog<SupplementHistoryUpdate>(
+  context: context,
+  builder: (dialogContext) => AlertDialog(
+    scrollable: true,
+    title: Text(
+      _dialogText(context, 'Ingredient history', 'Inhaltsstoffverlauf'),
+    ),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          _dialogText(
+            context,
+            'How should these ingredients apply to this shared supplement?',
+            'Wie sollen diese Inhaltsstoffe für dieses gemeinsam genutzte Präparat gelten?',
+          ),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(_dialogText(context, 'Starting now', 'Ab jetzt')),
+          subtitle: Text(
+            _dialogText(
+              context,
+              'Keep existing intake history unchanged.',
+              'Bestehenden Einnahmeverlauf unverändert lassen.',
+            ),
+          ),
+          onTap: () =>
+              Navigator.pop(dialogContext, SupplementHistoryUpdate.startingNow),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            _dialogText(
+              context,
+              'Correct history too',
+              'Auch Verlauf korrigieren',
+            ),
+          ),
+          subtitle: Text(
+            _dialogText(
+              context,
+              'Use these ingredients for all existing intakes of this supplement, in every profile. Doses and stock stay the same.',
+              'Diese Inhaltsstoffe für alle bestehenden Einnahmen dieses Präparats in allen Profilen verwenden. Einnahmemengen und Bestand bleiben gleich.',
+            ),
+          ),
+          onTap: () => Navigator.pop(
+            dialogContext,
+            SupplementHistoryUpdate.correctHistory,
+          ),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(dialogContext),
+        child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
+      ),
+    ],
+  ),
+);
 
 class _SupplementFieldPair extends StatelessWidget {
   const _SupplementFieldPair({required this.first, required this.second});
@@ -1112,6 +1227,7 @@ Future<void> showLogIntakeDialog(
               skipped: skipped,
               notes: notes.text,
               ingredientSnapshot: existing.ingredientSnapshot,
+              ingredientSnapshotRecorded: existing.ingredientSnapshotRecorded,
               createdAt: existing.createdAt,
               updatedAt: existing.updatedAt,
               deleted: existing.deleted,

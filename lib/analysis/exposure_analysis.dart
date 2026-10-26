@@ -233,16 +233,16 @@ class ExposureAnalysis {
 
   /// The ingredients one intake delivered.
   ///
-  /// The snapshot taken at log time wins; an empty snapshot means the product
-  /// had not been broken down yet, so the product's current ingredients stand
-  /// in — in one real library that fallback covers 94% of intakes. A product
+  /// A recorded snapshot wins, including an intentionally frozen empty recipe.
+  /// A missing snapshot uses the product's current ingredients instead
+  /// — in one real library that fallback covers 94% of intakes. A product
   /// with no ingredients at all becomes one event under its own name, so it
   /// stays visible as "contents unknown" instead of disappearing.
   static List<DoseEvent> _eventsFor(
     SupplementIntake intake,
     Supplement? supplement,
   ) {
-    final ingredients = intake.ingredientSnapshot.isNotEmpty
+    final ingredients = intake.hasIngredientSnapshot
         ? intake.ingredientSnapshot
         : supplement?.ingredients ?? const <Map<String, Object?>>[];
     final named = [

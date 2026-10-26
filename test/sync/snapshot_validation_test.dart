@@ -11,6 +11,48 @@ void main() {
   setUpAll(sqfliteFfiInit);
 
   test(
+    'v16 snapshots upgrade recipe presence without changing historical ingredients',
+    () async {
+      final fixture = await _Fixture.create(withRelations: true);
+      addTearDown(fixture.dispose);
+      final snapshot = await fixture.snapshot();
+      snapshot['schema_version'] = 16;
+      final row = _rows(snapshot, 'supplement_intakes').single;
+      row.remove('ingredient_snapshot_recorded');
+      row['ingredients_json'] = '[{"name":"B12","amount":1001,"unit":"µg"}]';
+      await fixture.service.merge(snapshot);
+      final intake = (await fixture.repository.intakes(
+        row['profile_id'] as String,
+      )).single;
+      expect(intake.ingredientSnapshotRecorded, isTrue);
+      expect(intake.ingredientSnapshot.single['amount'], 1001);
+    },
+  );
+
+  test(
+    'current snapshots retain frozen empty recipes and reject invalid presence flags',
+    () async {
+      final fixture = await _Fixture.create(withRelations: true);
+      addTearDown(fixture.dispose);
+      final snapshot = await fixture.snapshot();
+      final row = _rows(snapshot, 'supplement_intakes').single;
+      row['ingredients_json'] = '[]';
+      row['ingredient_snapshot_recorded'] = 1;
+      await fixture.service.merge(snapshot);
+      final intake = (await fixture.repository.intakes(
+        row['profile_id'] as String,
+      )).single;
+      expect(intake.ingredientSnapshot, isEmpty);
+      expect(intake.hasIngredientSnapshot, isTrue);
+      row['ingredient_snapshot_recorded'] = 2;
+      await expectLater(
+        fixture.service.merge(snapshot),
+        throwsA(isA<FormatException>()),
+      );
+    },
+  );
+
+  test(
     'rejects missing tables and keeps the current ledger unchanged',
     () async {
       final fixture = await _Fixture.create();

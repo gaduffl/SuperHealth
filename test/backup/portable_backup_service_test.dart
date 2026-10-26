@@ -10,6 +10,62 @@ import 'package:super_health/data/app_database.dart';
 void main() {
   setUpAll(sqfliteFfiInit);
 
+  for (final legacy in [false, true]) {
+    test(
+      'portable recipes retain their snapshot semantics (legacy: $legacy)',
+      () async {
+        final fixture = await _Fixture.create();
+        addTearDown(fixture.dispose);
+        const stamp = '2026-05-01T00:00:00.000Z';
+        await fixture.db.insert('supplements', {
+          'id': 'b12',
+          'name': 'B12',
+          'created_at': stamp,
+          'updated_at': stamp,
+        });
+        for (final frozenEmpty in [false, true]) {
+          await fixture.db.insert('supplement_intakes', {
+            'id': '$frozenEmpty',
+            'profile_id': 'profile-1',
+            'supplement_id': 'b12',
+            'taken_at': stamp,
+            'dose': 1,
+            'unit': 'capsule',
+            'ingredients_json': frozenEmpty
+                ? '[]'
+                : '[{"name":"B12","amount":1001,"unit":"µg"}]',
+            'ingredient_snapshot_recorded': 1,
+            'created_at': stamp,
+            'updated_at': stamp,
+          });
+        }
+        final bundle = _bundle(await fixture.service.createJson());
+        if (legacy) {
+          for (final row in _rows(bundle, 'supplement_intakes')) {
+            row.remove('ingredient_snapshot_recorded');
+          }
+          _refreshTableManifest(bundle, 'supplement_intakes');
+          _refreshCoreChecksum(bundle);
+        }
+        await fixture.service.restoreJson(
+          jsonEncode(bundle),
+          confirmedReplaceCurrentData: true,
+        );
+        final rows = {
+          for (final row in await fixture.db.query('supplement_intakes'))
+            row['id']: row,
+        };
+        expect(rows['false']!['ingredient_snapshot_recorded'], 1);
+        expect(
+          rows['false']!['ingredients_json'],
+          '[{"name":"B12","amount":1001,"unit":"µg"}]',
+        );
+        expect(rows['true']!['ingredient_snapshot_recorded'], legacy ? 0 : 1);
+        expect(rows['true']!['ingredients_json'], '[]');
+      },
+    );
+  }
+
   test(
     'round trips sanitized rows, verified PDFs, and clears sync state',
     () async {

@@ -754,6 +754,7 @@ class LegacyImportService {
           // former compatibility default only when the field is absent.
           dose: dose ?? 1,
           unit: row['unit']?.toString() ?? 'unit',
+          snapshotRecorded: row['ingredientsSnapshot'] is List,
           ingredients: _normalizeIngredients(
             bundle,
             _maps(row['ingredientsSnapshot']),
@@ -1453,6 +1454,7 @@ class LegacyImportService {
             dose: item.dose,
             unit: item.unit,
             ingredientSnapshot: item.ingredients,
+            ingredientSnapshotRecorded: item.snapshotRecorded,
             createdAt: now,
             updatedAt: now,
           ).toMap(),
@@ -2080,6 +2082,7 @@ class _LegacyIntake {
     required this.dose,
     required this.unit,
     required this.ingredients,
+    required this.snapshotRecorded,
   });
 
   final String token;
@@ -2089,6 +2092,7 @@ class _LegacyIntake {
   final double dose;
   final String unit;
   final List<Map<String, Object?>> ingredients;
+  final bool snapshotRecorded;
 }
 
 class _LegacyEvent {

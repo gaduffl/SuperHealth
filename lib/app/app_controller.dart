@@ -33,6 +33,7 @@ import '../backup/portable_backup_service.dart';
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
+import '../domain/ingredient_composition.dart';
 import '../domain/localized_text.dart';
 import '../export/lab_plan_export_service.dart';
 import '../import/legacy_import_service.dart';
@@ -1121,8 +1122,11 @@ class AppController extends ChangeNotifier {
     await _reconcileReminders();
   }
 
-  Future<void> updateSupplement(Supplement supplement) async {
-    await repository.saveSupplement(
+  Future<void> updateSupplement(
+    Supplement supplement, {
+    SupplementHistoryUpdate? historyUpdate,
+  }) async {
+    await repository.updateSupplement(
       Supplement(
         id: supplement.id,
         name: supplement.name.trim(),
@@ -1145,8 +1149,12 @@ class AppController extends ChangeNotifier {
         updatedAt: DateTime.now(),
         deleted: supplement.deleted,
       ),
+      historyUpdate: historyUpdate,
     );
-    await _refreshActiveData({_ActiveDataSlice.supplements});
+    await _refreshActiveData({
+      _ActiveDataSlice.supplements,
+      if (historyUpdate != null) _ActiveDataSlice.intakes,
+    });
     await _reconcileReminders();
   }
 
@@ -1348,6 +1356,7 @@ class AppController extends ChangeNotifier {
       skipped: skipped,
       notes: notes.trim(),
       ingredientSnapshot: supplement.ingredients,
+      ingredientSnapshotRecorded: true,
       createdAt: now,
       updatedAt: now,
     );
@@ -1380,6 +1389,7 @@ class AppController extends ChangeNotifier {
         skipped: intake.skipped,
         notes: intake.notes.trim(),
         ingredientSnapshot: intake.ingredientSnapshot,
+        ingredientSnapshotRecorded: intake.ingredientSnapshotRecorded,
         createdAt: intake.createdAt,
         updatedAt: DateTime.now(),
         deleted: intake.deleted,
@@ -1408,6 +1418,7 @@ class AppController extends ChangeNotifier {
         skipped: intake.skipped,
         notes: intake.notes,
         ingredientSnapshot: intake.ingredientSnapshot,
+        ingredientSnapshotRecorded: intake.ingredientSnapshotRecorded,
         createdAt: intake.createdAt,
         updatedAt: DateTime.now(),
         deleted: true,
