@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
+import '../data/ingredient_snapshot_upgrade.dart';
 
 final _iso8601WithOffset = RegExp(
   r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$',
@@ -79,7 +80,8 @@ class SnapshotService {
       throw const FormatException('Unsupported snapshot schema');
     }
     final version = snapshot['schema_version'];
-    if (version is! int || version != AppDatabase.schemaVersion) {
+    if (version is! int ||
+        (version != AppDatabase.schemaVersion && version != 16)) {
       throw FormatException('Unsupported snapshot version: $version');
     }
     final tablesNode = snapshot['tables'];
@@ -111,6 +113,9 @@ class SnapshotService {
         !_iso8601WithOffset.hasMatch(generatedAt) ||
         DateTime.tryParse(generatedAt) == null) {
       throw const FormatException('Snapshot generation time is invalid.');
+    }
+    if (version == 16) {
+      upgradeIngredientSnapshotRows(tables['supplement_intakes']!);
     }
     await _repository.validateSynchronizedRows(tables, portableBackup: false);
 

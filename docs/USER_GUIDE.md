@@ -63,6 +63,14 @@ a list, and invalid entries stay open for correction. Component exposure groups
 equivalent unit spellings such as `microgram` and `µg` into one series. The totals
 list, chart, and **Choose** picker use the same ingredient identity and data.
 
+Changing ingredient amounts, names or units asks how to apply the change.
+**Starting now** preserves existing intake history, including intakes that did
+not previously have a recipe snapshot. **Correct history too** applies the new
+ingredients to all existing intakes of this shared supplement in every profile.
+Doses, dates, notes and stock stay the same. Cancelling keeps the edit open.
+For an already-corrected product, use **Correct ingredient history…**, choose
+**Correct history too**, and save; no further ingredient edit is needed.
+
 Elsewhere:
 
 - Log symptoms and tags. A symptom asks only for a name and a 0–10 rating; a tag asks only what it was, with an optional amount. Measured values, duration, and notes sit behind **More details**. Tapping a tag in the quick check-ins records it immediately with an undo; tapping a symptom opens the rating with the name already filled in. Under Health, the tune button next to the quick check-ins renames, archives, or switches a symptom to a tag and back. Tags are intake proxies used only as predictors in correlations; symptoms are the outcomes. Renaming carries through the recorded history so the journal does not show the same thing under two names, and archiving hides a symptom from future check-ins without removing what was already recorded.

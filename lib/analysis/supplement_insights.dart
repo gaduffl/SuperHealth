@@ -691,8 +691,8 @@ class SupplementInsights {
     return result;
   }
 
-  /// [supplements] lets an intake with an empty snapshot fall back to its
-  /// product's current ingredients.
+  /// [supplements] lets an intake with a missing snapshot fall back to its
+  /// product's current ingredients. A deliberately recorded empty recipe wins.
   ///
   /// This is not a nicety. In one real library 94% of intakes carry no
   /// snapshot, because `ingredientSnapshot` is captured at log time and stays
@@ -766,7 +766,7 @@ class SupplementInsights {
   List<Map<String, Object?>> _ingredientsFor(
     SupplementIntake intake,
     Map<String, List<Map<String, Object?>>> ingredientsBySupplement,
-  ) => intake.ingredientSnapshot.isNotEmpty
+  ) => intake.hasIngredientSnapshot
       ? intake.ingredientSnapshot
       : ingredientsBySupplement[intake.supplementId] ?? const [];
 
@@ -944,7 +944,7 @@ class SupplementInsights {
         );
       }
       for (final ingredient
-          in intake.ingredientSnapshot.isNotEmpty
+          in intake.hasIngredientSnapshot
               ? intake.ingredientSnapshot
               : supplement?.ingredients ?? const []) {
         final name = ingredient['name']?.toString().trim() ?? '';

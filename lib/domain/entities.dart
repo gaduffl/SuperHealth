@@ -522,6 +522,7 @@ class SupplementIntake {
     this.skipped = false,
     this.notes = '',
     this.ingredientSnapshot = const [],
+    this.ingredientSnapshotRecorded = false,
     this.deleted = false,
   });
 
@@ -535,6 +536,11 @@ class SupplementIntake {
   final bool skipped;
   final String notes;
   final List<Map<String, Object?>> ingredientSnapshot;
+  final bool ingredientSnapshotRecorded;
+
+  /// A deliberately frozen empty recipe must not fall back to today's product.
+  bool get hasIngredientSnapshot =>
+      ingredientSnapshotRecorded || ingredientSnapshot.isNotEmpty;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
@@ -550,6 +556,7 @@ class SupplementIntake {
     'skipped': skipped ? 1 : 0,
     'notes': notes,
     'ingredients_json': jsonEncode(ingredientSnapshot),
+    'ingredient_snapshot_recorded': hasIngredientSnapshot ? 1 : 0,
     'created_at': _iso(createdAt),
     'updated_at': _iso(updatedAt),
     'deleted': deleted ? 1 : 0,
@@ -573,6 +580,9 @@ class SupplementIntake {
                 .map((item) => Map<String, Object?>.from(item))
                 .toList()
           : const [],
+      ingredientSnapshotRecorded: _boolFromDb(
+        map['ingredient_snapshot_recorded'],
+      ),
       createdAt: _date(map['created_at']),
       updatedAt: _date(map['updated_at']),
       deleted: _boolFromDb(map['deleted']),

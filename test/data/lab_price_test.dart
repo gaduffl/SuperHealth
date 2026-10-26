@@ -352,6 +352,9 @@ void main() {
       await db.execute(
         'ALTER TABLE lab_plans DROP COLUMN pricing_snapshot_json',
       );
+      await db.execute(
+        'ALTER TABLE supplement_intakes DROP COLUMN ingredient_snapshot_recorded',
+      );
       await db.execute('PRAGMA user_version = 15');
       await old.close();
       final upgraded = AppDatabase(
@@ -374,7 +377,10 @@ void main() {
             .priceEur,
         20,
       );
-      expect((await upgraded.database).getVersion(), completion(16));
+      expect(
+        (await upgraded.database).getVersion(),
+        completion(AppDatabase.schemaVersion),
+      );
     },
   );
 }

@@ -115,3 +115,21 @@ const legacyBiomarkerPackagesTable = '''
     deleted INTEGER NOT NULL DEFAULT 0
   )
 ''';
+
+const legacySupplementIntakesTable = '''
+  CREATE TABLE supplement_intakes (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    supplement_id TEXT NOT NULL,
+    schedule_id TEXT,
+    taken_at TEXT NOT NULL,
+    dose REAL NOT NULL,
+    unit TEXT NOT NULL,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    ingredients_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+  )
+''';

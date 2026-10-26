@@ -12,6 +12,66 @@ import 'package:super_health/import/legacy_import_service.dart';
 
 void main() {
   test(
+    'Supplement Manager imports preserve missing versus explicitly empty snapshots',
+    () async {
+      sqfliteFfiInit();
+      final database = AppDatabase(
+        factory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      final repository = HealthRepository(database);
+      final profile = await repository.createProfile(displayName: 'Me');
+      final service = LegacyImportService(database, repository);
+      final payload = {
+        'products': [
+          {
+            'name': 'B12',
+            'ingredients': [
+              {'name': 'B12', 'amount': 1000, 'unit': 'µg'},
+            ],
+          },
+        ],
+        'intakeHistory': [
+          for (var hour = 0; hour < 3; hour++)
+            {
+              'productName': 'B12',
+              'userName': 'Me',
+              'amount': 1,
+              'timestamp': '2026-05-01T0$hour:00:00.000Z',
+              'ingredientsSnapshot': switch (hour) {
+                0 => null,
+                1 => <Object?>[],
+                _ => [
+                  {'name': 'B12', 'amount': 1001, 'unit': 'µg'},
+                ],
+              },
+            },
+        ],
+      };
+      final preview = await service.preview([
+        ImportSourceFile(
+          name: 'supplement_sync.json',
+          bytes: Uint8List.fromList(utf8.encode(jsonEncode(payload))),
+        ),
+      ], fallbackProfile: profile);
+      await service.commit(preview);
+      final rows = await (await database.database).query(
+        'supplement_intakes',
+        orderBy: 'taken_at',
+      );
+      final intakes = rows.map(SupplementIntake.fromMap).toList();
+      expect(intakes.map((item) => item.hasIngredientSnapshot), [
+        false,
+        true,
+        true,
+      ]);
+      expect(intakes[1].ingredientSnapshot, isEmpty);
+      expect(intakes[2].ingredientSnapshot.single['amount'], 1001);
+    },
+  );
+
+  test(
     'Supplement Manager import previews, commits, deduplicates, and rolls back',
     () async {
       sqfliteFfiInit();

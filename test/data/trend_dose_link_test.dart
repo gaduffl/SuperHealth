@@ -100,6 +100,7 @@ void main() {
         version: 6,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, _) async {
+          await db.execute(legacySupplementIntakesTable);
           // Present in a real database at this version; the v12 upgrade
           // adds a column to it.
           await db.execute(legacyLabPlansTable);

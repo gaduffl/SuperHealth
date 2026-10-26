@@ -34,6 +34,7 @@ void main() {
         options: OpenDatabaseOptions(
           version: 13,
           onCreate: (db, _) async {
+            await db.execute(legacySupplementIntakesTable);
             await db.execute(legacyBiomarkersTable);
             await db.execute(legacyBiomarkerPackagesTable);
             await db.execute(

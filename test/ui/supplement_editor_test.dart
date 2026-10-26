@@ -116,6 +116,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
+      expect(find.text('Ingredient history'), findsOneWidget);
+      await tester.tap(find.text('Starting now'));
+      await tester.pumpAndSettle();
       for (
         var attempt = 0;
         attempt < 100 &&
@@ -143,6 +146,147 @@ void main() {
       expect(stored.createdAt, _product.createdAt);
     },
   );
+
+  for (final language in ['en', 'de']) {
+    testWidgets(
+      'cancelling the history choice keeps the ingredient draft in $language',
+      (tester) async {
+        final controller = _seeded();
+        addTearDown(controller.dispose);
+        await _open(tester, controller, language: language);
+        final amount = _field(language == 'de' ? 'Menge' : 'Amount');
+        await tester.ensureVisible(amount);
+        await tester.pumpAndSettle();
+        await tester.enterText(amount, '1000');
+        await tester.tap(
+          find.widgetWithText(
+            FilledButton,
+            language == 'de' ? 'Speichern' : 'Save',
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.text(language == 'de' ? 'Ab jetzt' : 'Starting now'),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            language == 'de'
+                ? 'Auch Verlauf korrigieren'
+                : 'Correct history too',
+          ),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text(language == 'de' ? 'Abbrechen' : 'Cancel'));
+        await tester.pumpAndSettle();
+        expect(find.byType(IngredientEditor), findsOneWidget);
+        expect(tester.widget<TextField>(amount).controller!.text, '1000');
+        expect(controller.supplements.single.ingredients.single['amount'], 100);
+        await tester.tap(
+          find.byTooltip(language == 'de' ? 'Abbrechen' : 'Cancel'),
+        );
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
+  for (final correctHistory in [false, true]) {
+    testWidgets(
+      'saving a changed ingredient applies the reviewed history choice: $correctHistory',
+      (tester) async {
+        final controller = _seeded();
+        addTearDown(() async {
+          controller.dispose();
+          await controller.database.close();
+        });
+        await tester.runAsync(() async {
+          await controller.repository.saveProfile(_profile);
+          await controller.repository.saveSupplement(_product);
+          await controller.repository.saveIntake(_pastIntake());
+        });
+        await _open(tester, controller, size: const Size(1000, 1000), scale: 1);
+        await tester.enterText(_field('Amount'), '250');
+        await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+        await tester.pumpAndSettle();
+        expect(controller.supplements.single.ingredients.single['amount'], 100);
+        await tester.tap(
+          find.text(correctHistory ? 'Correct history too' : 'Starting now'),
+        );
+        await tester.pumpAndSettle();
+        await _drainWrites(tester);
+        expect(controller.supplements.single.ingredients.single['amount'], 250);
+        expect(
+          controller.intakes.single.ingredientSnapshot.single['amount'],
+          correctHistory ? 250 : 100,
+        );
+        final stored = (await tester.runAsync(
+          () => controller.repository.intakes(_profile.id),
+        ))!.single;
+        expect(
+          stored.ingredientSnapshot.single['amount'],
+          correctHistory ? 250 : 100,
+        );
+        expect(stored.ingredientSnapshot.single['unit'], 'µg');
+        expect(stored.ingredientSnapshotRecorded, isTrue);
+        expect(stored.dose, 2);
+        expect(stored.notes, 'Retain this');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'the history action repairs an already-corrected product without another edit',
+    (tester) async {
+      final controller = _seeded();
+      addTearDown(() async {
+        controller.dispose();
+        await controller.database.close();
+      });
+      await tester.runAsync(() async {
+        await controller.repository.saveProfile(_profile);
+        await controller.repository.saveSupplement(_product);
+        await controller.repository.saveIntake(_pastIntake(amount: 101));
+      });
+      await _open(tester, controller, size: const Size(1000, 1000), scale: 1);
+      await tester.tap(find.text('Correct ingredient history…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Correct history too'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Saving will also correct'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      await _drainWrites(tester);
+      expect(
+        controller.intakes.single.ingredientSnapshot.single['amount'],
+        100,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('metadata edits do not ask for an ingredient history decision', (
+    tester,
+  ) async {
+    final controller = _seeded();
+    addTearDown(() async {
+      controller.dispose();
+      await controller.database.close();
+    });
+    await tester.runAsync(() async {
+      await controller.repository.saveProfile(_profile);
+      await controller.repository.saveSupplement(_product);
+    });
+    await _open(tester, controller, size: const Size(1000, 1000), scale: 1);
+    await tester.enterText(_field('Brand'), 'Changed brand');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ingredient history'), findsNothing);
+    await _drainWrites(tester);
+    expect(controller.supplements.single.brand, 'Changed brand');
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('ingredient unit choices resolve microgram to the µg option', (
     tester,
@@ -301,4 +445,30 @@ class _TestOneDriveService extends OneDriveService {
 
   @override
   Future<bool> isSignedIn() async => false;
+}
+
+SupplementIntake _pastIntake({num? amount}) => SupplementIntake(
+  id: 'past',
+  profileId: _profile.id,
+  supplementId: _product.id,
+  takenAt: _date,
+  dose: 2,
+  unit: 'capsule',
+  notes: 'Retain this',
+  ingredientSnapshot: amount == null
+      ? const []
+      : [
+          {'name': 'B12', 'amount': amount, 'unit': 'µg'},
+        ],
+  createdAt: _date,
+  updatedAt: _date,
+);
+
+Future<void> _drainWrites(WidgetTester tester) async {
+  for (var i = 0; i < 40; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 5)),
+    );
+    await tester.pump();
+  }
 }

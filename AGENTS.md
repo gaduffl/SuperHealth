@@ -155,12 +155,25 @@ pairs, and growing stock-unit chips. Ingredient names, amounts and unit choices
 must stay readable at larger text sizes. Validate before closing and keep text
 controllers alive until the route's exit animation finishes.
 
-**A snapshot can be a missing record rather than a record of nothing.**
-`SupplementIntake.ingredientSnapshot` is captured at log time and stays empty
-forever if the product had no ingredients entered yet — 94% of intakes in one
-real library. Anything reading it must fall back to the product's current
-ingredients, or it computes from the remaining 6% and is wrong by more than an
-order of magnitude.
+**A missing recipe and a deliberately frozen empty recipe are different.**
+`SupplementIntake.hasIngredientSnapshot` accounts for the persisted
+`ingredientSnapshotRecorded` flag as well as nonempty legacy snapshots. Only
+a missing snapshot falls back to the product's current ingredients — 94% of
+intakes in one real library depended on that fallback. A recorded empty recipe
+must stay empty in charts, dose targets and clinical exposure. Preserve the flag
+when copying, editing or importing intakes. Schema v17 derives it from existing
+nonempty recipes; v16 sync snapshots and older portable backups receive the same
+upgrade after their original checksums have been verified where applicable.
+
+**Recipe edits require an explicit history choice.** The controller uses
+`HealthRepository.updateSupplement`, which saves the product and the chosen
+effect on all profiles' existing intakes in one transaction. Starting now freezes
+only missing snapshots using the old recipe; correcting history replaces all
+live snapshots for that product, including previously recorded ones. Both paths
+preserve doses, notes, dates and inventory, and bump changed rows' sync timestamps.
+Cancelled choices keep the editor open without writing. Equivalent names, unit
+spellings and row order do not change the recipe. The explicit history action
+can repair an already-corrected product without changing its recipe again.
 
 **Missing data is not zero.** A day with nothing logged and a day with a
 deliberate zero must not render identically; `DoseBucket.tracked` carries that
@@ -171,10 +184,10 @@ an empty chart is indistinguishable from a broken feature.
 **Ingredient fields are optional, and products need not have ingredients at
 all.** `IngredientEditor` omits the `unit` key entirely when the box is left
 empty, and omits `amount` likewise, so anything requiring them silently drops
-real entries. An intake logged before its product was broken down carries an
-empty `ingredientSnapshot` and needs the product's current ingredients as a
-fallback. Treat a supplement with no ingredient rows as a first-class case: it
-is still logged as a dose in some unit, which is what `DoseTarget.supplement`
+real entries. An intake logged before its product was broken down carries a
+missing `ingredientSnapshot` and needs the product's current ingredients as a
+fallback unless a recipe was explicitly frozen. Treat a supplement with no
+ingredient rows as a first-class case: it is still logged as a dose in some unit, which is what `DoseTarget.supplement`
 follows.
 
 **Charts are plotted against real dates.** `TrendChart` positions points by
