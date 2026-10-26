@@ -54,6 +54,11 @@ Flutter SDK path — do not commit a machine-specific rewrite of it.
 
 ## Conventions that will bite you
 
+**Profile lists reveal personal details only for the active profile.** Inactive
+rows show the name without age, sex, height or weight. Apply the same rule to
+the accessibility label; hiding the subtitle alone still reads those details
+aloud. Rebuild both from the active profile when selection changes.
+
 **Schema changes need all three edits.** Bump `AppDatabase.schemaVersion`, add
 the column to the `CREATE TABLE` in `_create` (fresh installs), *and* add an
 `if (oldVersion < N)` block of `ALTER TABLE` statements in `_upgrade` (existing
