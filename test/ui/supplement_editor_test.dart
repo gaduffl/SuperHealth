@@ -310,6 +310,51 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     rows.dispose();
   });
+  for (final language in ['en', 'de']) {
+    testWidgets('adjust stock offers whole packs in $language', (tester) async {
+      final controller = _seeded();
+      addTearDown(controller.dispose);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 840);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: Locale(language),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () =>
+                    showAdjustStockDialog(context, controller, _product),
+                child: const Text('Open stock'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open stock'));
+      await tester.pumpAndSettle();
+      final de = language == 'de';
+      await tester.tap(find.text(de ? 'Hinzufügen' : 'Add'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(de ? 'Packungen (× 100)' : 'Packs (× 100)'));
+      await tester.pumpAndSettle();
+      final packs = _field(de ? 'Anzahl Packungen' : 'Number of packs');
+      expect(packs, findsOneWidget);
+      await tester.enterText(packs, '2');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('= 200 '), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      // Left open on purpose: the dialog disposes its text controllers as soon
+      // as it pops, before the close animation finishes.
+    });
+  }
 }
 
 Finder _field(String label) => find.byWidgetPredicate((widget) {

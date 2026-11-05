@@ -907,6 +907,39 @@ class _SupplementFieldPair extends StatelessWidget {
   );
 }
 
+/// How the quantity typed into the stock dialog is counted.
+enum StockQuantityMode { units, packages }
+
+/// The inventory movement the stock dialog records, in stock units.
+///
+/// [amount] is what the person typed. In [StockQuantityMode.packages] it is a
+/// number of containers and is multiplied by [unitsPerContainer]; without a
+/// positive container size the mode falls back to single units. [direction] is
+/// `set` (new total), `add` or `remove`.
+double stockAdjustmentDelta({
+  required String direction,
+  required double amount,
+  required double current,
+  StockQuantityMode mode = StockQuantityMode.units,
+  int? unitsPerContainer,
+}) {
+  final units =
+      mode == StockQuantityMode.packages &&
+          unitsPerContainer != null &&
+          unitsPerContainer > 0
+      ? amount * unitsPerContainer
+      : amount;
+  return switch (direction) {
+    'set' => units - current,
+    'remove' => -units,
+    _ => units,
+  };
+}
+
+String _formatStockQuantity(double value) => value == value.roundToDouble()
+    ? value.toStringAsFixed(0)
+    : value.toStringAsFixed(1);
+
 Future<void> showAdjustStockDialog(
   BuildContext context,
   AppController controller,
@@ -917,99 +950,168 @@ Future<void> showAdjustStockDialog(
   final notes = TextEditingController();
   var direction = purchase ? 'add' : 'set';
   final current = controller.stockLevels[supplement.id] ?? 0;
+  final packSize = supplement.unitsPerContainer;
+  final hasPackSize = packSize != null && packSize > 0;
+  var mode = purchase && hasPackSize
+      ? StockQuantityMode.packages
+      : StockQuantityMode.units;
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(
-          purchase
-              ? _dialogText(context, 'Record purchase', 'Einkauf erfassen')
-              : _dialogText(context, 'Adjust stock', 'Bestand anpassen'),
-        ),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(supplement.name),
-                subtitle: Text(
-                  _dialogText(
-                    context,
-                    '${current.toStringAsFixed(1)} ${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)} on hand',
-                    '${current.toStringAsFixed(1)} ${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)} vorhanden',
-                  ),
-                ),
-              ),
-              if (!purchase)
-                SegmentedButton<String>(
-                  segments: [
-                    ButtonSegment(
-                      value: 'set',
-                      label: Text(
-                        _dialogText(context, 'Set total', 'Gesamt setzen'),
+      builder: (context, setState) {
+        final unit = unitLabel(
+          AppLocalizations.of(context),
+          unit: supplement.stockUnit,
+          form: supplement.form,
+        );
+        final inPackages = hasPackSize && mode == StockQuantityMode.packages;
+        final typed = parseOptionalDouble(amount.text);
+        return AlertDialog(
+          title: Text(
+            purchase
+                ? _dialogText(context, 'Record purchase', 'Einkauf erfassen')
+                : _dialogText(context, 'Adjust stock', 'Bestand anpassen'),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(supplement.name),
+                    subtitle: Text(
+                      _dialogText(
+                        context,
+                        '${current.toStringAsFixed(1)} $unit on hand',
+                        '${current.toStringAsFixed(1)} $unit vorhanden',
                       ),
                     ),
-                    ButtonSegment(
-                      value: 'add',
-                      label: Text(_dialogText(context, 'Add', 'Hinzufügen')),
+                  ),
+                  if (!purchase)
+                    SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(
+                          value: 'set',
+                          label: Text(
+                            _dialogText(context, 'Set total', 'Gesamt setzen'),
+                          ),
+                        ),
+                        ButtonSegment(
+                          value: 'add',
+                          label: Text(
+                            _dialogText(context, 'Add', 'Hinzufügen'),
+                          ),
+                        ),
+                        ButtonSegment(
+                          value: 'remove',
+                          label: Text(
+                            _dialogText(context, 'Remove', 'Entfernen'),
+                          ),
+                        ),
+                      ],
+                      selected: {direction},
+                      onSelectionChanged: (value) =>
+                          setState(() => direction = value.first),
                     ),
-                    ButtonSegment(
-                      value: 'remove',
-                      label: Text(_dialogText(context, 'Remove', 'Entfernen')),
+                  if (hasPackSize) ...[
+                    const SizedBox(height: 10),
+                    SegmentedButton<StockQuantityMode>(
+                      key: const ValueKey('stock-quantity-mode'),
+                      segments: [
+                        ButtonSegment(
+                          value: StockQuantityMode.units,
+                          label: Text(
+                            _dialogText(context, 'Single', 'Einzeln'),
+                          ),
+                        ),
+                        ButtonSegment(
+                          value: StockQuantityMode.packages,
+                          label: Text(
+                            _dialogText(
+                              context,
+                              'Packs (× $packSize)',
+                              'Packungen (× $packSize)',
+                            ),
+                          ),
+                        ),
+                      ],
+                      selected: {mode},
+                      onSelectionChanged: (value) =>
+                          setState(() => mode = value.first),
                     ),
                   ],
-                  selected: {direction},
-                  onSelectionChanged: (value) =>
-                      setState(() => direction = value.first),
-                ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: amount,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: InputDecoration(
-                  labelText: direction == 'set'
-                      ? _dialogText(
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amount,
+                    autofocus: true,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: switch ((direction == 'set', inPackages)) {
+                        (true, true) => _dialogText(
                           context,
-                          'New total (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
-                          'Neuer Gesamtbestand (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
-                        )
-                      : _dialogText(
-                          context,
-                          'Quantity (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
-                          'Menge (${unitLabel(AppLocalizations.of(context), unit: supplement.stockUnit, form: supplement.form)})',
+                          'New total (packs)',
+                          'Neuer Gesamtbestand (Packungen)',
                         ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: notes,
-                decoration: InputDecoration(
-                  labelText: _dialogText(
-                    context,
-                    'Note / order reference',
-                    'Notiz / Bestellreferenz',
+                        (true, false) => _dialogText(
+                          context,
+                          'New total ($unit)',
+                          'Neuer Gesamtbestand ($unit)',
+                        ),
+                        (false, true) => _dialogText(
+                          context,
+                          'Number of packs',
+                          'Anzahl Packungen',
+                        ),
+                        (false, false) => _dialogText(
+                          context,
+                          'Quantity ($unit)',
+                          'Menge ($unit)',
+                        ),
+                      },
+                      helperText: inPackages && typed != null && typed >= 0
+                          ? '= ${_formatStockQuantity(typed * packSize)} $unit'
+                          : hasPackSize
+                          ? null
+                          : _dialogText(
+                              context,
+                              'Set units per container on the supplement to add whole packs.',
+                              'Hinterlege Einheiten pro Behälter am Präparat, um ganze Packungen hinzuzufügen.',
+                            ),
+                      helperMaxLines: 2,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: notes,
+                    decoration: InputDecoration(
+                      labelText: _dialogText(
+                        context,
+                        'Note / order reference',
+                        'Notiz / Bestellreferenz',
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(_dialogText(context, 'Save', 'Speichern')),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(_dialogText(context, 'Cancel', 'Abbrechen')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(_dialogText(context, 'Save', 'Speichern')),
+            ),
+          ],
+        );
+      },
     ),
   );
   if (result == true && context.mounted) {
@@ -1024,11 +1126,13 @@ Future<void> showAdjustStockDialog(
         ),
       );
     } else {
-      final delta = switch (direction) {
-        'set' => parsed - current,
-        'remove' => -parsed,
-        _ => parsed,
-      };
+      final delta = stockAdjustmentDelta(
+        direction: direction,
+        amount: parsed,
+        current: current,
+        mode: mode,
+        unitsPerContainer: packSize,
+      );
       try {
         await controller.adjustStock(
           supplement: supplement,

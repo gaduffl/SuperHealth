@@ -1226,6 +1226,13 @@ dead button. The tile exposes its selected state and the list offers a clear
 action. Keep its summary row height bounded: `StatTile` contains a `Spacer`,
 which cannot lay out directly in an unbounded `ListView`.
 
+**Stock dialogs count whole packs through `unitsPerContainer`.** The pack size
+is the supplement's existing "Units / container" field; there is no separate
+pack-size column. `showAdjustStockDialog` offers a single/packs toggle only when
+that value is positive (purchases default to packs), and every inventory
+movement is still written in stock units. Keep the arithmetic in
+`stockAdjustmentDelta` so it stays unit-testable without the dialog.
+
 **`TrackingScreen` does not come up under `flutter_test`.** `pumpWidget` on it
 hangs before the first frame completes — reproduced with both `pumpAndSettle`
 and bounded `pump`, and unrelated to any recent change. `DashboardScreen` and
