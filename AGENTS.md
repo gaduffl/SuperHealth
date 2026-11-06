@@ -1228,9 +1228,11 @@ which cannot lay out directly in an unbounded `ListView`.
 
 **Stock dialogs count whole packs through `unitsPerContainer`.** The pack size
 is the supplement's existing "Units / container" field; there is no separate
-pack-size column. `showAdjustStockDialog` offers a single/packs toggle only when
-that value is positive (purchases default to packs), and every inventory
-movement is still written in stock units. Keep the arithmetic in
+pack-size column. `showAdjustStockDialog` opens on "Add" (on top of the current
+stock, which the person often does not know) and on packs when a pack size is
+stored. Without one, choosing packs asks for the contents per pack and saves it
+through `AppController.setUnitsPerContainer`. Every inventory movement is still
+written in stock units. Keep the arithmetic in
 `stockAdjustmentDelta` so it stays unit-testable without the dialog.
 
 **`TrackingScreen` does not come up under `flutter_test`.** `pumpWidget` on it

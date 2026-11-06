@@ -310,51 +310,152 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     rows.dispose();
   });
-  for (final language in ['en', 'de']) {
-    testWidgets('adjust stock offers whole packs in $language', (tester) async {
-      final controller = _seeded();
-      addTearDown(controller.dispose);
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = const Size(390, 840);
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: Locale(language),
-          supportedLocales: AppLocalizations.supportedLocales,
-          localizationsDelegates: const [
-            AppLocalizations.delegate,
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate,
-          ],
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => TextButton(
-                onPressed: () =>
-                    showAdjustStockDialog(context, controller, _product),
-                child: const Text('Open stock'),
-              ),
+  Future<void> openStock(
+    WidgetTester tester,
+    AppController controller,
+    Supplement supplement,
+    String language,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 840);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: Locale(language),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () =>
+                  showAdjustStockDialog(context, controller, supplement),
+              child: const Text('Open stock'),
             ),
           ),
         ),
-      );
-      await tester.tap(find.text('Open stock'));
-      await tester.pumpAndSettle();
-      final de = language == 'de';
-      await tester.tap(find.text(de ? 'Hinzufügen' : 'Add'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(de ? 'Packungen (× 100)' : 'Packs (× 100)'));
-      await tester.pumpAndSettle();
-      final packs = _field(de ? 'Anzahl Packungen' : 'Number of packs');
-      expect(packs, findsOneWidget);
-      await tester.enterText(packs, '2');
-      await tester.pumpAndSettle();
-      expect(find.textContaining('= 200 '), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      // Left open on purpose: the dialog disposes its text controllers as soon
-      // as it pops, before the close animation finishes.
-    });
+      ),
+    );
+    await tester.tap(find.text('Open stock'));
+    await tester.pumpAndSettle();
   }
+
+  // The dialogs below are left open on purpose: they dispose their text
+  // controllers as soon as they pop, before the close animation finishes.
+  for (final language in ['en', 'de']) {
+    testWidgets(
+      'adjust stock adds whole packs on top of the stock by default in $language',
+      (tester) async {
+        final controller = _seeded()..stockLevels = {_product.id: 30};
+        addTearDown(controller.dispose);
+        await openStock(tester, controller, _product, language);
+        final de = language == 'de';
+        final packs = _field(de ? 'Packungen hinzufügen' : 'Packs to add');
+        expect(packs, findsOneWidget);
+        await tester.enterText(packs, '2');
+        await tester.pumpAndSettle();
+        expect(find.textContaining('= 200 '), findsOneWidget);
+        expect(
+          find.textContaining(de ? 'danach 230 ' : 'afterwards 230 '),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a missing pack size can be entered in the stock dialog in $language',
+      (tester) async {
+        final loose = Supplement(
+          id: 'protein',
+          name: 'Protein',
+          stockUnit: 'g',
+          createdAt: _date,
+          updatedAt: _date,
+        );
+        final controller = _seeded()
+          ..supplements = [loose]
+          ..stockLevels = {loose.id: 300};
+        addTearDown(controller.dispose);
+        await openStock(tester, controller, loose, language);
+        final de = language == 'de';
+        final size = find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              (widget.decoration?.labelText ?? '').startsWith(
+                de ? 'Inhalt pro Packung' : 'Contents per pack',
+              ),
+        );
+        expect(size, findsNothing);
+        await tester.tap(find.text(de ? 'Packungen' : 'Packs'));
+        await tester.pumpAndSettle();
+        expect(size, findsOneWidget);
+        await tester.enterText(size, '300');
+        await tester.enterText(
+          _field(de ? 'Packungen hinzufügen' : 'Packs to add'),
+          '2',
+        );
+        await tester.pumpAndSettle();
+        expect(find.textContaining('= 600 '), findsOneWidget);
+        expect(
+          find.textContaining(de ? 'danach 900 ' : 'afterwards 900 '),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('a pack size from the stock dialog is stored on the supplement', (
+    tester,
+  ) async {
+    final controller = _seeded();
+    addTearDown(() async {
+      controller.dispose();
+      await controller.database.close();
+    });
+    final loose = Supplement(
+      id: 'protein',
+      name: 'Protein',
+      brand: 'Example',
+      stockUnit: 'g',
+      priceEur: 20,
+      createdAt: _date,
+      updatedAt: _date,
+    );
+    final stored = (await tester.runAsync(() async {
+      await controller.repository.saveProfile(_profile);
+      await controller.repository.saveSupplement(loose);
+      controller.supplements = [loose];
+      await controller.setUnitsPerContainer(loose, 300);
+      await controller.adjustStock(
+        supplement: loose,
+        quantityUnits: stockAdjustmentDelta(
+          direction: 'add',
+          amount: 2,
+          current: 0,
+          mode: StockQuantityMode.packages,
+          unitsPerContainer: 300,
+        ),
+        reason: 'correction',
+      );
+      return (
+        await controller.repository.supplements(_profile.id),
+        await controller.repository.stockLevels(),
+      );
+    }))!;
+    final (supplements, levels) = stored;
+    final saved = supplements.singleWhere((item) => item.id == loose.id);
+    expect(saved.unitsPerContainer, 300);
+    expect(saved.brand, 'Example');
+    expect(saved.priceEur, 20);
+    expect(saved.stockUnit, 'g');
+    expect(levels[loose.id], 600);
+  });
 }
 
 Finder _field(String label) => find.byWidgetPredicate((widget) {
