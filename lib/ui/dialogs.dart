@@ -948,13 +948,23 @@ Future<void> showAdjustStockDialog(
 }) async {
   final amount = TextEditingController();
   final notes = TextEditingController();
-  var direction = purchase ? 'add' : 'set';
+  final packSizeInput = TextEditingController();
+  // Adding on top of what is there is the common case: it works without
+  // knowing the current stock, which a half-used pack rarely tells you.
+  var direction = 'add';
   final current = controller.stockLevels[supplement.id] ?? 0;
-  final packSize = supplement.unitsPerContainer;
-  final hasPackSize = packSize != null && packSize > 0;
-  var mode = purchase && hasPackSize
+  final savedPackSize = (supplement.unitsPerContainer ?? 0) > 0
+      ? supplement.unitsPerContainer
+      : null;
+  var mode = savedPackSize != null
       ? StockQuantityMode.packages
       : StockQuantityMode.units;
+  int? enteredPackSize() {
+    final value = parseOptionalInt(packSizeInput.text);
+    return value != null && value > 0 ? value : null;
+  }
+
+  int? packSize() => savedPackSize ?? enteredPackSize();
   final result = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
@@ -964,8 +974,28 @@ Future<void> showAdjustStockDialog(
           unit: supplement.stockUnit,
           form: supplement.form,
         );
-        final inPackages = hasPackSize && mode == StockQuantityMode.packages;
+        final inPackages = mode == StockQuantityMode.packages;
+        final size = packSize();
         final typed = parseOptionalDouble(amount.text);
+        String? preview;
+        if (typed != null && typed >= 0 && (!inPackages || size != null)) {
+          final delta = stockAdjustmentDelta(
+            direction: direction,
+            amount: typed,
+            current: current,
+            mode: mode,
+            unitsPerContainer: size,
+          );
+          final after = _formatStockQuantity(current + delta);
+          final converted = inPackages
+              ? '= ${_formatStockQuantity(typed * size!)} $unit · '
+              : '';
+          preview = _dialogText(
+            context,
+            '${converted}afterwards $after $unit on hand',
+            '${converted}danach $after $unit vorhanden',
+          );
+        }
         return AlertDialog(
           title: Text(
             purchase
@@ -993,12 +1023,6 @@ Future<void> showAdjustStockDialog(
                     SegmentedButton<String>(
                       segments: [
                         ButtonSegment(
-                          value: 'set',
-                          label: Text(
-                            _dialogText(context, 'Set total', 'Gesamt setzen'),
-                          ),
-                        ),
-                        ButtonSegment(
                           value: 'add',
                           label: Text(
                             _dialogText(context, 'Add', 'Hinzufügen'),
@@ -1010,36 +1034,67 @@ Future<void> showAdjustStockDialog(
                             _dialogText(context, 'Remove', 'Entfernen'),
                           ),
                         ),
+                        ButtonSegment(
+                          value: 'set',
+                          label: Text(
+                            _dialogText(context, 'Set total', 'Gesamt setzen'),
+                          ),
+                        ),
                       ],
                       selected: {direction},
                       onSelectionChanged: (value) =>
                           setState(() => direction = value.first),
                     ),
-                  if (hasPackSize) ...[
-                    const SizedBox(height: 10),
-                    SegmentedButton<StockQuantityMode>(
-                      key: const ValueKey('stock-quantity-mode'),
-                      segments: [
-                        ButtonSegment(
-                          value: StockQuantityMode.units,
-                          label: Text(
-                            _dialogText(context, 'Single', 'Einzeln'),
+                  const SizedBox(height: 10),
+                  SegmentedButton<StockQuantityMode>(
+                    key: const ValueKey('stock-quantity-mode'),
+                    segments: [
+                      ButtonSegment(
+                        value: StockQuantityMode.units,
+                        label: Text(
+                          _dialogText(
+                            context,
+                            'Single ($unit)',
+                            'Einzeln ($unit)',
                           ),
                         ),
-                        ButtonSegment(
-                          value: StockQuantityMode.packages,
-                          label: Text(
-                            _dialogText(
-                              context,
-                              'Packs (× $packSize)',
-                              'Packungen (× $packSize)',
-                            ),
-                          ),
+                      ),
+                      ButtonSegment(
+                        value: StockQuantityMode.packages,
+                        label: Text(
+                          savedPackSize != null
+                              ? _dialogText(
+                                  context,
+                                  'Packs (× $savedPackSize)',
+                                  'Packungen (× $savedPackSize)',
+                                )
+                              : _dialogText(context, 'Packs', 'Packungen'),
                         ),
-                      ],
-                      selected: {mode},
-                      onSelectionChanged: (value) =>
-                          setState(() => mode = value.first),
+                      ),
+                    ],
+                    selected: {mode},
+                    onSelectionChanged: (value) =>
+                        setState(() => mode = value.first),
+                  ),
+                  if (inPackages && savedPackSize == null) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: packSizeInput,
+                      keyboardType: TextInputType.number,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        labelText: _dialogText(
+                          context,
+                          'Contents per pack ($unit)',
+                          'Inhalt pro Packung ($unit)',
+                        ),
+                        helperText: _dialogText(
+                          context,
+                          'Saved on the supplement for next time.',
+                          'Wird für das nächste Mal am Präparat gespeichert.',
+                        ),
+                        helperMaxLines: 2,
+                      ),
                     ),
                   ],
                   const SizedBox(height: 12),
@@ -1051,37 +1106,39 @@ Future<void> showAdjustStockDialog(
                     ),
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
-                      labelText: switch ((direction == 'set', inPackages)) {
-                        (true, true) => _dialogText(
+                      labelText: switch ((direction, inPackages)) {
+                        ('set', true) => _dialogText(
                           context,
                           'New total (packs)',
                           'Neuer Gesamtbestand (Packungen)',
                         ),
-                        (true, false) => _dialogText(
+                        ('set', false) => _dialogText(
                           context,
                           'New total ($unit)',
                           'Neuer Gesamtbestand ($unit)',
                         ),
-                        (false, true) => _dialogText(
+                        ('remove', true) => _dialogText(
                           context,
-                          'Number of packs',
-                          'Anzahl Packungen',
+                          'Packs to remove',
+                          'Packungen entfernen',
                         ),
-                        (false, false) => _dialogText(
+                        ('remove', false) => _dialogText(
                           context,
-                          'Quantity ($unit)',
-                          'Menge ($unit)',
+                          'Quantity to remove ($unit)',
+                          'Menge entfernen ($unit)',
+                        ),
+                        (_, true) => _dialogText(
+                          context,
+                          'Packs to add',
+                          'Packungen hinzufügen',
+                        ),
+                        (_, false) => _dialogText(
+                          context,
+                          'Quantity to add ($unit)',
+                          'Menge hinzufügen ($unit)',
                         ),
                       },
-                      helperText: inPackages && typed != null && typed >= 0
-                          ? '= ${_formatStockQuantity(typed * packSize)} $unit'
-                          : hasPackSize
-                          ? null
-                          : _dialogText(
-                              context,
-                              'Set units per container on the supplement to add whole packs.',
-                              'Hinterlege Einheiten pro Behälter am Präparat, um ganze Packungen hinzuzufügen.',
-                            ),
+                      helperText: preview,
                       helperMaxLines: 2,
                     ),
                   ),
@@ -1116,6 +1173,8 @@ Future<void> showAdjustStockDialog(
   );
   if (result == true && context.mounted) {
     final parsed = parseOptionalDouble(amount.text);
+    final inPackages = mode == StockQuantityMode.packages;
+    final size = packSize();
     if (parsed == null || parsed < 0) {
       await showAppError(
         context,
@@ -1125,15 +1184,27 @@ Future<void> showAdjustStockDialog(
           'Gib eine nichtnegative Menge ein.',
         ),
       );
+    } else if (inPackages && size == null) {
+      await showAppError(
+        context,
+        _dialogText(
+          context,
+          'Enter how much one pack contains.',
+          'Gib an, wie viel eine Packung enthält.',
+        ),
+      );
     } else {
       final delta = stockAdjustmentDelta(
         direction: direction,
         amount: parsed,
         current: current,
         mode: mode,
-        unitsPerContainer: packSize,
+        unitsPerContainer: size,
       );
       try {
+        if (inPackages && savedPackSize == null && size != null) {
+          await controller.setUnitsPerContainer(supplement, size);
+        }
         await controller.adjustStock(
           supplement: supplement,
           quantityUnits: delta,
@@ -1147,6 +1218,7 @@ Future<void> showAdjustStockDialog(
   }
   amount.dispose();
   notes.dispose();
+  packSizeInput.dispose();
 }
 
 Future<void> showLogIntakeDialog(

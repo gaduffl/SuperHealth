@@ -1158,6 +1158,37 @@ class AppController extends ChangeNotifier {
     await _reconcileReminders();
   }
 
+  /// Stores the pack size typed into the stock dialog on the supplement, so
+  /// the next adjustment can count in packs straight away.
+  Future<void> setUnitsPerContainer(Supplement supplement, int units) async {
+    if (units <= 0 || supplement.unitsPerContainer == units) return;
+    final latest =
+        supplements.firstWhereOrNull((item) => item.id == supplement.id) ??
+        supplement;
+    await updateSupplement(
+      Supplement(
+        id: latest.id,
+        name: latest.name,
+        brand: latest.brand,
+        form: latest.form,
+        ingredients: latest.ingredients,
+        unitsPerContainer: units,
+        containerCount: latest.containerCount,
+        priceEur: latest.priceEur,
+        bioavailability: latest.bioavailability,
+        notes: latest.notes,
+        active: latest.active,
+        lowStockAlerts: latest.lowStockAlerts,
+        lowStockThresholdUnits: latest.lowStockThresholdUnits,
+        stockUnit: latest.stockUnit,
+        sourceId: latest.sourceId,
+        createdAt: latest.createdAt,
+        updatedAt: latest.updatedAt,
+        deleted: latest.deleted,
+      ),
+    );
+  }
+
   Future<void> adjustStock({
     required Supplement supplement,
     required double quantityUnits,
