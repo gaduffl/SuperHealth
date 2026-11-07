@@ -165,7 +165,8 @@ are all counted in it — and `form` stays free text. Opening and saving an
 existing product must never change its stock unit on its own:
 `SupplementFormSelection.fromStored` keeps a stored unit the preset does not
 list (an older "Powder") as a selected chip, because intakes are deducted from
-stock only while their unit matches.
+stock only while their unit matches. For the same reason a new schedule starts
+in the stock unit (`defaultScheduleUnit`), never in the form.
 
 **A missing recipe and a deliberately frozen empty recipe are different.**
 `SupplementIntake.hasIngredientSnapshot` accounts for the persisted
