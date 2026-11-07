@@ -8,8 +8,10 @@ import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import '../domain/ingredient_composition.dart';
+import '../domain/units.dart';
 import 'common.dart';
 import 'ingredient_editor.dart';
+import 'supplement_form_presets.dart';
 
 String _dialogText(BuildContext context, String english, String german) =>
     AppLocalizations.of(context).pick(english, german);
@@ -380,13 +382,17 @@ Future<void> showAddSupplementDialog(
     text: existing?.unitsPerContainer?.toString() ?? '',
   );
   final initialContainers = TextEditingController();
-  final stockUnit = TextEditingController(
-    // A new product starts blank so a real unit gets chosen, rather than
-    // inheriting the placeholder that reads as "3 unit" in every list.
-    text: existing == null || existing.stockUnit.trim() == genericStockUnit
-        ? ''
-        : existing.stockUnit,
-  );
+  // A new product starts blank so a real unit gets chosen, rather than
+  // inheriting the placeholder that reads as "3 unit" in every list. An
+  // existing product keeps its stored unit unless the person changes it.
+  final initialFormSelection = existing == null
+      ? const SupplementFormSelection(null, '')
+      : SupplementFormSelection.fromStored(
+          form: existing.form,
+          stockUnit: existing.stockUnit,
+          genericStockUnit: genericStockUnit,
+        );
+  final stockUnit = TextEditingController(text: initialFormSelection.stockUnit);
   final lowStock = TextEditingController(
     text: existing?.lowStockThresholdUnits?.toString() ?? '',
   );
@@ -508,23 +514,17 @@ Future<void> showAddSupplementDialog(
                       : null,
                 ),
                 const SizedBox(height: 14),
-                _SupplementFieldPair(
-                  first: TextField(
-                    controller: brand,
-                    decoration: InputDecoration(
-                      labelText: _dialogText(context, 'Brand', 'Marke'),
-                    ),
+                TextField(
+                  controller: brand,
+                  decoration: InputDecoration(
+                    labelText: _dialogText(context, 'Brand', 'Marke'),
                   ),
-                  second: TextField(
-                    controller: form,
-                    decoration: InputDecoration(
-                      labelText: _dialogText(
-                        context,
-                        'Form (capsule, powder…)',
-                        'Form (Kapsel, Pulver …)',
-                      ),
-                    ),
-                  ),
+                ),
+                const SizedBox(height: 20),
+                _SupplementFormSection(
+                  form: form,
+                  stockUnit: stockUnit,
+                  initialPreset: initialFormSelection.preset,
                 ),
                 const SizedBox(height: 20),
                 Container(
@@ -534,6 +534,11 @@ Future<void> showAddSupplementDialog(
                     builder: (context, value, _) => IngredientEditor(
                       rows: ingredients,
                       stockUnitLabel: value.text,
+                      stockUnitName: _packUnitName(
+                        AppLocalizations.of(context),
+                        value.text,
+                        form.text,
+                      ),
                     ),
                   ),
                 ),
@@ -580,70 +585,97 @@ Future<void> showAddSupplementDialog(
                       ),
                     ),
                 ],
-                const SizedBox(height: 20),
-                _SupplementFieldPair(
-                  first: TextFormField(
-                    controller: unitsPerContainer,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: _dialogText(
-                        context,
-                        'Units / container',
-                        'Einheiten / Behälter',
-                      ),
-                    ),
-                    validator: (value) =>
-                        numberError(value, integer: true, positive: true),
-                  ),
-                  second: _StockUnitField(controller: stockUnit, form: form),
+                const SizedBox(height: 24),
+                Text(
+                  _dialogText(context, 'Pack & stock', 'Packung & Bestand'),
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
-                if (existing == null) ...[
-                  const SizedBox(height: 14),
-                  TextFormField(
-                    controller: initialContainers,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: _dialogText(
-                        context,
-                        'Current containers (initial stock)',
-                        'Aktuelle Behälter (Anfangsbestand)',
+                const SizedBox(height: 10),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: stockUnit,
+                  builder: (context, value, _) {
+                    final unitName = _packUnitName(
+                      AppLocalizations.of(context),
+                      value.text,
+                      form.text,
+                    );
+                    final packFields = <Widget>[
+                      TextFormField(
+                        controller: unitsPerContainer,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: _dialogText(
+                            context,
+                            'Contents per pack',
+                            'Inhalt pro Packung',
+                          ),
+                          suffixText: unitName,
+                        ),
+                        validator: (value) =>
+                            numberError(value, integer: true, positive: true),
                       ),
-                    ),
-                    validator: numberError,
-                  ),
-                ],
-                const SizedBox(height: 14),
-                _SupplementFieldPair(
-                  first: TextFormField(
-                    controller: price,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: _dialogText(
-                        context,
-                        'Price / container (EUR)',
-                        'Preis / Behälter (EUR)',
+                      if (existing == null)
+                        TextFormField(
+                          controller: initialContainers,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: _dialogText(
+                              context,
+                              'Packs in stock',
+                              'Packungen vorrätig',
+                            ),
+                          ),
+                          validator: numberError,
+                        ),
+                      TextFormField(
+                        controller: price,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: _dialogText(
+                            context,
+                            'Price per pack',
+                            'Preis pro Packung',
+                          ),
+                          suffixText: '€',
+                        ),
+                        validator: numberError,
                       ),
-                    ),
-                    validator: numberError,
-                  ),
-                  second: TextFormField(
-                    controller: lowStock,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: _dialogText(
-                        context,
-                        'Low-stock threshold',
-                        'Grenze für niedrigen Bestand',
+                      TextFormField(
+                        controller: lowStock,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: _dialogText(
+                            context,
+                            'Warn when below',
+                            'Warnen unter',
+                          ),
+                          suffixText: unitName,
+                        ),
+                        validator: numberError,
                       ),
-                    ),
-                    validator: numberError,
-                  ),
+                    ];
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var i = 0; i < packFields.length; i += 2) ...[
+                          if (i > 0) const SizedBox(height: 14),
+                          if (i + 1 < packFields.length)
+                            _SupplementFieldPair(
+                              first: packFields[i],
+                              second: packFields[i + 1],
+                            )
+                          else
+                            packFields[i],
+                        ],
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 14),
                 TextField(
@@ -3117,87 +3149,186 @@ Future<void> showAddNamedRecordDialog(
   }
 }
 
-/// The product's counting unit, with the common answers one tap away.
+/// The name a product's dose unit goes by next to a number: "g", "Kapsel".
 ///
-/// Left as free text underneath, because a unit is the person's own
-/// vocabulary in their own language — the suggestions only save typing.
-class _StockUnitField extends StatefulWidget {
-  const _StockUnitField({required this.controller, required this.form});
-
-  final TextEditingController controller;
-
-  /// The product's form field. Offered first, since a product described as a
-  /// capsule is almost always counted in capsules.
-  final TextEditingController form;
-
-  @override
-  State<_StockUnitField> createState() => _StockUnitFieldState();
+/// The generic placeholder falls back to the form ("Fruchtgummi"), as
+/// [unitLabel] does in lists. Null when no unit has been chosen yet.
+String? _packUnitName(AppLocalizations strings, String stockUnit, String form) {
+  final trimmed = stockUnit.trim();
+  if (trimmed.isEmpty) return null;
+  if (trimmed.toLowerCase() == genericStockUnit) {
+    final fallback = form.trim();
+    return fallback.isEmpty ? doseUnitName(strings, trimmed) : fallback;
+  }
+  return doseUnitName(strings, trimmed);
 }
 
-class _StockUnitFieldState extends State<_StockUnitField> {
-  @override
-  void initState() {
-    super.initState();
-    widget.form.addListener(_formChanged);
-  }
+/// What the product is and what one dose is counted in.
+///
+/// Picking a form fills in its dose unit, so a capsule product is counted in
+/// capsules without a second question. Only forms that are genuinely dosed
+/// in more than one way (powder by gram or scoop, liquids by mL or drop) show
+/// a unit choice. "Other" keeps both as free text, which is also where an
+/// unrecognised stored form opens.
+///
+/// A stored unit the chosen form does not list (an older record counted in
+/// "Powder") stays offered and selected, because intakes are deducted from
+/// stock only while their unit matches it.
+class _SupplementFormSection extends StatefulWidget {
+  const _SupplementFormSection({
+    required this.form,
+    required this.stockUnit,
+    required this.initialPreset,
+  });
 
-  void _formChanged() => setState(() {});
+  final TextEditingController form;
+  final TextEditingController stockUnit;
+  final SupplementFormPreset? initialPreset;
 
   @override
-  void dispose() {
-    widget.form.removeListener(_formChanged);
-    super.dispose();
+  State<_SupplementFormSection> createState() => _SupplementFormSectionState();
+}
+
+class _SupplementFormSectionState extends State<_SupplementFormSection> {
+  late SupplementFormPreset? _preset = widget.initialPreset;
+
+  /// The unit the product was stored with, kept as a choice even when the
+  /// current form does not list it.
+  late final String _storedUnit = widget.stockUnit.text.trim();
+
+  void _choose(SupplementFormPreset preset, AppLocalizations strings) {
+    setState(() {
+      final previous = _preset;
+      _preset = preset;
+      if (preset == SupplementFormPreset.other) {
+        // Drop a preset's own label so the free-text field starts empty, but
+        // keep anything the person typed themselves.
+        if (previous != null && previous != SupplementFormPreset.other) {
+          widget.form.text = '';
+        }
+        return;
+      }
+      widget.form.text = preset.label(strings);
+      final current = widget.stockUnit.text.trim();
+      final keepStored =
+          current.isNotEmpty &&
+          current == _storedUnit &&
+          preset == widget.initialPreset;
+      if (!preset.accepts(current) && !keepStored) {
+        widget.stockUnit.text = preset.units.first.symbol;
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
-    final candidates = <String>{
-      if (widget.form.text.trim().isNotEmpty) widget.form.text.trim(),
-      ...strings
-          .pick(
-            'capsule,tablet,softgel,scoop,drop,ml,g,sachet',
-            'Kapsel,Tablette,Softgel,Messlöffel,Tropfen,ml,g,Beutel',
-          )
-          .split(','),
-    };
-    final suggestions = <String, String>{};
-    for (final candidate in candidates) {
-      suggestions.putIfAbsent(candidate.toLowerCase(), () => candidate);
+    final textTheme = Theme.of(context).textTheme;
+    final colors = Theme.of(context).colorScheme;
+    final preset = _preset;
+    final current = widget.stockUnit.text.trim();
+    Widget unitChips(Iterable<String> symbols) {
+      final options = <String, String>{};
+      for (final symbol in [
+        ...symbols,
+        if (_storedUnit.isNotEmpty &&
+            _storedUnit != genericStockUnit &&
+            preset == widget.initialPreset)
+          _storedUnit,
+        if (current.isNotEmpty) current,
+      ]) {
+        final key = CanonicalUnit.normalize(symbol).toLowerCase();
+        options.putIfAbsent(key, () => symbol);
+      }
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final symbol in options.values)
+            ChoiceChip(
+              label: Text(doseUnitName(strings, symbol)),
+              selected:
+                  CanonicalUnit.normalize(current).toLowerCase() ==
+                  CanonicalUnit.normalize(symbol).toLowerCase(),
+              onSelected: (_) => setState(() => widget.stockUnit.text = symbol),
+            ),
+        ],
+      );
     }
+
+    final showUnitChoice =
+        preset != null &&
+        preset != SupplementFormPreset.other &&
+        (preset.offersUnitChoice ||
+            (current.isNotEmpty && !preset.accepts(current)));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
-          controller: widget.controller,
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            labelText: _dialogText(context, 'Stock unit', 'Bestandseinheit'),
-            hintText: strings.pick('capsule', 'Kapsel'),
-            helperText: _dialogText(
-              context,
-              'What one of these is called',
-              'Wie eine Einheit davon heißt',
-            ),
-            helperMaxLines: 2,
-          ),
+        Text(
+          _dialogText(context, 'Form', 'Darreichungsform'),
+          style: textTheme.titleSmall,
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Wrap(
           spacing: 6,
           runSpacing: 6,
           children: [
-            for (final suggestion in suggestions.values)
+            for (final option in SupplementFormPreset.values)
               ChoiceChip(
-                label: Text(suggestion),
-                selected:
-                    widget.controller.text.trim().toLowerCase() ==
-                    suggestion.toLowerCase(),
-                onSelected: (_) =>
-                    setState(() => widget.controller.text = suggestion),
+                label: Text(option.label(strings)),
+                selected: option == preset,
+                onSelected: (_) => _choose(option, strings),
               ),
           ],
         ),
+        if (preset == SupplementFormPreset.other) ...[
+          const SizedBox(height: 14),
+          TextField(
+            controller: widget.form,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              labelText: _dialogText(context, 'Form', 'Darreichungsform'),
+              hintText: strings.pick('e.g. lozenge', 'z. B. Lutschtablette'),
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: widget.stockUnit,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: _dialogText(context, 'Dosed in', 'Dosiert in'),
+              hintText: strings.pick('piece', 'Stück'),
+              helperText: _dialogText(
+                context,
+                'What one dose is counted in. Pack size and stock use it too.',
+                'Worin eine Dosis gezählt wird. Packungsinhalt und Bestand nutzen sie auch.',
+              ),
+              helperMaxLines: 3,
+            ),
+          ),
+          const SizedBox(height: 6),
+          unitChips(otherStockUnitSuggestions.map((unit) => unit.symbol)),
+        ] else if (showUnitChoice) ...[
+          const SizedBox(height: 14),
+          Text(
+            _dialogText(context, 'Dosed in', 'Dosiert in'),
+            style: textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 6),
+          unitChips(preset.units.map((unit) => unit.symbol)),
+        ] else if (preset != null && current.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            _dialogText(
+              context,
+              'Dosed and counted in ${_packUnitName(strings, current, widget.form.text)}.',
+              'Dosiert und gezählt in ${_packUnitName(strings, current, widget.form.text)}.',
+            ),
+            style: textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     );
   }

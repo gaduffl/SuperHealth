@@ -129,13 +129,22 @@ class IngredientRow {
 /// field of their own, so there is no separator syntax to remember and a typo
 /// cannot silently merge two columns.
 class IngredientEditor extends StatefulWidget {
-  const IngredientEditor({required this.rows, this.stockUnitLabel, super.key});
+  const IngredientEditor({
+    required this.rows,
+    this.stockUnitLabel,
+    this.stockUnitName,
+    super.key,
+  });
 
   final IngredientRows rows;
 
   /// The product's stock unit, shown so it is clear that amounts are per one
   /// capsule, scoop, or whatever the product is counted in.
   final String? stockUnitLabel;
+
+  /// How [stockUnitLabel] reads to the person ("Messlöffel" for `scoop`).
+  /// Falls back to the stored label when not given.
+  final String? stockUnitName;
 
   @override
   State<IngredientEditor> createState() => _IngredientEditorState();
@@ -159,7 +168,7 @@ class _IngredientEditorState extends State<IngredientEditor> {
   Widget build(BuildContext context) {
     final strings = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
-    final unit = widget.stockUnitLabel?.trim();
+    final unit = (widget.stockUnitName ?? widget.stockUnitLabel)?.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -191,10 +200,10 @@ class _IngredientEditorState extends State<IngredientEditor> {
         Text(
           unit == null || unit.isEmpty
               ? strings.pick(
-                  'Amount per stock unit.',
-                  'Menge je Bestandseinheit.',
+                  'Amounts per dose unit.',
+                  'Mengen je Dosiereinheit.',
                 )
-              : strings.pick('Amount per $unit.', 'Menge je $unit.'),
+              : strings.pick('Amounts per 1 $unit.', 'Mengen je 1 $unit.'),
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
