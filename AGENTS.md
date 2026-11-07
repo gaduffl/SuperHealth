@@ -151,9 +151,21 @@ so choosing a component cannot remove its own selection on the next rebuild.
 
 **The supplement editor must fit a phone and keep invalid edits open.** It uses
 a full-screen route with Save above the keyboard on phones, responsive field
-pairs, and growing stock-unit chips. Ingredient names, amounts and unit choices
+pairs, and growing chip rows. Ingredient names, amounts and unit choices
 must stay readable at larger text sizes. Validate before closing and keep text
 controllers alive until the route's exit animation finishes.
+
+**The form decides the dose unit.** The editor offers a form preset
+(`SupplementFormPreset` in `lib/ui/supplement_form_presets.dart`) instead of
+separate free-text "form" and "stock unit" fields; each preset lists the
+`CanonicalUnit`s it is dosed in, and only forms with a real choice (powder: g
+or scoop, liquid: mL or drop) or "Other" ask for the unit. `stock_unit` keeps
+its meaning — ingredient amounts, pack contents, stock and low-stock threshold
+are all counted in it — and `form` stays free text. Opening and saving an
+existing product must never change its stock unit on its own:
+`SupplementFormSelection.fromStored` keeps a stored unit the preset does not
+list (an older "Powder") as a selected chip, because intakes are deducted from
+stock only while their unit matches.
 
 **A missing recipe and a deliberately frozen empty recipe are different.**
 `SupplementIntake.hasIngredientSnapshot` accounts for the persisted

@@ -288,6 +288,133 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('an older product counted in its form keeps that stock unit', (
+    tester,
+  ) async {
+    final legacy = Supplement(
+      id: 'glycine',
+      name: 'Glycin',
+      form: 'Powder',
+      stockUnit: 'Powder',
+      ingredients: const [
+        {'name': 'Glycin', 'amount': 1, 'unit': 'g'},
+      ],
+      unitsPerContainer: 500,
+      createdAt: _date,
+      updatedAt: _date,
+    );
+    final controller = _seeded()..supplements = [legacy];
+    addTearDown(() async {
+      controller.dispose();
+      await controller.database.close();
+    });
+    await tester.runAsync(() async {
+      await controller.repository.saveProfile(_profile);
+      await controller.repository.saveSupplement(legacy);
+    });
+    await _open(
+      tester,
+      controller,
+      size: const Size(1000, 1200),
+      scale: 1,
+      existing: legacy,
+    );
+    final stored = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, 'Powder').last,
+    );
+    expect(stored.selected, isTrue);
+    expect(find.widgetWithText(ChoiceChip, 'g'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'scoop'), findsOneWidget);
+    await tester.enterText(_field('Brand'), 'New brand');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    await _drainWrites(tester);
+    final saved = controller.supplements.single;
+    expect(saved.brand, 'New brand');
+    expect(saved.form, 'Powder');
+    expect(saved.stockUnit, 'Powder');
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final language in ['en', 'de']) {
+    testWidgets('a new powder is dosed in grams by default in $language', (
+      tester,
+    ) async {
+      final de = language == 'de';
+      final controller = _seeded()..supplements = [];
+      addTearDown(() async {
+        controller.dispose();
+        await controller.database.close();
+      });
+      await tester.runAsync(() => controller.repository.saveProfile(_profile));
+      await _open(
+        tester,
+        controller,
+        language: language,
+        size: const Size(1000, 1400),
+        scale: 1,
+        create: true,
+      );
+      expect(find.text(de ? 'Dosiert in' : 'Dosed in'), findsNothing);
+      await tester.tap(
+        find.widgetWithText(ChoiceChip, de ? 'Pulver' : 'Powder'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(de ? 'Dosiert in' : 'Dosed in'), findsOneWidget);
+      final grams = tester.widget<ChoiceChip>(
+        find.widgetWithText(ChoiceChip, 'g'),
+      );
+      expect(grams.selected, isTrue);
+      expect(
+        find.widgetWithText(ChoiceChip, de ? 'Messlöffel' : 'scoop'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(de ? 'Mengen je 1 g.' : 'Amounts per 1 g.'),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        _field(de ? 'Produktname *' : 'Product name *'),
+        'Glycin',
+      );
+      await tester.enterText(
+        _field(de ? 'Inhalt pro Packung' : 'Contents per pack'),
+        '500',
+      );
+      await tester.tap(
+        find.widgetWithText(FilledButton, de ? 'Hinzufügen' : 'Add'),
+      );
+      await tester.pumpAndSettle();
+      await _drainWrites(tester);
+      final saved = controller.supplements.single;
+      expect(saved.form, de ? 'Pulver' : 'Powder');
+      expect(saved.stockUnit, 'g');
+      expect(saved.unitsPerContainer, 500);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('a capsule form needs no separate unit choice', (tester) async {
+    final controller = _seeded()..supplements = [];
+    addTearDown(controller.dispose);
+    await _open(
+      tester,
+      controller,
+      size: const Size(1000, 1400),
+      scale: 1,
+      create: true,
+    );
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Softgel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Dosed in'), findsNothing);
+    expect(find.text('Dosed and counted in capsule.'), findsOneWidget);
+    expect(find.text('Amounts per 1 capsule.'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Other'));
+    await tester.pumpAndSettle();
+    expect(_field('Dosed in'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('ingredient unit choices resolve microgram to the µg option', (
     tester,
   ) async {
@@ -471,6 +598,8 @@ Future<void> _open(
   String language = 'en',
   Size size = const Size(390, 840),
   double scale = 1.4,
+  Supplement? existing,
+  bool create = false,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -501,7 +630,7 @@ Future<void> _open(
             onPressed: () => showAddSupplementDialog(
               context,
               controller,
-              existing: _product,
+              existing: create ? null : existing ?? _product,
             ),
             child: const Text('Open editor'),
           ),
