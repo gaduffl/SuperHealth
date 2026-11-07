@@ -1068,6 +1068,63 @@ class SupplementInsights {
     return suffix.isNotEmpty && RegExp(r'^\d+$').hasMatch(suffix);
   }
 
+  /// Per product, the count unit that intakes logged under the generic
+  /// placeholder `unit` are reported as in exposure lists and charts.
+  ///
+  /// For years the app logged doses in `unit` before a product had a real
+  /// unit, so one capsule product shows up as "B12 (unit)" beside
+  /// "B12 (capsule)". Both mean "one of these", and stock deduction already
+  /// treats every count unit alike. They are folded together only when the
+  /// product's own unit is a specific count unit (or, if it has none, its
+  /// intakes use exactly one), never into grams or millilitres, because
+  /// units never mix. Stored intakes are not changed.
+  static Map<String, String> placeholderUnitTargets({
+    required List<SupplementIntake> intakes,
+    required List<Supplement> supplements,
+  }) {
+    CanonicalUnit? specificCount(String raw) {
+      final unit = CanonicalUnit.tryParse(raw);
+      return unit != null &&
+              unit.domain == UnitDomain.count &&
+              unit != CanonicalUnit.piece
+          ? unit
+          : null;
+    }
+
+    final result = <String, String>{};
+    final seen = <String, Set<CanonicalUnit>>{};
+    for (final intake in intakes) {
+      if (intake.deleted) continue;
+      final unit = specificCount(intake.unit);
+      if (unit != null) {
+        seen.putIfAbsent(intake.supplementId, () => {}).add(unit);
+      }
+    }
+    for (final supplement in supplements) {
+      final own = specificCount(supplement.stockUnit);
+      if (own != null) result[supplement.id] = own.symbol;
+    }
+    for (final entry in seen.entries) {
+      if (result.containsKey(entry.key) || entry.value.length != 1) continue;
+      result[entry.key] = entry.value.single.symbol;
+    }
+    return result;
+  }
+
+  String _reportedUnit(
+    SupplementIntake intake,
+    Map<String, String> placeholderTargets,
+  ) {
+    final unit = intake.unit.trim();
+    final target = placeholderTargets[intake.supplementId];
+    if (target == null) return unit;
+    final parsed = CanonicalUnit.tryParse(unit);
+    if (unit.isEmpty || parsed == CanonicalUnit.piece) return target;
+    // Fold spellings of the target itself ("Capsule", "Kapseln") too.
+    if (parsed?.symbol == target) return target;
+    return unit;
+  }
+
   List<SupplementExposure> supplementExposure({
     required List<SupplementIntake> intakes,
     required List<Supplement> supplements,
@@ -1080,8 +1137,12 @@ class SupplementInsights {
     final totals = <String, double>{};
     final counts = <String, int>{};
     final display = <String, (String, String, String)>{};
+    final placeholderTargets = placeholderUnitTargets(
+      intakes: intakes,
+      supplements: supplements,
+    );
     for (final intake in _actualIntakesInRange(intakes, from, through)) {
-      final unit = intake.unit.trim();
+      final unit = _reportedUnit(intake, placeholderTargets);
       final name = names[intake.supplementId] ?? 'Deleted supplement';
       final key = '${intake.supplementId}|${unit.toLowerCase()}';
       totals[key] = (totals[key] ?? 0) + intake.dose;
@@ -1132,8 +1193,12 @@ class SupplementInsights {
     };
     final totals = <String, Map<DateTime, double>>{};
     final display = <String, (String, String)>{};
+    final placeholderTargets = placeholderUnitTargets(
+      intakes: intakes,
+      supplements: supplements,
+    );
     for (final intake in _actualIntakesInRange(intakes, from, through)) {
-      final unit = intake.unit.trim();
+      final unit = _reportedUnit(intake, placeholderTargets);
       final key = '${intake.supplementId}|${unit.toLowerCase()}';
       final week = _weekStart(intake.takenAt);
       final bucket = totals.putIfAbsent(key, () => <DateTime, double>{});

@@ -551,6 +551,93 @@ void main() {
     expect(components.single.weeklyTotals[nextMonday], 100);
   });
 
+  group('placeholder unit', () {
+    SupplementIntake logged(
+      String id,
+      String supplementId,
+      double dose,
+      String unit,
+    ) => SupplementIntake(
+      id: id,
+      profileId: 'profile',
+      supplementId: supplementId,
+      takenAt: monday,
+      dose: dose,
+      unit: unit,
+      createdAt: monday,
+      updatedAt: monday,
+    );
+    Supplement product(String id, String stockUnit) => Supplement(
+      id: id,
+      name: id.toUpperCase(),
+      stockUnit: stockUnit,
+      createdAt: monday,
+      updatedAt: monday,
+    );
+
+    test('folds into the product count unit in list and chart', () {
+      final b12 = product('b12', 'capsule');
+      final intakes = [
+        logged('old', 'b12', 2, 'unit'),
+        logged('new', 'b12', 1, 'capsule'),
+      ];
+      final list = service.supplementExposure(
+        intakes: intakes,
+        supplements: [b12],
+        from: monday,
+        through: monday,
+      );
+      expect(list.map((item) => '${item.unit}:${item.total}'), ['capsule:3.0']);
+      final chart = service.weeklySupplementSeries(
+        intakes: intakes,
+        supplements: [b12],
+        from: monday,
+        through: monday,
+      );
+      expect(chart.single.label, 'B12 (capsule)');
+      expect(chart.single.weeklyTotals[monday], 3);
+    });
+
+    test('follows the only count unit logged when the product has none', () {
+      final legacy = product('b12', 'unit');
+      final list = service.supplementExposure(
+        intakes: [
+          logged('old', 'b12', 2, 'unit'),
+          logged('new', 'b12', 1, 'Capsule'),
+        ],
+        supplements: [legacy],
+        from: monday,
+        through: monday,
+      );
+      expect(list.single.unit, 'capsule');
+      expect(list.single.total, 3);
+    });
+
+    test('never folds into a measure or an ambiguous count', () {
+      final powder = product('glycine', 'g');
+      final mixed = product('mixed', 'unit');
+      final list = service.supplementExposure(
+        intakes: [
+          logged('a', 'glycine', 3, 'g'),
+          logged('b', 'glycine', 1, 'unit'),
+          logged('c', 'mixed', 1, 'unit'),
+          logged('d', 'mixed', 1, 'capsule'),
+          logged('e', 'mixed', 1, 'tablet'),
+        ],
+        supplements: [powder, mixed],
+        from: monday,
+        through: monday,
+      );
+      expect(list.map((item) => '${item.supplementId}:${item.unit}').toSet(), {
+        'glycine:g',
+        'glycine:unit',
+        'mixed:unit',
+        'mixed:capsule',
+        'mixed:tablet',
+      });
+    });
+  });
+
   test('purchase plan rounds up to whole packages and flags unknown sizes', () {
     final noPackageSize = Supplement(
       id: 'vitamin-d',

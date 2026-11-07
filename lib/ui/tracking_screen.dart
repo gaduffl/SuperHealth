@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -980,8 +981,16 @@ class _TrackingScreenState extends State<TrackingScreen>
           _ingredientPinKey(item),
       };
       if (_historyPins.any((item) => !existingPins.contains(item))) {
+        final placeholderTargets = SupplementInsights.placeholderUnitTargets(
+          intakes: controller.intakes,
+          supplements: controller.supplements,
+        );
         WidgetsBinding.instance.addPostFrameCallback(
-          (_) => _pruneHistoryPins(profileId, existingPins),
+          (_) => _pruneHistoryPins(
+            profileId,
+            existingPins,
+            placeholderTargets: placeholderTargets,
+          ),
         );
       }
     }
@@ -1664,11 +1673,28 @@ class _TrackingScreenState extends State<TrackingScreen>
 
   Future<void> _pruneHistoryPins(
     String profileId,
-    Set<String> existingPins,
-  ) async {
+    Set<String> existingPins, {
+    Map<String, String> placeholderTargets = const {},
+  }) async {
     if (!mounted || _historyPinsProfileId != profileId) return;
-    final next = _historyPins.intersection(existingPins);
-    if (next.length == _historyPins.length) return;
+    // A product pinned under the old `unit` placeholder now lives under its
+    // count unit; carry the pin over instead of dropping it.
+    String carried(String pin) {
+      const prefix = 'supplement|';
+      if (existingPins.contains(pin) || !pin.startsWith(prefix)) return pin;
+      final separator = pin.lastIndexOf('|');
+      if (separator <= prefix.length) return pin;
+      final id = pin.substring(prefix.length, separator);
+      final unit = pin.substring(separator + 1);
+      final target = placeholderTargets[id];
+      if (target == null || (unit.isNotEmpty && unit != genericStockUnit)) {
+        return pin;
+      }
+      return '$prefix$id|${target.toLowerCase()}';
+    }
+
+    final next = _historyPins.map(carried).toSet().intersection(existingPins);
+    if (setEquals(next, _historyPins)) return;
     setState(() => _historyPins = next);
     final preferences = await SharedPreferences.getInstance();
     await preferences.setStringList(
