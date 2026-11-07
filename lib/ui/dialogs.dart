@@ -1452,6 +1452,21 @@ Future<void> showLogIntakeDialog(
   notes.dispose();
 }
 
+/// The unit a new schedule starts in: the product's dose unit.
+///
+/// Not the form: a powder is dosed in "g" or "scoop", and a schedule in
+/// "Powder" would never be deducted from stock, which only counts intakes
+/// whose unit matches the stock unit. The form is only a fallback for the
+/// generic placeholder, where it at least names what is counted.
+String defaultScheduleUnit(Supplement supplement) {
+  final stockUnit = supplement.stockUnit.trim();
+  if (stockUnit.isNotEmpty && stockUnit.toLowerCase() != genericStockUnit) {
+    return stockUnit;
+  }
+  final form = supplement.form.trim();
+  return form.isNotEmpty ? form : genericStockUnit;
+}
+
 Future<void> showAddScheduleDialog(
   BuildContext context,
   AppController controller,
@@ -1460,9 +1475,7 @@ Future<void> showAddScheduleDialog(
 }) async {
   final dose = TextEditingController(text: existing?.dose.toString() ?? '1');
   final unit = TextEditingController(
-    text:
-        existing?.unit ??
-        (supplement.form.isEmpty ? supplement.stockUnit : supplement.form),
+    text: existing?.unit ?? defaultScheduleUnit(supplement),
   );
   final instructions = TextEditingController(text: existing?.instructions);
   var time = existing?.timeOfDay ?? 'Morning';
