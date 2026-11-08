@@ -133,3 +133,27 @@ const legacySupplementIntakesTable = '''
     deleted INTEGER NOT NULL DEFAULT 0
   )
 ''';
+
+/// v18 adds a column to it.
+const legacySupplementsTable = '''
+  CREATE TABLE supplements (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    brand TEXT NOT NULL DEFAULT '',
+    form TEXT NOT NULL DEFAULT '',
+    ingredients_json TEXT NOT NULL DEFAULT '[]',
+    units_per_container INTEGER,
+    container_count REAL,
+    price_eur REAL,
+    bioavailability TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    low_stock_alerts INTEGER NOT NULL DEFAULT 1,
+    low_stock_threshold_units REAL,
+    stock_unit TEXT NOT NULL DEFAULT 'unit',
+    source_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+  )
+''';

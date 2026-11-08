@@ -435,7 +435,9 @@ class SupplementInsights {
     final scheduled =
         schedules.where((item) => _scheduledOn(item, day)).where((item) {
           final supplement = catalog[item.supplementId];
-          return supplement != null && !supplement.deleted && supplement.active;
+          return supplement != null &&
+              !supplement.deleted &&
+              supplement.activeFor(item.profileId);
         }).toList()..sort((a, b) {
           final due = _dueAt(
             day,
@@ -1420,7 +1422,9 @@ class SupplementInsights {
       (item) => item.active && !item.deleted,
     )) {
       final supplement = catalog[schedule.supplementId];
-      if (supplement == null || supplement.deleted || !supplement.active) {
+      if (supplement == null ||
+          supplement.deleted ||
+          !supplement.activeFor(schedule.profileId)) {
         continue;
       }
       final weeklyUnits = schedule.dose * schedule.weekdays.length;
@@ -1483,6 +1487,11 @@ class SupplementInsights {
   ///
   /// Shared by every forward-looking projection so cost, stock, and the
   /// shopping list can never disagree about which schedules still count.
+  ///
+  /// A pause — for the household or for one profile — means nobody takes the
+  /// paused doses, so they draw no stock and cost nothing. Counting them would
+  /// make the shopping list buy for a person who stopped, and make days of
+  /// cover look shorter than they are for the person who did not.
   double _weeklyScheduledUnits({
     required Supplement supplement,
     required List<SupplementSchedule> householdSchedules,
@@ -1491,6 +1500,7 @@ class SupplementInsights {
     var weekly = 0.0;
     for (final schedule in householdSchedules) {
       if (schedule.supplementId != supplement.id) continue;
+      if (!supplement.activeFor(schedule.profileId)) continue;
       if (!_inEffectOn(schedule, day)) continue;
       if (!_sameStockUnit(schedule.unit, supplement.stockUnit)) continue;
       weekly += schedule.dose * schedule.weekdays.length;

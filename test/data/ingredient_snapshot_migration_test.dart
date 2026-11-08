@@ -18,6 +18,7 @@ void main() {
           version: 16,
           onCreate: (db, _) async {
             await db.execute(legacySupplementIntakesTable);
+            await db.execute(legacySupplementsTable);
             for (final recipe in [
               '[]',
               '[ ]',

@@ -1139,6 +1139,7 @@ class AppController extends ChangeNotifier {
         bioavailability: supplement.bioavailability.trim(),
         notes: supplement.notes.trim(),
         active: supplement.active,
+        pausedProfileIds: supplement.pausedProfileIds,
         lowStockAlerts: supplement.lowStockAlerts,
         lowStockThresholdUnits: supplement.lowStockThresholdUnits,
         stockUnit: supplement.stockUnit.trim().isEmpty
@@ -1156,6 +1157,52 @@ class AppController extends ChangeNotifier {
       if (historyUpdate != null) _ActiveDataSlice.intakes,
     });
     await _reconcileReminders();
+  }
+
+  /// Pauses or resumes [supplement] for the whole household.
+  Future<void> setSupplementActive(Supplement supplement, bool active) async {
+    final latest =
+        supplements.firstWhereOrNull((item) => item.id == supplement.id) ??
+        supplement;
+    if (latest.active == active) return;
+    await updateSupplement(latest.copyWith(active: active));
+  }
+
+  /// Pauses or resumes [supplement] for the active profile only; every other
+  /// profile keeps taking it as scheduled.
+  Future<void> setSupplementPausedForActiveProfile(
+    Supplement supplement,
+    bool paused,
+  ) async {
+    final profileId = _profileId;
+    final latest =
+        supplements.firstWhereOrNull((item) => item.id == supplement.id) ??
+        supplement;
+    if (latest.pausedFor(profileId) == paused) return;
+    await updateSupplement(
+      latest.copyWith(
+        pausedProfileIds: paused
+            ? [...latest.pausedProfileIds, profileId]
+            : [
+                for (final id in latest.pausedProfileIds)
+                  if (id != profileId) id,
+              ],
+      ),
+    );
+  }
+
+  /// Whether the active profile has paused [supplement] for itself.
+  bool isPausedForActiveProfile(Supplement supplement) {
+    final profile = activeProfile;
+    return profile != null && supplement.pausedFor(profile.id);
+  }
+
+  /// Whether the active profile should be taking [supplement] right now.
+  bool isActiveForActiveProfile(Supplement supplement) {
+    final profile = activeProfile;
+    return profile == null
+        ? supplement.active
+        : supplement.activeFor(profile.id);
   }
 
   /// Stores the pack size typed into the stock dialog on the supplement, so
@@ -1178,6 +1225,7 @@ class AppController extends ChangeNotifier {
         bioavailability: latest.bioavailability,
         notes: latest.notes,
         active: latest.active,
+        pausedProfileIds: latest.pausedProfileIds,
         lowStockAlerts: latest.lowStockAlerts,
         lowStockThresholdUnits: latest.lowStockThresholdUnits,
         stockUnit: latest.stockUnit,

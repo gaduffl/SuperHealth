@@ -7,6 +7,7 @@ import 'package:path/path.dart' as path;
 import '../data/app_database.dart';
 import '../data/health_repository.dart';
 import '../data/ingredient_snapshot_upgrade.dart';
+import '../data/supplement_pause_upgrade.dart';
 
 /// Creates and restores a self-contained, local-only backup of health data.
 ///
@@ -265,6 +266,7 @@ class PortableBackupService {
       tables[table] = rows;
     }
     upgradeIngredientSnapshotRows(tables['supplement_intakes']!);
+    upgradeSupplementPauseRows(tables['supplements']!);
     await _repository.validateSynchronizedRows(tables, portableBackup: true);
     final documents = _validateDocuments(
       bundle['documents'],

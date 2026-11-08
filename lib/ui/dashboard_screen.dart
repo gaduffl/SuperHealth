@@ -473,7 +473,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   ) async {
     final strings = AppLocalizations.of(context);
     final active = controller.supplements
-        .where((item) => item.active && !item.deleted)
+        .where(
+          (item) => controller.isActiveForActiveProfile(item) && !item.deleted,
+        )
         .toList();
     final product = await showModalBottomSheet<Supplement>(
       context: context,
@@ -590,7 +592,9 @@ class _OverviewTiles extends StatelessWidget {
         .where((item) => item.kind == BiomarkerStatusKind.neverMeasured)
         .length;
     final activeSupplements = controller.supplements
-        .where((item) => item.active && !item.deleted)
+        .where(
+          (item) => controller.isActiveForActiveProfile(item) && !item.deleted,
+        )
         .length;
     final scheduledToday = insights.dosesForDay(
       day: now,

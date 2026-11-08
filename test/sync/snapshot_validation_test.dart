@@ -30,6 +30,33 @@ void main() {
   );
 
   test(
+    'v17 snapshots arrive unpaused per profile and a pause list must hold ids',
+    () async {
+      final fixture = await _Fixture.create(withRelations: true);
+      addTearDown(fixture.dispose);
+      final snapshot = await fixture.snapshot();
+      snapshot['schema_version'] = 17;
+      for (final row in _rows(snapshot, 'supplements')) {
+        row.remove('paused_profile_ids_json');
+      }
+      await fixture.service.merge(snapshot);
+      expect(
+        (await fixture.repository.supplements()).every(
+          (item) => item.pausedProfileIds.isEmpty,
+        ),
+        isTrue,
+      );
+
+      final current = await fixture.snapshot();
+      _rows(current, 'supplements').first['paused_profile_ids_json'] = '[1]';
+      await expectLater(
+        fixture.service.merge(current),
+        throwsA(isA<FormatException>()),
+      );
+    },
+  );
+
+  test(
     'current snapshots retain frozen empty recipes and reject invalid presence flags',
     () async {
       final fixture = await _Fixture.create(withRelations: true);

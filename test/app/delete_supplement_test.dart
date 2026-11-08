@@ -85,6 +85,63 @@ void main() {
     },
   );
 
+  test(
+    'pausing for one profile leaves the household switch and other profiles alone',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      final now = DateTime(2026, 7, 24);
+      final alpha = await fixture.repository.createProfile(
+        displayName: 'Alpha',
+      );
+      final beta = await fixture.repository.createProfile(displayName: 'Beta');
+      final shared = Supplement(
+        id: 'shared',
+        name: 'Shared zinc',
+        createdAt: now,
+        updatedAt: now,
+      );
+      await fixture.repository.saveSupplement(shared);
+      fixture.controller
+        ..profiles = [alpha, beta]
+        ..activeProfile = alpha;
+      await fixture.controller.refreshActiveData();
+
+      await fixture.controller.setSupplementPausedForActiveProfile(
+        shared,
+        true,
+      );
+      var stored = (await fixture.repository.supplements()).single;
+      expect(stored.active, isTrue);
+      expect(stored.pausedProfileIds, [alpha.id]);
+      expect(stored.activeFor(alpha.id), isFalse);
+      expect(stored.activeFor(beta.id), isTrue);
+
+      // An unrelated edit rebuilds the product field by field; it must not
+      // quietly resume the pause.
+      await fixture.controller.setUnitsPerContainer(stored, 60);
+      stored = (await fixture.repository.supplements()).single;
+      expect(stored.unitsPerContainer, 60);
+      expect(stored.pausedProfileIds, [alpha.id]);
+
+      // The household pause is a separate switch: resuming it for everyone
+      // does not overrule Alpha's own pause.
+      await fixture.controller.setSupplementActive(stored, false);
+      await fixture.controller.setSupplementActive(stored, true);
+      stored = (await fixture.repository.supplements()).single;
+      expect(stored.active, isTrue);
+      expect(stored.pausedProfileIds, [alpha.id]);
+
+      await fixture.controller.setSupplementPausedForActiveProfile(
+        stored,
+        false,
+      );
+      stored = (await fixture.repository.supplements()).single;
+      expect(stored.pausedProfileIds, isEmpty);
+      expect(stored.activeFor(alpha.id), isTrue);
+    },
+  );
+
   test('logging an intake reloads only intake and inventory state', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);

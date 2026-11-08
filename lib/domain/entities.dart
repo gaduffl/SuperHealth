@@ -202,6 +202,7 @@ class Supplement {
     this.bioavailability = '',
     this.notes = '',
     this.active = true,
+    this.pausedProfileIds = const [],
     this.lowStockAlerts = true,
     this.lowStockThresholdUnits,
     this.stockUnit = 'unit',
@@ -219,7 +220,17 @@ class Supplement {
   final double? priceEur;
   final String bioavailability;
   final String notes;
+
+  /// The household-wide switch: false pauses the product for everyone.
   final bool active;
+
+  /// Profiles that paused this product for themselves while it stays active
+  /// for the rest of the household.
+  ///
+  /// Kept on the product rather than on each schedule so that pausing and
+  /// resuming never touches a schedule's own `active` flag: a schedule someone
+  /// archived on purpose stays archived after the product is resumed.
+  final List<String> pausedProfileIds;
   final bool lowStockAlerts;
   final double? lowStockThresholdUnits;
   final String stockUnit;
@@ -227,6 +238,40 @@ class Supplement {
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool deleted;
+
+  bool pausedFor(String profileId) => pausedProfileIds.contains(profileId);
+
+  /// Whether [profileId] should be taking this product: neither paused for the
+  /// whole household nor paused for that profile alone. Anything that plans a
+  /// dose — Today, the weekly plan, reminders, stock and cost projections —
+  /// asks this with the schedule's own profile, never the viewer's.
+  bool activeFor(String profileId) => active && !pausedFor(profileId);
+
+  Supplement copyWith({
+    bool? active,
+    List<String>? pausedProfileIds,
+    DateTime? updatedAt,
+  }) => Supplement(
+    id: id,
+    name: name,
+    brand: brand,
+    form: form,
+    ingredients: ingredients,
+    unitsPerContainer: unitsPerContainer,
+    containerCount: containerCount,
+    priceEur: priceEur,
+    bioavailability: bioavailability,
+    notes: notes,
+    active: active ?? this.active,
+    pausedProfileIds: pausedProfileIds ?? this.pausedProfileIds,
+    lowStockAlerts: lowStockAlerts,
+    lowStockThresholdUnits: lowStockThresholdUnits,
+    stockUnit: stockUnit,
+    sourceId: sourceId,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    deleted: deleted,
+  );
 
   Map<String, Object?> toMap() => {
     'id': id,
@@ -240,6 +285,9 @@ class Supplement {
     'bioavailability': bioavailability,
     'notes': notes,
     'active': active ? 1 : 0,
+    'paused_profile_ids_json': jsonEncode(
+      ({...pausedProfileIds}.toList()..sort()),
+    ),
     'low_stock_alerts': lowStockAlerts ? 1 : 0,
     'low_stock_threshold_units': lowStockThresholdUnits,
     'stock_unit': stockUnit,
@@ -268,6 +316,7 @@ class Supplement {
       bioavailability: map['bioavailability']?.toString() ?? '',
       notes: map['notes']?.toString() ?? '',
       active: _boolFromDb(map['active']),
+      pausedProfileIds: _strings(map['paused_profile_ids_json']),
       lowStockAlerts: _boolFromDb(map['low_stock_alerts']),
       lowStockThresholdUnits: (map['low_stock_threshold_units'] as num?)
           ?.toDouble(),
