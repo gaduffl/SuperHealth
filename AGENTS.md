@@ -172,7 +172,9 @@ existing product must never change its stock unit on its own:
 `SupplementFormSelection.fromStored` keeps a stored unit the preset does not
 list (an older "Powder") as a selected chip, because intakes are deducted from
 stock only while their unit matches. For the same reason a new schedule starts
-in the stock unit (`defaultScheduleUnit`), never in the form.
+in the stock unit (`defaultScheduleUnit`), never in the form. Ingredient rows
+offer only measure units (`ingredientUnitChoices`); count units belong to the
+dose, and appear there only when an existing row already uses one.
 
 **A missing recipe and a deliberately frozen empty recipe are different.**
 `SupplementIntake.hasIngredientSnapshot` accounts for the persisted

@@ -123,6 +123,20 @@ class IngredientRow {
   final TextEditingController unit;
 }
 
+/// The units an ingredient amount can be stated in.
+///
+/// A label says "1000 µg B12" or "400 IU vitamin D", never "2 capsules of
+/// B12": counts describe the product's dose, which the form already decides.
+/// Count units are therefore left out, except one an existing row already
+/// uses, so opening an older product shows its value rather than hiding it.
+List<CanonicalUnit> ingredientUnitChoices({String current = ''}) {
+  final existing = CanonicalUnit.tryParse(current);
+  return [
+    for (final unit in CanonicalUnit.values)
+      if (unit.domain != UnitDomain.count || unit == existing) unit,
+  ];
+}
+
 /// A row-per-ingredient editor.
 ///
 /// Replaces the pipe-delimited free-text field: the amount and unit each get a
@@ -288,7 +302,9 @@ class _IngredientEditorState extends State<IngredientEditor> {
                         menuHeight: 240,
                         label: Text(strings.pick('Unit', 'Einheit')),
                         dropdownMenuEntries: [
-                          for (final unit in CanonicalUnit.values)
+                          for (final unit in ingredientUnitChoices(
+                            current: row.unit.text,
+                          ))
                             DropdownMenuEntry(value: unit, label: unit.symbol),
                         ],
                       );
