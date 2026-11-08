@@ -148,6 +148,12 @@ write normalization and still contain `microgram` beside `µg`. Weekly ingredien
 series use the same snapshot/current-product fallback as exposure totals. Saved
 pins normalize older display names and unit spellings before matching or pruning,
 so choosing a component cannot remove its own selection on the next rebuild.
+Product exposure (`supplementExposure`, `weeklySupplementSeries`) reports
+intakes logged under the legacy `unit` placeholder in the product's count unit
+(`SupplementInsights.placeholderUnitTargets`): its stock unit when that is a
+specific count unit, otherwise the only count unit its intakes use. Never fold
+into a measure (g, mL) or an ambiguous count. Pins are carried over the same
+way. Dose targets and saved trend links still key on the stored unit.
 
 **The supplement editor must fit a phone and keep invalid edits open.** It uses
 a full-screen route with Save above the keyboard on phones, responsive field
@@ -166,7 +172,9 @@ existing product must never change its stock unit on its own:
 `SupplementFormSelection.fromStored` keeps a stored unit the preset does not
 list (an older "Powder") as a selected chip, because intakes are deducted from
 stock only while their unit matches. For the same reason a new schedule starts
-in the stock unit (`defaultScheduleUnit`), never in the form.
+in the stock unit (`defaultScheduleUnit`), never in the form. Ingredient rows
+offer only measure units (`ingredientUnitChoices`); count units belong to the
+dose, and appear there only when an existing row already uses one.
 
 **A missing recipe and a deliberately frozen empty recipe are different.**
 `SupplementIntake.hasIngredientSnapshot` accounts for the persisted

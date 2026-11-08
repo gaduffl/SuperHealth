@@ -15,6 +15,7 @@ import 'package:super_health/app/app_controller.dart';
 import 'package:super_health/data/app_database.dart';
 import 'package:super_health/data/health_repository.dart';
 import 'package:super_health/domain/entities.dart';
+import 'package:super_health/domain/units.dart';
 import 'package:super_health/export/lab_plan_export_service.dart';
 import 'package:super_health/import/legacy_import_service.dart';
 import 'package:super_health/sync/one_drive_service.dart';
@@ -413,6 +414,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(_field('Dosed in'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  test('ingredient units leave out counts unless a row already uses one', () {
+    final plain = ingredientUnitChoices();
+    expect(plain.map((unit) => unit.symbol), containsAll(['µg', 'mg', 'IU']));
+    expect(plain.where((unit) => unit.domain == UnitDomain.count), isEmpty);
+    expect(
+      ingredientUnitChoices(
+        current: 'Kapsel',
+      ).where((unit) => unit.domain == UnitDomain.count),
+      [CanonicalUnit.capsule],
+    );
   });
 
   testWidgets('ingredient unit choices resolve microgram to the µg option', (
