@@ -814,6 +814,7 @@ Future<void> showAddSupplementDialog(
             bioavailability: bioavailability.text,
             notes: notes.text,
             active: existing.active,
+            pausedProfileIds: existing.pausedProfileIds,
             lowStockAlerts: existing.lowStockAlerts,
             lowStockThresholdUnits: parseOptionalDouble(lowStock.text),
             stockUnit: resolvedStockUnit,

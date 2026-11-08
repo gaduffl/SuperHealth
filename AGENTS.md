@@ -196,6 +196,23 @@ Cancelled choices keep the editor open without writing. Equivalent names, unit
 spellings and row order do not change the recipe. The explicit history action
 can repair an already-corrected product without changing its recipe again.
 
+**A product has two pauses, and planning code must ask both.** The catalog is
+household-shared, so `Supplement.active` pauses a product for everyone, while
+`pausedProfileIds` (schema v18, `paused_profile_ids_json`) pauses it for single
+profiles. Anything that plans a dose — Today (`dosesForDay`), the weekly plan,
+`plannedWeeklyIngredients`, reminders, `ExposureAnalysis.plannedToday` and the
+stock/cost/shopping projections through `_weeklyScheduledUnits` — asks
+`supplement.activeFor(schedule.profileId)`, with the *schedule's* profile, not
+the viewer's: household projections walk every profile's schedules. A paused
+profile's doses therefore draw no stock and buy nothing, so the shopping list
+does not restock for someone who stopped. Neither pause touches a schedule's
+own `active` flag, so resuming restores exactly the schedules that were live.
+Every field-by-field `Supplement(...)` rebuild must carry `pausedProfileIds`
+(or use `copyWith`), or an unrelated edit silently resumes the product.
+`completeProfileSnapshot` folds the profile's pause into `active` and empties
+the list, so an AI context never sees other profiles' ids. v17 snapshots and
+older portable backups go through `upgradeSupplementPauseRows`.
+
 **Missing data is not zero.** A day with nothing logged and a day with a
 deliberate zero must not render identically; `DoseBucket.tracked` carries that
 distinction and the chart shades untracked spans instead of drawing a zero bar.

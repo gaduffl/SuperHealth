@@ -59,6 +59,7 @@ const _binaryColumns = <String>{
 };
 const _jsonListColumns = <String>{
   'ingredients_json',
+  'paused_profile_ids_json',
   'weekdays_json',
   'synonyms_json',
   'warnings_json',
@@ -3186,6 +3187,21 @@ class HealthRepository {
     [profileId],
   );
 
+  /// A household product as one profile experiences it: paused when either
+  /// the household or this profile paused it. Other profiles' ids are dropped,
+  /// so a context about one person never lists who else lives with them.
+  static Map<String, Object?> _supplementAsSeenBy(
+    Map<String, Object?> row,
+    String profileId,
+  ) {
+    final supplement = Supplement.fromMap(row);
+    return {
+      ...row,
+      'active': supplement.activeFor(profileId) ? 1 : 0,
+      'paused_profile_ids_json': '[]',
+    };
+  }
+
   Future<Map<String, Object?>> completeProfileSnapshot(
     String profileId, {
     HealthContextScope scope = HealthContextScope.labPlanning,
@@ -3222,8 +3238,9 @@ class HealthRepository {
       // The catalog is household-shared, but another person's supplements are
       // not evidence about this profile — they were simply filling context.
       // Only products this profile actually schedules or takes are included.
-      'supplements': await db.rawQuery(
-        '''
+      'supplements': [
+        for (final row in await db.rawQuery(
+          '''
         SELECT * FROM supplements
         WHERE deleted = 0 AND id IN (
           SELECT supplement_id FROM supplement_schedules
@@ -3233,8 +3250,10 @@ class HealthRepository {
             WHERE profile_id = ? AND deleted = 0
         )
         ''',
-        [profileId, profileId],
-      ),
+          [profileId, profileId],
+        ))
+          _supplementAsSeenBy(row, profileId),
+      ],
       'supplement_schedules': await _profileRows(
         db,
         'supplement_schedules',

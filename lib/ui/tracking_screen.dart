@@ -192,7 +192,7 @@ class _TrackingScreenState extends State<TrackingScreen>
       return matchesQuery &&
           catalogMatchesFilter(
             filter: _catalogFilter,
-            productIsActive: item.active,
+            productIsActive: controller.isActiveForActiveProfile(item),
             hasSchedule: scheduledSupplementIds.contains(item.id),
           );
     }).toList();
@@ -281,6 +281,7 @@ class _TrackingScreenState extends State<TrackingScreen>
     final strings = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     final stock = controller.stockLevels[product.id] ?? 0;
+    final profileName = controller.activeProfile?.displayName ?? '';
     final productSchedules = controller.schedules
         .where((item) => item.supplementId == product.id)
         .toList();
@@ -325,7 +326,13 @@ class _TrackingScreenState extends State<TrackingScreen>
                   form: product.form,
                 ),
                 strings.scheduleCount(productSchedules.length),
-                if (!product.active) strings.paused,
+                if (!product.active)
+                  strings.pick('Paused for everyone', 'Für alle pausiert')
+                else if (controller.isPausedForActiveProfile(product))
+                  strings.pick(
+                    'Paused for $profileName',
+                    'Für $profileName pausiert',
+                  ),
               ].join(' · '),
             ),
             if (daysRemaining != null) ...[
@@ -359,10 +366,32 @@ class _TrackingScreenState extends State<TrackingScreen>
             PopupMenuItem(value: 'schedule', child: Text(strings.addSchedule)),
             PopupMenuItem(value: 'stock', child: Text(strings.adjustStock)),
             PopupMenuItem(value: 'edit', child: Text(strings.editProduct)),
+            // Two switches, because a household shares one shelf: pausing
+            // for yourself must not stop someone else's course, and stopping
+            // a product for everyone should not mean visiting every profile.
+            PopupMenuItem(
+              value: 'toggleProfile',
+              child: Text(
+                controller.isPausedForActiveProfile(product)
+                    ? strings.pick(
+                        'Resume for $profileName',
+                        'Für $profileName fortsetzen',
+                      )
+                    : strings.pick(
+                        'Pause for $profileName',
+                        'Für $profileName pausieren',
+                      ),
+              ),
+            ),
             PopupMenuItem(
               value: 'toggle',
               child: Text(
-                product.active ? strings.pauseProduct : strings.reactivate,
+                product.active
+                    ? strings.pick('Pause for everyone', 'Für alle pausieren')
+                    : strings.pick(
+                        'Resume for everyone',
+                        'Für alle fortsetzen',
+                      ),
               ),
             ),
             const PopupMenuDivider(),
@@ -477,8 +506,12 @@ class _TrackingScreenState extends State<TrackingScreen>
         await showAddSupplementDialog(context, controller, existing: product);
         return;
       case 'toggle':
-        await controller.updateSupplement(
-          _supplementWithActive(product, !product.active),
+        await controller.setSupplementActive(product, !product.active);
+        return;
+      case 'toggleProfile':
+        await controller.setSupplementPausedForActiveProfile(
+          product,
+          !controller.isPausedForActiveProfile(product),
         );
         return;
       case 'delete':
@@ -495,26 +528,6 @@ class _TrackingScreenState extends State<TrackingScreen>
         return;
     }
   }
-
-  Supplement _supplementWithActive(Supplement value, bool active) => Supplement(
-    id: value.id,
-    name: value.name,
-    brand: value.brand,
-    form: value.form,
-    ingredients: value.ingredients,
-    unitsPerContainer: value.unitsPerContainer,
-    containerCount: value.containerCount,
-    priceEur: value.priceEur,
-    bioavailability: value.bioavailability,
-    notes: value.notes,
-    active: active,
-    lowStockAlerts: value.lowStockAlerts,
-    lowStockThresholdUnits: value.lowStockThresholdUnits,
-    stockUnit: value.stockUnit,
-    sourceId: value.sourceId,
-    createdAt: value.createdAt,
-    updatedAt: value.updatedAt,
-  );
 
   Future<void> _deleteSchedule(
     BuildContext context,
@@ -546,6 +559,7 @@ class _TrackingScreenState extends State<TrackingScreen>
                     (schedule) =>
                         schedule.supplementId == product.id &&
                         schedule.active &&
+                        product.activeFor(schedule.profileId) &&
                         !schedule.deleted &&
                         schedule.weekdays.isNotEmpty,
                   ),
@@ -593,6 +607,7 @@ class _TrackingScreenState extends State<TrackingScreen>
                       (item) =>
                           item.supplementId == product.id &&
                           item.active &&
+                          product.activeFor(item.profileId) &&
                           !item.deleted,
                     )
                     .toList(),

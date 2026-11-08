@@ -20,7 +20,7 @@ class AppDatabase {
     : _factory = factory ?? databaseFactory,
       _databasePath = databasePath;
 
-  static const schemaVersion = 17;
+  static const schemaVersion = 18;
   static const fileName = 'super_health_v1.db';
 
   final DatabaseFactory _factory;
@@ -119,6 +119,7 @@ class AppDatabase {
           bioavailability TEXT NOT NULL DEFAULT '',
           notes TEXT NOT NULL DEFAULT '',
           active INTEGER NOT NULL DEFAULT 1,
+          paused_profile_ids_json TEXT NOT NULL DEFAULT '[]',
           low_stock_alerts INTEGER NOT NULL DEFAULT 1,
           low_stock_threshold_units REAL,
           stock_unit TEXT NOT NULL DEFAULT 'unit',
@@ -807,6 +808,14 @@ class AppDatabase {
           );
         }
       }
+    }
+    if (oldVersion < 18) {
+      // Nothing to back-fill: until now a pause could only be household-wide,
+      // and that stays in `active`.
+      await db.execute(
+        'ALTER TABLE supplements ADD COLUMN '
+        "paused_profile_ids_json TEXT NOT NULL DEFAULT '[]'",
+      );
     }
     if (oldVersion == 7) {
       // Only a database that already went through v7 needs this column added;

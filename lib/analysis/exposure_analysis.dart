@@ -159,7 +159,9 @@ class ExposureAnalysis {
       if (!_inForce(schedule, now)) continue;
       if (loggedRecently.contains(schedule.supplementId)) continue;
       final supplement = byId[schedule.supplementId];
-      if (supplement == null || supplement.deleted || !supplement.active) {
+      if (supplement == null ||
+          supplement.deleted ||
+          !supplement.activeFor(schedule.profileId)) {
         continue;
       }
       plannedToday.addAll(

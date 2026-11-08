@@ -355,6 +355,9 @@ void main() {
       await db.execute(
         'ALTER TABLE supplement_intakes DROP COLUMN ingredient_snapshot_recorded',
       );
+      await db.execute(
+        'ALTER TABLE supplements DROP COLUMN paused_profile_ids_json',
+      );
       await db.execute('PRAGMA user_version = 15');
       await old.close();
       final upgraded = AppDatabase(

@@ -129,6 +129,7 @@ class ReminderPlanner {
       final supplement = supplementsById[schedule.supplementId];
       if (profile == null ||
           supplement == null ||
+          supplement.pausedFor(schedule.profileId) ||
           schedule.deleted ||
           !schedule.active ||
           !schedule.reminderEnabled) {
