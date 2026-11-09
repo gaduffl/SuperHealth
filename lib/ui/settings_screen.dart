@@ -620,16 +620,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
           if (visibility.appUpdates) const AppUpdateSection(),
           SectionHeader(
-            title: _settingsText(
-              context,
-              'Legacy data import',
-              'Altdaten importieren',
-            ),
-            subtitle: _settingsText(
-              context,
-              'Previewed, deduplicated, audited, and rollback-capable',
-              'Mit Vorschau, Deduplizierung, Protokollierung und Rücksetzung',
-            ),
+            title: _settingsText(context, 'Data maintenance', 'Datenpflege'),
           ),
           Card(
             child: ListTile(
@@ -649,60 +640,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               trailing: const Icon(Icons.chevron_right),
               onTap: controller.busy ? null : () => _tidyUnits(controller),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.move_to_inbox_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'Import legacy JSON data',
-                      'JSON-Altdaten importieren',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'Supplement Manager and Biomarkers exports, including '
-                          'user_overrides.json.',
-                      'Exporte aus Supplement Manager und Biomarkers einschließlich '
-                          'user_overrides.json.',
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: controller.busy || controller.activeProfile == null
-                      ? null
-                      : () => _importData(controller),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.picture_as_pdf_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'Attach Biomarkers PDF files',
-                      'Biomarkers-PDFs anhängen',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'After importing documents.json, select the PDFs from the '
-                          'former Biomarkers documents folder.',
-                      'Wähle nach dem Import von documents.json die PDFs aus dem '
-                          'früheren Biomarkers-Dokumentordner.',
-                    ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: controller.busy || controller.activeProfile == null
-                      ? null
-                      : () => _importPdfs(controller),
-                ),
-              ],
             ),
           ),
           for (final kind in AiLogKind.values)
@@ -768,94 +705,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 12),
             ],
-          SectionHeader(
-            title: _settingsText(
-              context,
-              'Safety & privacy',
-              'Sicherheit und Datenschutz',
-            ),
-          ),
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.storage_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'Local-first SQLite record',
-                      'Lokaler SQLite-Datensatz',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'The AI has no SQL, repository, or database tool.',
-                      'Die KI besitzt kein SQL-, Repository- oder Datenbankwerkzeug.',
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.cloud_done_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'Mode-specific OneDrive permission',
-                      'Modusspezifische OneDrive-Berechtigung',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'Private mode is AppFolder-only. Shared mode receives Files.ReadWrite, '
-                          'while app operations stay inside the selected folder’s SuperHealth subfolder.',
-                      'Der private Modus nutzt nur den App-Ordner. Der gemeinsame Modus erhält Files.ReadWrite, '
-                          'während App-Vorgänge im SuperHealth-Unterordner des gewählten Ordners bleiben.',
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.folder_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'File changes require approval',
-                      'Dateiänderungen erfordern Zustimmung',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'Provider sandboxes are isolated. Every local or OneDrive workspace write is previewed '
-                          'with its exact operation and path before it can be applied.',
-                      'Anbieter-Sandboxes sind isoliert. Jeder lokale oder OneDrive-Schreibvorgang wird '
-                          'mit genauer Aktion und Pfad angezeigt, bevor er ausgeführt werden kann.',
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.health_and_safety_outlined),
-                  title: Text(
-                    _settingsText(
-                      context,
-                      'Planning support, not diagnosis',
-                      'Planungshilfe, keine Diagnose',
-                    ),
-                  ),
-                  subtitle: Text(
-                    _settingsText(
-                      context,
-                      'Evidence labels and safety warnings are required, including for longevity-oriented checks.',
-                      'Evidenzkennzeichnungen und Sicherheitshinweise sind auch für langlebigkeitsorientierte Tests erforderlich.',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );

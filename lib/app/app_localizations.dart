@@ -151,12 +151,6 @@ class AppLocalizations {
       _text(_AppText.needsAttentionDescription);
   String get taken => _text(_AppText.taken);
   String get refill => _text(_AppText.refill);
-  String get privacyBoundary => _text(_AppText.privacyBoundary);
-  String get privacyBoundaryDescription =>
-      _text(_AppText.privacyBoundaryDescription);
-  String get keysNeverSynced => _text(_AppText.keysNeverSynced);
-  String get keysNeverSyncedDescription =>
-      _text(_AppText.keysNeverSyncedDescription);
   String get supplementFallback => _text(_AppText.supplementFallback);
   String get whichSupplement => _text(_AppText.whichSupplement);
   String get confirm => _text(_AppText.confirm);
@@ -773,10 +767,6 @@ enum _AppText {
   needsAttentionDescription,
   taken,
   refill,
-  privacyBoundary,
-  privacyBoundaryDescription,
-  keysNeverSynced,
-  keysNeverSyncedDescription,
   supplementFallback,
   whichSupplement,
   confirm,
@@ -1098,12 +1088,6 @@ const _english = <_AppText, String>{
   _AppText.needsAttentionDescription: 'The most useful next actions',
   _AppText.taken: 'Taken',
   _AppText.refill: 'Refill',
-  _AppText.privacyBoundary: 'Privacy boundary',
-  _AppText.privacyBoundaryDescription:
-      'Designed for a private, local-first health record',
-  _AppText.keysNeverSynced: 'Your keys and OneDrive tokens are never synced',
-  _AppText.keysNeverSyncedDescription:
-      'The AI receives only the complete active-profile snapshot for a request. It has no database connection.',
   _AppText.supplementFallback: 'Supplement',
   _AppText.whichSupplement: 'Which supplement?',
   _AppText.confirm: 'Confirm',
@@ -1478,13 +1462,6 @@ const _german = <_AppText, String>{
   _AppText.needsAttentionDescription: 'Die sinnvollsten nächsten Schritte',
   _AppText.taken: 'Eingenommen',
   _AppText.refill: 'Auffüllen',
-  _AppText.privacyBoundary: 'Datenschutzgrenze',
-  _AppText.privacyBoundaryDescription:
-      'Für eine private, lokal gespeicherte Gesundheitsakte entwickelt',
-  _AppText.keysNeverSynced:
-      'Deine Schlüssel und OneDrive-Token werden nie synchronisiert',
-  _AppText.keysNeverSyncedDescription:
-      'Die KI erhält für eine Anfrage nur den vollständigen Schnappschuss des aktiven Profils. Sie hat keine Datenbankverbindung.',
   _AppText.supplementFallback: 'Nahrungsergänzung',
   _AppText.whichSupplement: 'Welche Nahrungsergänzung?',
   _AppText.confirm: 'Bestätigen',

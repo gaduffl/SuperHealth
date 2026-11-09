@@ -268,21 +268,6 @@ class _DashboardScreenState extends State<DashboardScreen>
               doses: doses,
               navigation: navigation,
             ),
-            SectionHeader(
-              title: strings.privacyBoundary,
-              subtitle: strings.privacyBoundaryDescription,
-            ),
-            SurfaceCard(
-              color: Theme.of(
-                context,
-              ).colorScheme.secondaryContainer.withValues(alpha: 0.5),
-              padding: EdgeInsets.zero,
-              child: ListTile(
-                leading: const Icon(Icons.shield_outlined),
-                title: Text(strings.keysNeverSynced),
-                subtitle: Text(strings.keysNeverSyncedDescription),
-              ),
-            ),
           ],
         ),
       ),

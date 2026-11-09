@@ -326,6 +326,14 @@ top-level functions in the screen file (`_importLabPdf`) let a second entry poin
 call exactly the same code. Copying the flow into the second screen is how two
 paths drift into behaving differently.
 
+**Settings and the dashboard carry no explainer panels.** The "Privacy
+boundary" dashboard card, the "Safety & privacy" settings card and the
+"Legacy data import" settings section were removed because they only took up
+screen space. The legacy JSON and Biomarkers PDF import still exists, but its
+only entry point is the initial setup checklist (`InitialSetupChecklistCard`);
+"Tidy up units" lives under "Data maintenance" in settings. Put guarantees like
+"keys are never synced" in code and tests, not in static cards.
+
 ## Tests
 
 `flutter_test` plus `sqflite_common_ffi` for real SQLite. Call
