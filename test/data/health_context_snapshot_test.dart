@@ -27,7 +27,10 @@ void main() {
     () async {
       final active = await repository.createProfile(displayName: 'Active');
       final spouse = await repository.createProfile(displayName: 'Spouse');
-      final now = DateTime.utc(2026, 7, 18, 10);
+      // Relative to the real clock: the snapshot keeps intakes inside a window
+      // measured from today, so a fixed date ages out of it and the test
+      // starts failing on its own (it did on 2026-11-17).
+      final now = DateTime.now().toUtc().subtract(const Duration(days: 1));
       final supplement = Supplement(
         id: 'supplement-magnesium',
         name: 'Household magnesium',

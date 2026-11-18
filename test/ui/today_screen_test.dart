@@ -218,6 +218,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Quick actions'), findsOneWidget);
+    expect(find.text('Scan lab report'), findsOneWidget);
     expect(find.text('Import lab PDF'), findsOneWidget);
     expect(find.text('Add measurement'), findsOneWidget);
     expect(find.text('Dashboard'), findsOneWidget);
@@ -383,6 +384,14 @@ void main() {
     // Enabled, and it must not depend on the catalog: importing a report is
     // how an empty catalog gets filled.
     expect(tester.widget<InkWell>(card).onTap, isNotNull);
+    // The camera scan is the paper-report twin of the PDF import and must be
+    // just as reachable, with a label rather than a bare icon.
+    final scanCard = find.ancestor(
+      of: find.text('Scan lab report'),
+      matching: find.byType(InkWell),
+    );
+    expect(scanCard, findsOneWidget);
+    expect(tester.widget<InkWell>(scanCard).onTap, isNotNull);
   });
 
   testWidgets(

@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -199,12 +201,27 @@ class _LabsScreenState extends State<LabsScreen> {
             const SizedBox(height: 16),
             Row(
               children: [
-                // First, because one PDF carries a whole panel while the manual
-                // entry beside it carries a single value. It stays available
-                // with an empty catalog: the import is how the catalog fills up.
+                // First, because one report carries a whole panel while the
+                // manual entry below carries a single value. Both imports stay
+                // available with an empty catalog: they are how it fills up.
+                // Most reports arrive on paper, so the camera comes first.
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.document_scanner_outlined,
+                    label: _labsText(
+                      context,
+                      'Scan lab report',
+                      'Laborbericht scannen',
+                    ),
+                    onTap: controller.busy
+                        ? null
+                        : () => _scanLabReport(context, controller),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _BiomarkerQuickActionCard(
+                    icon: Icons.upload_file_outlined,
                     label: _labsText(
                       context,
                       'Import lab PDF',
@@ -215,7 +232,11 @@ class _LabsScreenState extends State<LabsScreen> {
                         : () => _importLabPdf(context, controller),
                   ),
                 ),
-                const SizedBox(width: 16),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.add,
@@ -232,11 +253,7 @@ class _LabsScreenState extends State<LabsScreen> {
                         : () => _addMeasurement(controller),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
+                const SizedBox(width: 16),
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.insights,
@@ -244,7 +261,11 @@ class _LabsScreenState extends State<LabsScreen> {
                     onTap: profile == null ? null : () => _openDashboard(),
                   ),
                 ),
-                const SizedBox(width: 16),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.list,
@@ -256,11 +277,7 @@ class _LabsScreenState extends State<LabsScreen> {
                     onTap: () => showBiomarkerListsSheet(context, controller),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
+                const SizedBox(width: 16),
                 Expanded(
                   child: _BiomarkerQuickActionCard(
                     icon: Icons.warning,
@@ -272,9 +289,6 @@ class _LabsScreenState extends State<LabsScreen> {
                     onTap: () => _openWorkspace(initialStatus: 'Due'),
                   ),
                 ),
-                // Keeps the last card the same width as the four above it.
-                const SizedBox(width: 16),
-                const Expanded(child: SizedBox()),
               ],
             ),
             const SizedBox(height: 24),
@@ -633,13 +647,25 @@ class _BiomarkerWorkspaceScreen extends StatelessWidget {
                     IconButton.filledTonal(
                       tooltip: _labsText(
                         context,
+                        'Scan lab report',
+                        'Laborbericht scannen',
+                      ),
+                      onPressed: controller.busy
+                          ? null
+                          : () => _scanLabReport(context, controller),
+                      icon: const Icon(Icons.document_scanner_outlined),
+                    ),
+                    const SizedBox(width: 6),
+                    IconButton.filledTonal(
+                      tooltip: _labsText(
+                        context,
                         'Import lab PDF',
                         'Labor-PDF importieren',
                       ),
                       onPressed: controller.busy
                           ? null
                           : () => _importLabPdf(context, controller),
-                      icon: const Icon(Icons.document_scanner_outlined),
+                      icon: const Icon(Icons.upload_file_outlined),
                     ),
                     // Packages and prices moved to the hub, which names them
                     // and says how many of each there are. Two unlabelled
@@ -1840,15 +1866,80 @@ Future<void> _importLabPdf(
         ),
       );
     }
-    final report = await controller.parseLabPdf(
-      fileName: selected.name,
-      bytes: bytes,
-    );
-    if (!context.mounted) return;
-    await reviewParsedLabReport(context, controller, report);
+    await _parseAndReviewLabPdf(context, controller, selected.name, bytes);
   } on Object catch (error) {
     if (context.mounted) await showAppError(context, error);
   }
+}
+
+/// Photographs a paper lab report with the system document scanner.
+///
+/// The scanner finds the page edges, straightens and crops each page and
+/// hands back one PDF, so the scan enters the same parser and the same review
+/// dialog as an imported PDF: the results stay attached to that report.
+Future<void> _scanLabReport(
+  BuildContext context,
+  AppController controller,
+) async {
+  final scanner = DocumentScanner(
+    options: DocumentScannerOptions(
+      documentFormats: const {DocumentFormat.pdf},
+      // A full panel rarely needs more, and the scanner shows the count.
+      pageLimit: 10,
+      // Lets a photo already taken be used instead of a new one.
+      isGalleryImport: true,
+    ),
+  );
+  try {
+    final DocumentScanningResult result;
+    try {
+      result = await scanner.scanDocument();
+    } on PlatformException catch (error) {
+      if (isDocumentScanCancellation(error)) return;
+      rethrow;
+    }
+    final path = result.pdf?.uri;
+    if (path == null || path.isEmpty) return;
+    final file = File(path);
+    final bytes = await file.readAsBytes();
+    if (!context.mounted) return;
+    await _parseAndReviewLabPdf(
+      context,
+      controller,
+      labScanFileName(DateTime.now(), german: controller.writesGerman),
+      bytes,
+    );
+    // The scanner keeps the PDF in the app cache; the parsed report holds
+    // what is needed from it.
+    unawaited(file.delete().then((_) {}, onError: (_) {}));
+  } on Object catch (error) {
+    if (context.mounted) await showAppError(context, error);
+  } finally {
+    unawaited(scanner.close().then((_) {}, onError: (_) {}));
+  }
+}
+
+/// Whether the scanner ended because the person backed out of it.
+@visibleForTesting
+bool isDocumentScanCancellation(PlatformException error) =>
+    error.message == 'Operation cancelled';
+
+/// Names a scan the way a downloaded report would be named, so the parser
+/// and the report list can tell scans apart by date.
+@visibleForTesting
+String labScanFileName(DateTime now, {required bool german}) =>
+    '${german ? 'Laborscan' : 'Lab scan'} '
+    '${DateFormat('yyyy-MM-dd HH-mm').format(now)}.pdf';
+
+Future<void> _parseAndReviewLabPdf(
+  BuildContext context,
+  AppController controller,
+  String fileName,
+  Uint8List bytes,
+) async {
+  final report = await controller.parseLabPdf(fileName: fileName, bytes: bytes);
+  if (!context.mounted) return;
+  await reviewParsedLabReport(context, controller, report);
 }
 
 /// Payment and mapping choices stay in memory until the report is approved.
