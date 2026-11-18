@@ -277,6 +277,16 @@ screen that owns them. When restructuring a screen, check what the old layout
 surfaced that the new one buries, and assert the shortcut in a widget test —
 code that still exists is not the same as a feature the owner can reach.
 
+**A lab report scan is a PDF import with a camera in front of it.**
+"Scan lab report" (`_scanLabReport`) opens the Google ML Kit document scanner
+(`google_mlkit_document_scanner`, needs Google Play services) with PDF output,
+then hands that PDF to the same `parseLabPdf` and review dialog as "Import lab
+PDF". Keep it that way: a separate image path would need its own parser prompt
+and would not keep the results tied to a stored report. The scanner reports a
+back-out as a `PlatformException` ("Operation cancelled"), which must stay
+silent. Only the scan action carries the scanner icon; the file import uses an
+upload icon, because a scanner icon on a file picker read as a missing camera.
+
 **A screen that says "today" must re-derive the day, not capture it.** The app
 is left open and backgrounded for days, so a `DateTime.now()` stored in a
 `State` field at launch is stale by morning — `DashboardScreen` showed its launch

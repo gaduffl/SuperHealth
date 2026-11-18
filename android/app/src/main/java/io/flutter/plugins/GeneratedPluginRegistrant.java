@@ -46,6 +46,11 @@ public final class GeneratedPluginRegistrant {
       Log.e(TAG, "Error registering plugin flutter_timezone, net.wolverinebeach.flutter_timezone.FlutterTimezonePlugin", e);
     }
     try {
+      flutterEngine.getPlugins().add(new com.google_mlkit_document_scanner.GoogleMlKitDocumentScannerPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin google_mlkit_document_scanner, com.google_mlkit_document_scanner.GoogleMlKitDocumentScannerPlugin", e);
+    }
+    try {
       flutterEngine.getPlugins().add(new com.github.dart_lang.jni.JniPlugin());
     } catch (Exception e) {
       Log.e(TAG, "Error registering plugin jni, com.github.dart_lang.jni.JniPlugin", e);
