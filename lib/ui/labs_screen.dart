@@ -3086,9 +3086,13 @@ Future<Biomarker?> _chooseBiomarker(
                     return ListTile(
                       leading: const Icon(Icons.science_outlined),
                       title: Text(biomarker.displayName),
-                      subtitle: biomarker.category.isEmpty
-                          ? null
-                          : Text(biomarker.category),
+                      subtitle: switch (biomarkerCategoryRowLabel(
+                        biomarker.category,
+                        Localizations.localeOf(context).languageCode,
+                      )) {
+                        final label? => Text(label),
+                        null => null,
+                      },
                       onTap: () => Navigator.pop(sheetContext, biomarker),
                     );
                   },
@@ -4064,7 +4068,7 @@ class _BiomarkerCatalog extends StatefulWidget {
 
 class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
   final _search = TextEditingController();
-  String _category = 'All';
+  String _category = biomarkerCategoryAllFilter;
   String _status = 'All';
   int? _handledRequestToken;
 
@@ -4099,20 +4103,36 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
           now: widget.now,
         ),
     };
-    final categories = {
-      'All',
-      ...widget.controller.biomarkers
-          .map((item) => item.category.trim())
-          .where((item) => item.isNotEmpty),
-    }.toList()..sort();
+    final languageCode = Localizations.localeOf(context).languageCode;
+    final categories =
+        biomarkerCategoriesInUse(
+          widget.controller.biomarkers.map((item) => item.category),
+        ).toList()..sort(
+          (a, b) => biomarkerCategoryLabel(a, languageCode)
+              .toLowerCase()
+              .compareTo(biomarkerCategoryLabel(b, languageCode).toLowerCase()),
+        );
+    final hasUncategorized = widget.controller.biomarkers.any(
+      (item) => normalizeBiomarkerCategory(item.category).isEmpty,
+    );
+    // A filter whose category vanished (its last biomarker was recategorized)
+    // would leave the dropdown pointing at nothing and the list empty.
+    if (_category != biomarkerCategoryAllFilter &&
+        !(_category == biomarkerCategoryNoneFilter
+            ? hasUncategorized
+            : categories.contains(_category))) {
+      _category = biomarkerCategoryAllFilter;
+    }
     final query = _search.text.trim().toLowerCase();
     final filtered = widget.controller.biomarkers.where((biomarker) {
       final matchesQuery =
           query.isEmpty ||
           biomarker.displayName.toLowerCase().contains(query) ||
           biomarker.synonyms.any((item) => item.toLowerCase().contains(query));
-      final matchesCategory =
-          _category == 'All' || biomarker.category == _category;
+      final matchesCategory = biomarkerCategoryMatchesFilter(
+        biomarker.category,
+        _category,
+      );
       final matchesStatus = switch (_status) {
         'Due' => widget.controller.dueBiomarkers.any(
           (item) => item.biomarker.id == biomarker.id,
@@ -4171,13 +4191,24 @@ class _BiomarkerCatalogState extends State<_BiomarkerCatalog> {
               DropdownButton<String>(
                 value: _category,
                 items: [
+                  DropdownMenuItem(
+                    value: biomarkerCategoryAllFilter,
+                    child: Text(
+                      _labsText(context, 'All categories', 'Alle Kategorien'),
+                    ),
+                  ),
                   for (final category in categories)
                     DropdownMenuItem(
                       value: category,
                       child: Text(
-                        category == 'All'
-                            ? _labsText(context, 'All', 'Alle')
-                            : category,
+                        biomarkerCategoryLabel(category, languageCode),
+                      ),
+                    ),
+                  if (hasUncategorized)
+                    DropdownMenuItem(
+                      value: biomarkerCategoryNoneFilter,
+                      child: Text(
+                        _labsText(context, 'No category', 'Ohne Kategorie'),
                       ),
                     ),
                 ],
@@ -4337,7 +4368,10 @@ class _BiomarkerTile extends StatelessWidget {
       title: Text(biomarker.displayName),
       subtitle: Text(
         [
-          if (biomarker.category.isNotEmpty) biomarker.category,
+          ?biomarkerCategoryRowLabel(
+            biomarker.category,
+            Localizations.localeOf(context).languageCode,
+          ),
           if (biomarker.isCalculated)
             _labsText(
               context,

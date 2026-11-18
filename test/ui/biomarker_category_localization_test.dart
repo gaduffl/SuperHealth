@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:super_health/ui/biomarker_category_localization.dart';
+import 'package:super_health/ui/biomarker_category_picker.dart';
 
 void main() {
   const expectedEnglish = <String, String>{
@@ -66,5 +67,55 @@ void main() {
   test('keeps custom categories and localizes an empty category as other', () {
     expect(biomarkerCategoryLabel('Custom panel', 'en'), 'Custom panel');
     expect(biomarkerCategoryLabel('', 'de'), 'Sonstige');
+  });
+
+  test('a built-in category typed by its label is stored as its ID', () {
+    expect(normalizeBiomarkerCategory('Leberwerte'), 'liver');
+    expect(normalizeBiomarkerCategory(' liver function '), 'liver');
+    expect(normalizeBiomarkerCategory('LIPIDS'), 'lipids');
+    expect(normalizeBiomarkerCategory('Großes Blutbild'), 'cbc');
+    expect(normalizeBiomarkerCategory('  '), '');
+    expect(normalizeBiomarkerCategory(' Mein Panel '), 'Mein Panel');
+  });
+
+  test('the catalog filter joins spellings and finds the uncategorized', () {
+    expect(biomarkerCategoryMatchesFilter('Liver', 'liver'), isTrue);
+    expect(biomarkerCategoryMatchesFilter('Leberwerte', 'liver'), isTrue);
+    expect(biomarkerCategoryMatchesFilter('lipids', 'liver'), isFalse);
+    expect(
+      biomarkerCategoryMatchesFilter(' ', biomarkerCategoryNoneFilter),
+      isTrue,
+    );
+    expect(
+      biomarkerCategoryMatchesFilter('liver', biomarkerCategoryNoneFilter),
+      isFalse,
+    );
+    expect(
+      biomarkerCategoryMatchesFilter('', biomarkerCategoryAllFilter),
+      isTrue,
+    );
+  });
+
+  test('a row shows the label, and nothing for no category', () {
+    expect(biomarkerCategoryRowLabel('cbc', 'de'), 'Großes Blutbild');
+    expect(biomarkerCategoryRowLabel('Mein Panel', 'de'), 'Mein Panel');
+    expect(biomarkerCategoryRowLabel('', 'de'), isNull);
+  });
+
+  test('the picker offers built-ins by label, then custom ones in use', () {
+    final options = biomarkerCategoryOptions(
+      languageCode: 'de',
+      categoriesInUse: ['Zeta Panel', 'Alpha Panel', 'liver', 'Leberwerte', ''],
+    );
+    final builtIns = options.take(knownBiomarkerCategoryIds.length).toList();
+    expect(builtIns.toSet(), knownBiomarkerCategoryIds.toSet());
+    final labels = [
+      for (final id in builtIns) biomarkerCategoryLabel(id, 'de'),
+    ];
+    expect(
+      labels,
+      [...labels]..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
+    );
+    expect(options.skip(builtIns.length), ['Alpha Panel', 'Zeta Panel']);
   });
 }

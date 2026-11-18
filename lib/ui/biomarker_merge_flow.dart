@@ -4,6 +4,7 @@ import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../data/health_repository.dart';
 import '../domain/entities.dart';
+import 'biomarker_category_localization.dart';
 import 'common.dart';
 
 String _mergeText(BuildContext context, String english, String german) =>
@@ -304,7 +305,10 @@ class _MergeTargetResults extends StatelessWidget {
         // The unit, because two entries for one test often differ only in it,
         // and that decides which trend line the results can join.
         final detail = [
-          if (item.category.isNotEmpty) item.category,
+          ?biomarkerCategoryRowLabel(
+            item.category,
+            Localizations.localeOf(context).languageCode,
+          ),
           if (item.defaultUnit.isNotEmpty) item.defaultUnit,
         ].join(' · ');
         return ListTile(
