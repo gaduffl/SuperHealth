@@ -340,6 +340,19 @@ on 14+, `SCHEDULE_EXACT_ALARM` on 12-13) and fall back to inexact when it is
 withheld — never treat "unknown" as granted, because scheduling an exact alarm
 without the right throws and one throw aborts the rest of the batch.
 
+**A biomarker category is stored as an ID and shown as a label.** The built-in
+IDs (`cbc`, `liver`, …) and their English and German names live in
+`lib/ui/biomarker_category_localization.dart`; a custom category is stored as
+typed. Every screen that names a category goes through
+`biomarkerCategoryRowLabel` (nothing for no category) or
+`biomarkerCategoryLabel`, never `biomarker.category` raw. The owner picks a
+category with `showBiomarkerCategoryPicker` (`biomarker_category_picker.dart`),
+used by the edit dialog and by "Change category" on the detail sheet; it
+returns values through `normalizeBiomarkerCategory`, so a typed "Leberwerte"
+is stored as `liver` instead of starting a second liver category no filter
+joins. The catalog filter compares normalized values and offers "No category"
+when any test has none.
+
 **A flow used from two screens is a top-level function, not a method.** Private
 top-level functions in the screen file (`_importLabPdf`) let a second entry point
 call exactly the same code. Copying the flow into the second screen is how two

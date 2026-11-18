@@ -58,3 +58,62 @@ const _germanCategoryLabels = <String, String>{
   'thyroid': 'Schilddrüsenfunktion',
   'vitamins': 'Vitamine & Mineralstoffe',
 };
+
+/// The built-in category IDs, in a stable order.
+List<String> get knownBiomarkerCategoryIds =>
+    _englishCategoryLabels.keys.toList(growable: false);
+
+/// Filter value for biomarkers that have no category at all.
+///
+/// It cannot collide with a real category: stored categories are trimmed, and
+/// this one is not a word anyone types.
+const biomarkerCategoryNoneFilter = '\u0000none';
+
+/// Filter value that keeps every biomarker.
+const biomarkerCategoryAllFilter = '\u0000all';
+
+/// Turns what the owner picked or typed into the value stored on a biomarker.
+///
+/// A built-in category typed by its label, in either language and in any
+/// case, is stored as its ID — otherwise typing "Leberwerte" would start a
+/// second liver category beside `liver` that no filter would join. Anything
+/// else is kept as typed, trimmed, so a custom category stays the owner's.
+String normalizeBiomarkerCategory(String input) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return '';
+  final lower = trimmed.toLowerCase();
+  if (_englishCategoryLabels.containsKey(lower)) return lower;
+  for (final labels in [_englishCategoryLabels, _germanCategoryLabels]) {
+    for (final entry in labels.entries) {
+      if (entry.value.toLowerCase() == lower) return entry.key;
+    }
+  }
+  return trimmed;
+}
+
+/// Whether [category] is shown under the catalog's category [filter].
+///
+/// Categories are compared after [normalizeBiomarkerCategory], so a stored
+/// `Liver` or ` liver ` lands under the same entry as `liver`.
+bool biomarkerCategoryMatchesFilter(String category, String filter) {
+  if (filter == biomarkerCategoryAllFilter) return true;
+  final normalized = normalizeBiomarkerCategory(category);
+  if (filter == biomarkerCategoryNoneFilter) return normalized.isEmpty;
+  return normalized == filter;
+}
+
+/// The distinct categories in use, normalized, without the empty one.
+Set<String> biomarkerCategoriesInUse(Iterable<String> categories) => {
+  for (final category in categories)
+    if (normalizeBiomarkerCategory(category).isNotEmpty)
+      normalizeBiomarkerCategory(category),
+};
+
+/// The label for a biomarker's category in a list row, or null when it has
+/// none — an empty category is left out of a row rather than called "Other",
+/// which would claim a choice nobody made.
+String? biomarkerCategoryRowLabel(String category, String languageCode) {
+  final normalized = normalizeBiomarkerCategory(category);
+  if (normalized.isEmpty) return null;
+  return biomarkerCategoryLabel(normalized, languageCode);
+}

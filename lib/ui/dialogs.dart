@@ -9,6 +9,8 @@ import '../app/app_localizations.dart';
 import '../domain/entities.dart';
 import '../domain/ingredient_composition.dart';
 import '../domain/units.dart';
+import 'biomarker_category_localization.dart';
+import 'biomarker_category_picker.dart';
 import 'common.dart';
 import 'ingredient_editor.dart';
 import 'supplement_form_presets.dart';
@@ -2378,7 +2380,8 @@ Future<void> showAddBiomarkerDialog(
   Biomarker? existing,
 }) async {
   final name = TextEditingController(text: existing?.displayName);
-  final category = TextEditingController(text: existing?.category);
+  var category = normalizeBiomarkerCategory(existing?.category ?? '');
+  final categoriesInUse = controller.biomarkers.map((item) => item.category);
   final unit = TextEditingController(text: existing?.defaultUnit);
   final price = TextEditingController(
     text: existing?.priceEur?.toStringAsFixed(2) ?? '',
@@ -2405,11 +2408,35 @@ Future<void> showAddBiomarkerDialog(
               ),
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: category,
-              decoration: InputDecoration(
-                labelText: _dialogText(context, 'Category', 'Kategorie'),
-              ),
+            StatefulBuilder(
+              builder: (context, setFieldState) {
+                final label = biomarkerCategoryRowLabel(
+                  category,
+                  Localizations.localeOf(context).languageCode,
+                );
+                return InkWell(
+                  onTap: () async {
+                    final picked = await showBiomarkerCategoryPicker(
+                      context,
+                      current: category,
+                      categoriesInUse: categoriesInUse,
+                    );
+                    if (picked != null) {
+                      setFieldState(() => category = picked);
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: _dialogText(context, 'Category', 'Kategorie'),
+                      suffixIcon: const Icon(Icons.arrow_drop_down),
+                    ),
+                    child: Text(
+                      label ??
+                          _dialogText(context, 'No category', 'Ohne Kategorie'),
+                    ),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 10),
             TextField(
@@ -2493,7 +2520,7 @@ Future<void> showAddBiomarkerDialog(
       if (existing == null) {
         await controller.addBiomarker(
           name: name.text,
-          category: category.text,
+          category: category,
           unit: unit.text,
           priceEur: parseOptionalDouble(price.text),
           labName: lab.text,
@@ -2506,7 +2533,7 @@ Future<void> showAddBiomarkerDialog(
             id: existing.id,
             canonicalName: existing.canonicalName,
             displayName: name.text,
-            category: category.text,
+            category: category,
             defaultUnit: unit.text,
             priceEur: parseOptionalDouble(price.text),
             labName: lab.text,
@@ -2527,15 +2554,7 @@ Future<void> showAddBiomarkerDialog(
       await showAppError(context, error);
     }
   }
-  for (final item in [
-    name,
-    category,
-    unit,
-    price,
-    lab,
-    description,
-    synonyms,
-  ]) {
+  for (final item in [name, unit, price, lab, description, synonyms]) {
     item.dispose();
   }
 }

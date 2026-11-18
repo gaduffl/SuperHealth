@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../app/app_controller.dart';
 import '../app/app_localizations.dart';
 import '../domain/entities.dart';
+import 'biomarker_category_localization.dart';
 import 'biomarker_merge_flow.dart';
 import 'common.dart';
 
@@ -74,8 +75,12 @@ class TemporaryBiomarkerResolutionScreen extends StatelessWidget {
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
                                 [
-                                  if (biomarker.category.isNotEmpty)
+                                  ?biomarkerCategoryRowLabel(
                                     biomarker.category,
+                                    Localizations.localeOf(
+                                      context,
+                                    ).languageCode,
+                                  ),
                                   if (biomarker.defaultUnit.isNotEmpty)
                                     biomarker.defaultUnit,
                                 ].join(' · '),

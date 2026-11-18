@@ -997,6 +997,26 @@ class Biomarker {
   final DateTime updatedAt;
   final bool deleted;
 
+  /// This biomarker with the given fields replaced and every other one kept.
+  Biomarker copyWith({String? category}) => Biomarker(
+    id: id,
+    canonicalName: canonicalName,
+    displayName: displayName,
+    category: category ?? this.category,
+    defaultUnit: defaultUnit,
+    priceEur: priceEur,
+    labName: labName,
+    priceCheckedAt: priceCheckedAt,
+    description: description,
+    synonyms: synonyms,
+    isTemporary: isTemporary,
+    isCalculated: isCalculated,
+    calculationFormula: calculationFormula,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+    deleted: deleted,
+  );
+
   Map<String, Object?> toMap() => {
     'id': id,
     'canonical_name': canonicalName,

@@ -47,12 +47,40 @@ void main() {
     addTearDown(controller.dispose);
     await _openSheet(tester, controller);
 
-    expect(find.text('metabolic · mg/dL · No price'), findsOneWidget);
+    expect(find.text('Metabolic Health · mg/dL · No price'), findsOneWidget);
 
     controller.setBiomarkersForTest([_glucose(priceEur: 12.5, lab: 'Labor X')]);
     await _settleSheet(tester);
 
-    expect(find.text('metabolic · mg/dL · 12.50 € · Labor X'), findsOneWidget);
+    expect(
+      find.text('Metabolic Health · mg/dL · 12.50 € · Labor X'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('the category is changed from the actions menu', (tester) async {
+    // Before this the only way was a free-text field in the edit dialog, where
+    // typing the label shown on screen started a second category beside the
+    // stored ID.
+    final controller = _seededController();
+    addTearDown(controller.dispose);
+    await _openSheet(tester, controller);
+
+    await tester.tap(find.byTooltip('Biomarker actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change category'));
+    await tester.pumpAndSettle();
+
+    // The current category is offered under its name, not its ID.
+    expect(find.text('Metabolic Health'), findsWidgets);
+    expect(find.text('No category'), findsOneWidget);
+
+    await tester.tap(find.text('Lipid Panel'));
+    await _settleSheet(tester);
+
+    expect(controller.saved.single.category, 'lipids');
+    expect(controller.saved.single.id, 'glucose');
+    expect(find.text('Lipid Panel · mg/dL · No price'), findsOneWidget);
   });
 
   testWidgets('a zero price is reported as no price, not as free', (
@@ -65,7 +93,7 @@ void main() {
     controller.setBiomarkersForTest([_glucose(priceEur: 0)]);
     await _settleSheet(tester);
 
-    expect(find.text('metabolic · mg/dL · No price'), findsOneWidget);
+    expect(find.text('Metabolic Health · mg/dL · No price'), findsOneWidget);
   });
 
   testWidgets('the explanation sits under the name, not past the history', (
@@ -381,6 +409,14 @@ class _TestController extends AppController {
   void setBiomarkersForTest(List<Biomarker> value) {
     biomarkers = value;
     notifyListeners();
+  }
+
+  final saved = <Biomarker>[];
+
+  @override
+  Future<void> updateBiomarker(Biomarker biomarker) async {
+    saved.add(biomarker);
+    setBiomarkersForTest([biomarker]);
   }
 }
 

@@ -9,6 +9,8 @@ import '../biomarkers/biomarker_status_service.dart';
 import '../biomarkers/calculated_biomarker_service.dart';
 import '../biomarkers/unit_conversion_service.dart';
 import '../domain/entities.dart';
+import 'biomarker_category_localization.dart';
+import 'biomarker_category_picker.dart';
 import 'biomarker_lists_sheet.dart';
 import 'biomarker_merge_flow.dart';
 import 'biomarker_trend_notes.dart';
@@ -227,7 +229,10 @@ class _BiomarkerDetail extends StatelessWidget {
                     ),
                     Text(
                       [
-                        if (biomarker.category.isNotEmpty) biomarker.category,
+                        ?biomarkerCategoryRowLabel(
+                          biomarker.category,
+                          Localizations.localeOf(context).languageCode,
+                        ),
                         if (biomarker.defaultUnit.isNotEmpty)
                           biomarker.defaultUnit,
                         // Shown here because this is where it is edited from,
@@ -279,7 +284,28 @@ class _BiomarkerDetail extends StatelessWidget {
                   'Biomarkeraktionen',
                 ),
                 onSelected: (value) async {
-                  if (value == 'edit') {
+                  if (value == 'category') {
+                    final picked = await showBiomarkerCategoryPicker(
+                      context,
+                      current: biomarker.category,
+                      categoriesInUse: controller.biomarkers.map(
+                        (item) => item.category,
+                      ),
+                    );
+                    if (picked != null &&
+                        picked !=
+                            normalizeBiomarkerCategory(biomarker.category)) {
+                      try {
+                        await controller.updateBiomarker(
+                          biomarker.copyWith(category: picked),
+                        );
+                      } on Object catch (error) {
+                        if (context.mounted) {
+                          await showAppError(context, error);
+                        }
+                      }
+                    }
+                  } else if (value == 'edit') {
                     await showAddBiomarkerDialog(
                       context,
                       controller,
@@ -326,6 +352,16 @@ class _BiomarkerDetail extends StatelessWidget {
                           context,
                           'Add to list',
                           'Zur Liste hinzufügen',
+                        ),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'category',
+                      child: Text(
+                        _detailText(
+                          context,
+                          'Change category',
+                          'Kategorie ändern',
                         ),
                       ),
                     ),
