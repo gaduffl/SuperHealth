@@ -287,6 +287,15 @@ back-out as a `PlatformException` ("Operation cancelled"), which must stay
 silent. Only the scan action carries the scanner icon; the file import uses an
 upload icon, because a scanner icon on a file picker read as a missing camera.
 
+**Release builds are shrunk by R8, and reflection-only code needs a keep rule.**
+The 0.56.0 scanner worked in tests but crashed on the phone: R8 removed the
+no-argument constructor of ML Kit's `CommonComponentRegistrar`, which Firebase's
+component discovery instantiates by name from the manifest, so the scanner's
+components were missing and it threw a `NullPointerException` on start.
+`android/app/proguard-rules.pro` keeps every `ComponentRegistrar` constructor.
+Any new native plugin that loads classes by name needs the same check on the
+release APK, not only `flutter test`.
+
 **A screen that says "today" must re-derive the day, not capture it.** The app
 is left open and backgrounded for days, so a `DateTime.now()` stored in a
 `State` field at launch is stale by morning — `DashboardScreen` showed its launch

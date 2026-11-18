@@ -48,6 +48,9 @@ android {
                 // Personal builds fall back to debug signing until a private key is supplied.
                 signingConfigs.getByName("debug")
             }
+            // R8 otherwise strips what ML Kit only reaches by reflection; see
+            // proguard-rules.pro. Appended to the rules Flutter already applies.
+            proguardFiles("proguard-rules.pro")
         }
     }
 }
